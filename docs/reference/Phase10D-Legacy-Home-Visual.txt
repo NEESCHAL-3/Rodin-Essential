@@ -1,0 +1,9 @@
+===== RODIN ESSENTIAL PHASE 10D LEGACY HOME VISUAL PORT =====
+renderer=Skia/OpenGL
+home_spacing=legacy_16_10_96_9
+dark_surface=#050505
+dark_outline=#202020
+bottom_navigation=Home,Hubs,Support
+fake_hardware_states=NO
+dashboard_values=verified architecture/runtime only
+PHASE10D_HOME_VISUAL=PASS
