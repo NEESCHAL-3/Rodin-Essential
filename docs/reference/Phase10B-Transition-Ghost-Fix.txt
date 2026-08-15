@@ -1,0 +1,8 @@
+===== RODIN ESSENTIAL PHASE 10B TRANSITION GHOST FIX =====
+old_fullscreen_overlap=REMOVED
+outgoing_page_composited=NO
+incoming_slide_fraction=0.075
+incoming_opacity_start=0.88
+transition_ms=280
+back_direction=REVERSED
+PHASE10B_TRANSITION_GHOST_FIX=PASS

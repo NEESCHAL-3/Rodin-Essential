@@ -165,15 +165,18 @@ class RodinShell extends StatefulWidget {
 class _RodinShellState extends State<RodinShell> {
   RodinScreen _screen = RodinScreen.home;
   RodinScreen _detailBackTarget = RodinScreen.home;
-
-  int _depth(RodinScreen screen) => screen.isRoot ? 0 : 1;
+  bool _transitionForward = true;
 
   void _selectRoot(RodinScreen screen) {
-    setState(() => _screen = screen);
+    setState(() {
+      _transitionForward = true;
+      _screen = screen;
+    });
   }
 
   void _openDetail(RodinScreen screen) {
     setState(() {
+      _transitionForward = true;
       if (_screen.isRoot) {
         _detailBackTarget = _screen;
       }
@@ -183,6 +186,7 @@ class _RodinShellState extends State<RodinShell> {
 
   void _back() {
     setState(() {
+      _transitionForward = false;
       if (_screen == RodinScreen.hubs || _screen == RodinScreen.support) {
         _screen = RodinScreen.home;
       } else if (!_screen.isRoot) {
@@ -206,22 +210,38 @@ class _RodinShellState extends State<RodinShell> {
         body: SafeArea(
           bottom: false,
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 350),
-            reverseDuration: const Duration(milliseconds: 315),
-            switchInCurve: Curves.fastOutSlowIn,
-            switchOutCurve: Curves.fastOutSlowIn,
+            duration: const Duration(milliseconds: 280),
+            reverseDuration: const Duration(milliseconds: 240),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeOutCubic,
+            layoutBuilder:
+                (Widget? currentChild, List<Widget> previousChildren) {
+                  return ClipRect(
+                    child: currentChild ?? const SizedBox.shrink(),
+                  );
+                },
             transitionBuilder: (Widget child, Animation<double> animation) {
-              final RodinScreen target =
-                  (child.key! as ValueKey<RodinScreen>).value;
-              final bool forward = _depth(target) >= _depth(current);
+              final Animation<double> opacity =
+                  Tween<double>(begin: 0.88, end: 1).animate(
+                    CurvedAnimation(
+                      parent: animation,
+                      curve: Curves.easeOutCubic,
+                    ),
+                  );
 
-              final Animation<Offset> slide = Tween<Offset>(
-                begin: Offset(forward ? 0.15 : -0.15, 0),
-                end: Offset.zero,
-              ).animate(animation);
+              final Animation<Offset> slide =
+                  Tween<Offset>(
+                    begin: Offset(_transitionForward ? 0.075 : -0.075, 0),
+                    end: Offset.zero,
+                  ).animate(
+                    CurvedAnimation(
+                      parent: animation,
+                      curve: Curves.easeOutCubic,
+                    ),
+                  );
 
               return FadeTransition(
-                opacity: animation,
+                opacity: opacity,
                 child: SlideTransition(position: slide, child: child),
               );
             },
