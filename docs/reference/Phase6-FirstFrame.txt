@@ -1,0 +1,26 @@
+===== RODIN ESSENTIAL PHASE 6 =====
+timestamp=20260815-114737
+root=/home/neeschal/Nees/Rodin-Essential
+commit_before=3118d9a2393fffd5d66f284a64385ea8c667122c
+apk=/home/neeschal/Nees/Rodin-Essential/out/phase6-first-frame/20260815-114737/Rodin-Essential-Phase6.apk
+screenshot=/home/neeschal/Nees/Rodin-Essential/out/phase6-first-frame/20260815-114737/phase6-first-frame.png
+
+===== RUNTIME =====
+08-15 11:47:40.979 31578 31578 I RodinEssential: ANativeActivity_onCreate
+08-15 11:47:40.979 31578 31578 I RodinEssential: native callbacks installed
+08-15 11:47:40.980 31578 31578 I RodinEssential: onStart
+08-15 11:47:40.988 31578 31578 I RodinEssential: onResume
+08-15 11:47:41.053 31578 31578 I RodinEssential: native window created
+08-15 11:47:41.090 31578 31578 I RodinEssential: runtime assets extracted: files=6 icu=9242032 bytes
+08-15 11:47:41.091 31578 31578 I RodinEssential: software proof flag: --enable-impeller=false
+08-15 11:47:41.091 31578 31578 I RodinEssential: starting FlutterEngineRun
+08-15 11:47:41.108 31578 31578 I RodinEssential: FLUTTER_ENGINE_RUN=PASS
+08-15 11:47:41.108 31578 31578 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 11:47:41.108 31578 31578 I RodinEssential: FlutterEngineScheduleFrame rc=0
+08-15 11:47:41.108 31578 31578 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 11:47:41.108 31578 31578 I RodinEssential: native window resized
+08-15 11:47:41.108 31578 31578 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 11:47:41.130 31578 31578 I RodinEssential: window focus=1
+08-15 11:47:41.472 31578  1306 I RodinEssential: FLUTTER_FIRST_FRAME=PASS row_bytes=4880 height=2712
+08-15 11:47:41.469 31578 31578 W io.flutter.rast: type=1400 audit(0.0:36643): avc:  denied  { read } for  name="u:object_r:vendor_displayfeature_prop:s0" dev="tmpfs" ino=547 scontext=u:r:untrusted_app:s0:c41,c257,c512,c768 tcontext=u:object_r:vendor_displayfeature_prop:s0 tclass=file permissive=0 app=io.github.neeschal.rodinessential
+08-15 11:47:43.477 31578 31578 W io.flutter.rast: type=1400 audit(0.0:36644): avc:  denied  { getattr } for  path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=133432 scontext=u:r:untrusted_app:s0:c41,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=io.github.neeschal.rodinessential
