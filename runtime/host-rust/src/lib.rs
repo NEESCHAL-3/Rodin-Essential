@@ -1478,8 +1478,8 @@ unsafe extern "C" fn egl_present(user_data: *mut c_void) -> bool {
     };
 
     if ok && !host.first_frame_logged.swap(true, Ordering::AcqRel) {
-        log_str("GPU_FIRST_FRAME=PASS backend=EGL/OpenGL");
-        log_str("FLUTTER_FIRST_FRAME=PASS renderer=OpenGL");
+        log_str("GPU_FIRST_FRAME=PASS backend=EGL/OpenGL/Impeller");
+        log_str("FLUTTER_FIRST_FRAME=PASS renderer=Impeller/OpenGL");
     }
 
     if !ok {
@@ -1905,11 +1905,11 @@ unsafe fn start_flutter(
     // Phase 7A proves the real EGL/OpenGL GPU path first. Keep Impeller
     // disabled for this one gate; Phase 7B enables Impeller on the proven GPU path.
     static EXECUTABLE_NAME: &[u8] = b"rodin_essential\0";
-    static DISABLE_IMPELLER: &[u8] = b"--enable-impeller=false\0";
+    static ENABLE_IMPELLER: &[u8] = b"--enable-impeller=true\0";
 
     let command_line_args: [*const c_char; 2] = [
         EXECUTABLE_NAME.as_ptr().cast(),
-        DISABLE_IMPELLER.as_ptr().cast(),
+        ENABLE_IMPELLER.as_ptr().cast(),
     ];
 
     put_i32(
@@ -1924,7 +1924,7 @@ unsafe fn start_flutter(
         command_line_args.as_ptr() as usize,
     );
 
-    log_str("GPU proof flag: --enable-impeller=false (OpenGL/Skia)");
+    log_str("IMPELLER_REQUEST=ON backend=OpenGL");
 
     let mut engine: *mut c_void = ptr::null_mut();
 
