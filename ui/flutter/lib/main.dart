@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 void main() {
@@ -362,7 +360,7 @@ class HomeScreen extends StatelessWidget {
         const SizedBox(height: 9),
         FeatureCard(
           title: 'Charging',
-          subtitle: 'Charging modes and telemetry',
+          subtitle: 'Charging modes and battery telemetry',
           icon: Icons.battery_charging_full_rounded,
           accent: const Color(0xFF41C98A),
           onTap: () => onOpen(RodinScreen.charging),
@@ -370,7 +368,7 @@ class HomeScreen extends StatelessWidget {
         const SizedBox(height: 9),
         FeatureCard(
           title: 'Touch Boost',
-          subtitle: 'Low-latency response',
+          subtitle: 'Low-latency response controls',
           icon: Icons.bolt_rounded,
           accent: const Color(0xFF41C98A),
           onTap: () => onOpen(RodinScreen.touchBoost),
@@ -387,20 +385,20 @@ class HomeScreen extends StatelessWidget {
         const SectionLabel('Control hubs'),
         const SizedBox(height: 9),
         SurfaceCard(
+          padding: const EdgeInsets.all(10),
           child: Column(
             children: <Widget>[
               HubRow(
                 title: 'All modules',
-                subtitle:
-                    'Charging, display, performance, CPU, resolution and diagnostics',
+                subtitle: 'Display, performance, charging, CPU and diagnostics',
                 icon: Icons.grid_view_rounded,
                 accent: Theme.of(context).colorScheme.secondary,
                 onTap: onHubs,
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               HubRow(
                 title: 'Community & Support',
-                subtitle: 'Join the community, get help, and report bugs',
+                subtitle: 'Get help, report bugs and follow the project',
                 icon: Icons.help_outline_rounded,
                 accent: const Color(0xFFFFB74D),
                 onTap: onSupport,
@@ -737,7 +735,7 @@ class _LiveDashboardHeroState extends State<LiveDashboardHero>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(seconds: 2),
+    duration: const Duration(milliseconds: 1800),
   )..repeat(reverse: true);
 
   @override
@@ -751,12 +749,11 @@ class _LiveDashboardHeroState extends State<LiveDashboardHero>
     final ColorScheme colors = Theme.of(context).colorScheme;
 
     return SurfaceCard(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 13),
       child: AnimatedBuilder(
         animation: _controller,
         builder: (BuildContext context, Widget? child) {
-          final double pulse =
-              0.76 + (math.sin(_controller.value * math.pi) * 0.24);
+          final double t = Curves.easeInOut.transform(_controller.value);
 
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -764,48 +761,62 @@ class _LiveDashboardHeroState extends State<LiveDashboardHero>
               Row(
                 children: <Widget>[
                   Transform.scale(
-                    scale: 0.92 + pulse * 0.08,
+                    scale: 0.96 + (0.04 * t),
                     child: Container(
-                      width: 42,
-                      height: 42,
+                      width: 46,
+                      height: 46,
                       decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: colors.primary.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(15),
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: <Color>[
+                            colors.primary.withValues(alpha: 0.22),
+                            colors.secondary.withValues(alpha: 0.12),
+                          ],
+                        ),
+                        border: Border.all(
+                          color: colors.primary.withValues(alpha: 0.22),
+                        ),
                       ),
                       child: Icon(
                         Icons.dashboard_customize_rounded,
                         color: colors.primary,
+                        size: 24,
                       ),
                     ),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        Text(
-                          'Rodin live dashboard',
+                        const Text(
+                          'Live device dashboard',
                           style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
-                        SizedBox(height: 2),
-                        Text('Native runtime online'),
+                        const SizedBox(height: 3),
+                        Text(
+                          'Native runtime · production renderer',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ),
                       ],
                     ),
                   ),
                   StatusPill(label: 'LIVE', accent: colors.secondary),
                 ],
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 13),
               const Row(
                 children: <Widget>[
                   Expanded(
-                    child: DashboardMetric(
-                      title: 'Renderer',
-                      value: 'Impeller',
-                    ),
+                    child: DashboardMetric(title: 'Renderer', value: 'Skia GL'),
                   ),
                   SizedBox(width: 8),
                   Expanded(
@@ -817,9 +828,75 @@ class _LiveDashboardHeroState extends State<LiveDashboardHero>
                   ),
                 ],
               ),
+              const SizedBox(height: 9),
+              Row(
+                children: <Widget>[
+                  _FoundationBadge(
+                    icon: Icons.code_off_rounded,
+                    label: 'Zero DEX',
+                    accent: colors.primary,
+                  ),
+                  const SizedBox(width: 7),
+                  _FoundationBadge(
+                    icon: Icons.memory_rounded,
+                    label: 'Rust host',
+                    accent: colors.secondary,
+                  ),
+                  const SizedBox(width: 7),
+                  const _FoundationBadge(
+                    icon: Icons.layers_rounded,
+                    label: '16K ready',
+                    accent: Color(0xFFFFB84D),
+                  ),
+                ],
+              ),
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _FoundationBadge extends StatelessWidget {
+  const _FoundationBadge({
+    required this.icon,
+    required this.label,
+    required this.accent,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: accent.withValues(alpha: 0.14)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Icon(icon, size: 14, color: accent),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -932,9 +1009,10 @@ class FeatureCard extends StatelessWidget {
     return PressScale(
       onTap: onTap,
       child: SurfaceCard(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
         child: Row(
           children: <Widget>[
-            IconTile(icon: icon, accent: accent),
+            IconTile(icon: icon, accent: accent, size: 44),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -943,17 +1021,17 @@ class FeatureCard extends StatelessWidget {
                   Text(
                     title,
                     style: const TextStyle(
-                      fontSize: 16,
+                      fontSize: 15.5,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    maxLines: 2,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 13,
+                      fontSize: 12.5,
                       color: colors.onSurfaceVariant,
                     ),
                   ),
@@ -961,7 +1039,11 @@ class FeatureCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Icon(Icons.chevron_right_rounded, color: colors.onSurfaceVariant),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 20,
+              color: colors.onSurfaceVariant.withValues(alpha: 0.78),
+            ),
           ],
         ),
       ),
@@ -991,8 +1073,9 @@ class HubRow extends StatelessWidget {
 
     return PressScale(
       onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(17)),
         child: Row(
           children: <Widget>[
             IconTile(icon: icon, accent: accent, size: 42),
@@ -1003,20 +1086,29 @@ class HubRow extends StatelessWidget {
                 children: <Widget>[
                   Text(
                     title,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: 11.5,
                       color: colors.onSurfaceVariant,
                     ),
                   ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right_rounded, color: colors.onSurfaceVariant),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 19,
+              color: colors.onSurfaceVariant.withValues(alpha: 0.72),
+            ),
           ],
         ),
       ),
@@ -1036,15 +1128,19 @@ class SurfaceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme colors = Theme.of(context).colorScheme;
+    final ThemeData theme = Theme.of(context);
+    final bool dark = theme.brightness == Brightness.dark;
 
     return Container(
       width: double.infinity,
       padding: padding,
       decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: colors.outline.withValues(alpha: 0.72)),
+        color: dark ? const Color(0xFF050505) : const Color(0xFFFFFFFF),
+        borderRadius: BorderRadius.circular(21),
+        border: Border.all(
+          color: dark ? const Color(0xFF202020) : const Color(0xFFD3E0EE),
+          width: 1,
+        ),
       ),
       child: child,
     );
@@ -1215,7 +1311,9 @@ class RodinBottomBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme colors = Theme.of(context).colorScheme;
+    final ThemeData theme = Theme.of(context);
+    final bool dark = theme.brightness == Brightness.dark;
+
     final bool homeSelected = current == RodinScreen.home || !current.isRoot;
     final bool hubsSelected = current == RodinScreen.hubs;
     final bool supportSelected = current == RodinScreen.support;
@@ -1224,12 +1322,23 @@ class RodinBottomBar extends StatelessWidget {
       top: false,
       minimum: const EdgeInsets.fromLTRB(16, 0, 16, 10),
       child: Container(
-        height: 68,
-        padding: const EdgeInsets.all(7),
+        height: 66,
+        padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(
-          color: colors.surface.withValues(alpha: 0.96),
-          borderRadius: BorderRadius.circular(25),
-          border: Border.all(color: colors.outline.withValues(alpha: 0.80)),
+          color: dark ? const Color(0xFF080808) : const Color(0xFFFFFFFF),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: dark ? const Color(0xFF202020) : const Color(0xFFD3E0EE),
+          ),
+          boxShadow: dark
+              ? null
+              : <BoxShadow>[
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 18,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
         ),
         child: Row(
           children: <Widget>[
@@ -1288,24 +1397,24 @@ class BottomBarItem extends StatelessWidget {
     return PressScale(
       onTap: onTap,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
+        duration: const Duration(milliseconds: 180),
         curve: Curves.easeOutCubic,
         decoration: BoxDecoration(
           color: selected
-              ? colors.primary.withValues(alpha: 0.12)
+              ? colors.primary.withValues(alpha: 0.11)
               : Colors.transparent,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(17),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
-            Icon(icon, color: foreground, size: 22),
-            const SizedBox(height: 3),
+            Icon(icon, color: foreground, size: 21),
+            const SizedBox(height: 2),
             Text(
               label,
               style: TextStyle(
                 color: foreground,
-                fontSize: 11,
+                fontSize: 10.5,
                 fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
               ),
             ),
