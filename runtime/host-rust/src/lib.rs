@@ -1,12 +1,13 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
-use core::slice;
 use std::ffi::{CStr, CString};
 use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 include!("flutter_layout.rs");
 
@@ -16,6 +17,31 @@ const AASSET_MODE_STREAMING: c_int = 2;
 const FLUTTER_ENGINE_VERSION: usize = 1;
 const FLUTTER_RENDERER_SOFTWARE: i32 = 1;
 const RTLD_NOW: c_int = 2;
+
+const ALOOPER_PREPARE_ALLOW_NON_CALLBACKS: c_int = 1;
+const INPUT_LOOPER_IDENT: c_int = 1;
+
+const AINPUT_EVENT_TYPE_KEY: i32 = 1;
+const AINPUT_EVENT_TYPE_MOTION: i32 = 2;
+
+const AMOTION_EVENT_ACTION_MASK: i32 = 0xff;
+const AMOTION_EVENT_ACTION_POINTER_INDEX_MASK: i32 = 0xff00;
+const AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT: i32 = 8;
+const AMOTION_EVENT_ACTION_DOWN: i32 = 0;
+const AMOTION_EVENT_ACTION_UP: i32 = 1;
+const AMOTION_EVENT_ACTION_MOVE: i32 = 2;
+const AMOTION_EVENT_ACTION_CANCEL: i32 = 3;
+const AMOTION_EVENT_ACTION_POINTER_DOWN: i32 = 5;
+const AMOTION_EVENT_ACTION_POINTER_UP: i32 = 6;
+
+const FLUTTER_POINTER_CANCEL: i32 = 0;
+const FLUTTER_POINTER_UP: i32 = 1;
+const FLUTTER_POINTER_DOWN: i32 = 2;
+const FLUTTER_POINTER_MOVE: i32 = 3;
+const FLUTTER_POINTER_ADD: i32 = 4;
+const FLUTTER_POINTER_REMOVE: i32 = 5;
+const FLUTTER_POINTER_SIGNAL_NONE: i32 = 0;
+const FLUTTER_POINTER_DEVICE_TOUCH: i32 = 2;
 
 #[repr(C)]
 pub struct ARect {
@@ -88,6 +114,16 @@ pub struct AInputQueue {
 }
 
 #[repr(C)]
+pub struct AInputEvent {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct ALooper {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
 pub struct AAssetManager {
     _private: [u8; 0],
 }
@@ -102,11 +138,20 @@ pub struct AConfiguration {
     _private: [u8; 0],
 }
 
+struct InputWorker {
+    queue: usize,
+    stop: Arc<AtomicBool>,
+    looper: Arc<AtomicUsize>,
+    thread: JoinHandle<()>,
+}
+
 struct HostState {
     window: Mutex<usize>,
     engine: Mutex<usize>,
     app_handle: Mutex<usize>,
+    input_worker: Mutex<Option<InputWorker>>,
     first_frame_logged: AtomicBool,
+    first_input_logged: AtomicBool,
 }
 
 impl HostState {
@@ -115,7 +160,9 @@ impl HostState {
             window: Mutex::new(0),
             engine: Mutex::new(0),
             app_handle: Mutex::new(0),
+            input_worker: Mutex::new(None),
             first_frame_logged: AtomicBool::new(false),
+            first_input_logged: AtomicBool::new(false),
         }
     }
 }
@@ -168,6 +215,60 @@ unsafe extern "C" {
         manager: *mut AAssetManager,
     );
     fn AConfiguration_getDensity(config: *mut AConfiguration) -> i32;
+
+    fn ALooper_prepare(opts: c_int) -> *mut ALooper;
+    fn ALooper_pollOnce(
+        timeout_millis: c_int,
+        out_fd: *mut c_int,
+        out_events: *mut c_int,
+        out_data: *mut *mut c_void,
+    ) -> c_int;
+    fn ALooper_wake(looper: *mut ALooper);
+
+    fn AInputQueue_attachLooper(
+        queue: *mut AInputQueue,
+        looper: *mut ALooper,
+        ident: c_int,
+        callback: Option<
+            unsafe extern "C" fn(c_int, c_int, *mut c_void) -> c_int,
+        >,
+        data: *mut c_void,
+    );
+    fn AInputQueue_detachLooper(queue: *mut AInputQueue);
+    fn AInputQueue_getEvent(
+        queue: *mut AInputQueue,
+        out_event: *mut *mut AInputEvent,
+    ) -> i32;
+    fn AInputQueue_preDispatchEvent(
+        queue: *mut AInputQueue,
+        event: *mut AInputEvent,
+    ) -> i32;
+    fn AInputQueue_finishEvent(
+        queue: *mut AInputQueue,
+        event: *mut AInputEvent,
+        handled: c_int,
+    );
+
+    fn AInputEvent_getType(event: *const AInputEvent) -> i32;
+    fn AMotionEvent_getAction(event: *const AInputEvent) -> i32;
+    fn AMotionEvent_getEventTime(event: *const AInputEvent) -> i64;
+    fn AMotionEvent_getPointerCount(event: *const AInputEvent) -> usize;
+    fn AMotionEvent_getPointerId(
+        event: *const AInputEvent,
+        pointer_index: usize,
+    ) -> i32;
+    fn AMotionEvent_getX(
+        event: *const AInputEvent,
+        pointer_index: usize,
+    ) -> f32;
+    fn AMotionEvent_getY(
+        event: *const AInputEvent,
+        pointer_index: usize,
+    ) -> f32;
+    fn AMotionEvent_getPressure(
+        event: *const AInputEvent,
+        pointer_index: usize,
+    ) -> f32;
 }
 
 #[link(name = "dl")]
@@ -193,6 +294,12 @@ unsafe extern "C" {
     fn FlutterEngineSendWindowMetricsEvent(
         engine: *mut c_void,
         event: *const c_void,
+    ) -> c_int;
+
+    fn FlutterEngineSendPointerEvent(
+        engine: *mut c_void,
+        events: *const c_void,
+        events_count: usize,
     ) -> c_int;
 
     fn FlutterEngineScheduleFrame(engine: *mut c_void) -> c_int;
@@ -427,6 +534,435 @@ fn prepare_runtime_files(
         .map_err(|_| "cache path contains NUL".to_string())?;
 
     Ok((assets_c, icu_c, cache_c))
+}
+
+fn input_engine(state: *mut HostState) -> usize {
+    if state.is_null() {
+        return 0;
+    }
+
+    let guard = match unsafe { &*state }.engine.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    *guard
+}
+
+unsafe fn send_touch_pointer(
+    state: *mut HostState,
+    motion_event: *const AInputEvent,
+    pointer_index: usize,
+    phase: i32,
+) -> bool {
+    let engine = input_engine(state);
+
+    if engine == 0 || motion_event.is_null() {
+        return false;
+    }
+
+    let pointer_count = unsafe { AMotionEvent_getPointerCount(motion_event) };
+    if pointer_index >= pointer_count {
+        return false;
+    }
+
+    let timestamp_ns = unsafe { AMotionEvent_getEventTime(motion_event) };
+    let timestamp_us = if timestamp_ns > 0 {
+        (timestamp_ns as usize) / 1000
+    } else {
+        0
+    };
+
+    let x = unsafe { AMotionEvent_getX(motion_event, pointer_index) } as f64;
+    let y = unsafe { AMotionEvent_getY(motion_event, pointer_index) } as f64;
+    let device =
+        unsafe { AMotionEvent_getPointerId(motion_event, pointer_index) };
+    let pressure =
+        unsafe { AMotionEvent_getPressure(motion_event, pointer_index) }
+            as f64;
+
+    let mut pointer = vec![0u8; FLUTTER_POINTER_EVENT_SIZE];
+
+    put_usize(
+        &mut pointer,
+        OFF_POINTER_STRUCT_SIZE,
+        FLUTTER_POINTER_EVENT_SIZE,
+    );
+    put_i32(&mut pointer, OFF_POINTER_PHASE, phase);
+    put_usize(&mut pointer, OFF_POINTER_TIMESTAMP, timestamp_us);
+    put_f64(&mut pointer, OFF_POINTER_X, x);
+    put_f64(&mut pointer, OFF_POINTER_Y, y);
+    put_i32(&mut pointer, OFF_POINTER_DEVICE, device);
+    put_i32(
+        &mut pointer,
+        OFF_POINTER_SIGNAL_KIND,
+        FLUTTER_POINTER_SIGNAL_NONE,
+    );
+    put_f64(&mut pointer, OFF_POINTER_SCROLL_X, 0.0);
+    put_f64(&mut pointer, OFF_POINTER_SCROLL_Y, 0.0);
+    put_i32(
+        &mut pointer,
+        OFF_POINTER_DEVICE_KIND,
+        FLUTTER_POINTER_DEVICE_TOUCH,
+    );
+    put_i64(&mut pointer, OFF_POINTER_BUTTONS, 0);
+    put_i64(&mut pointer, OFF_POINTER_VIEW_ID, 0);
+    put_f64(&mut pointer, OFF_POINTER_PRESSURE, pressure);
+    put_f64(&mut pointer, OFF_POINTER_PRESSURE_MIN, 0.0);
+    put_f64(&mut pointer, OFF_POINTER_PRESSURE_MAX, 1.0);
+
+    let result = unsafe {
+        FlutterEngineSendPointerEvent(
+            engine as *mut c_void,
+            pointer.as_ptr().cast(),
+            1,
+        )
+    };
+
+    result == 0
+}
+
+unsafe fn handle_motion_event(
+    state: *mut HostState,
+    event: *mut AInputEvent,
+) -> bool {
+    let action = unsafe { AMotionEvent_getAction(event) };
+    let masked = action & AMOTION_EVENT_ACTION_MASK;
+    let pointer_count = unsafe { AMotionEvent_getPointerCount(event) };
+
+    if pointer_count == 0 {
+        return false;
+    }
+
+    let action_index =
+        ((action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)
+            >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT) as usize;
+
+    match masked {
+        AMOTION_EVENT_ACTION_DOWN | AMOTION_EVENT_ACTION_POINTER_DOWN => {
+            if action_index >= pointer_count {
+                return false;
+            }
+
+            let add_ok = unsafe {
+                send_touch_pointer(
+                    state,
+                    event,
+                    action_index,
+                    FLUTTER_POINTER_ADD,
+                )
+            };
+            let down_ok = unsafe {
+                send_touch_pointer(
+                    state,
+                    event,
+                    action_index,
+                    FLUTTER_POINTER_DOWN,
+                )
+            };
+
+            if !state.is_null()
+                && !unsafe { &*state }
+                    .first_input_logged
+                    .swap(true, Ordering::AcqRel)
+            {
+                let x =
+                    unsafe { AMotionEvent_getX(event, action_index) };
+                let y =
+                    unsafe { AMotionEvent_getY(event, action_index) };
+                log_str(&format!(
+                    "INPUT_TOUCH=PASS action=DOWN x={x:.1} y={y:.1}"
+                ));
+            }
+
+            add_ok && down_ok
+        }
+        AMOTION_EVENT_ACTION_MOVE => {
+            let mut ok = true;
+
+            for index in 0..pointer_count {
+                ok &= unsafe {
+                    send_touch_pointer(
+                        state,
+                        event,
+                        index,
+                        FLUTTER_POINTER_MOVE,
+                    )
+                };
+            }
+
+            ok
+        }
+        AMOTION_EVENT_ACTION_UP | AMOTION_EVENT_ACTION_POINTER_UP => {
+            if action_index >= pointer_count {
+                return false;
+            }
+
+            let up_ok = unsafe {
+                send_touch_pointer(
+                    state,
+                    event,
+                    action_index,
+                    FLUTTER_POINTER_UP,
+                )
+            };
+            let remove_ok = unsafe {
+                send_touch_pointer(
+                    state,
+                    event,
+                    action_index,
+                    FLUTTER_POINTER_REMOVE,
+                )
+            };
+
+            up_ok && remove_ok
+        }
+        AMOTION_EVENT_ACTION_CANCEL => {
+            let mut ok = true;
+
+            for index in 0..pointer_count {
+                ok &= unsafe {
+                    send_touch_pointer(
+                        state,
+                        event,
+                        index,
+                        FLUTTER_POINTER_CANCEL,
+                    )
+                };
+                ok &= unsafe {
+                    send_touch_pointer(
+                        state,
+                        event,
+                        index,
+                        FLUTTER_POINTER_REMOVE,
+                    )
+                };
+            }
+
+            ok
+        }
+        _ => false,
+    }
+}
+
+fn input_worker_main(
+    queue_value: usize,
+    state_value: usize,
+    stop: Arc<AtomicBool>,
+    looper_slot: Arc<AtomicUsize>,
+    ready: mpsc::Sender<bool>,
+) {
+    let queue = queue_value as *mut AInputQueue;
+    let state = state_value as *mut HostState;
+
+    if queue.is_null() || state.is_null() {
+        let _ = ready.send(false);
+        return;
+    }
+
+    unsafe {
+        let looper =
+            ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
+
+        if looper.is_null() {
+            log_str("INPUT_QUEUE=FAIL looper=null");
+            let _ = ready.send(false);
+            return;
+        }
+
+        AInputQueue_attachLooper(
+            queue,
+            looper,
+            INPUT_LOOPER_IDENT,
+            None,
+            ptr::null_mut(),
+        );
+
+        looper_slot.store(looper as usize, Ordering::Release);
+        log_str("INPUT_QUEUE=READY");
+        let _ = ready.send(true);
+
+        while !stop.load(Ordering::Acquire) {
+            let ident = ALooper_pollOnce(
+                250,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            );
+
+            if stop.load(Ordering::Acquire) {
+                break;
+            }
+
+            if ident != INPUT_LOOPER_IDENT {
+                continue;
+            }
+
+            loop {
+                let mut event: *mut AInputEvent = ptr::null_mut();
+
+                if AInputQueue_getEvent(queue, &mut event) < 0 {
+                    break;
+                }
+
+                if event.is_null() {
+                    break;
+                }
+
+                let event_type = AInputEvent_getType(event);
+
+                if event_type == AINPUT_EVENT_TYPE_KEY
+                    && AInputQueue_preDispatchEvent(queue, event) != 0
+                {
+                    continue;
+                }
+
+                let handled = if event_type == AINPUT_EVENT_TYPE_MOTION {
+                    if handle_motion_event(state, event) {
+                        1
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+
+                AInputQueue_finishEvent(queue, event, handled);
+            }
+        }
+
+        AInputQueue_detachLooper(queue);
+        looper_slot.store(0, Ordering::Release);
+        log_str("INPUT_QUEUE=STOPPED");
+    }
+}
+
+fn stop_input_worker(state: *mut HostState) {
+    if state.is_null() {
+        return;
+    }
+
+    let worker = {
+        let mut guard = match unsafe { &*state }.input_worker.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.take()
+    };
+
+    let Some(worker) = worker else {
+        return;
+    };
+
+    worker.stop.store(true, Ordering::Release);
+
+    let looper = worker.looper.load(Ordering::Acquire);
+    if looper != 0 {
+        unsafe {
+            ALooper_wake(looper as *mut ALooper);
+        }
+    }
+
+    match worker.thread.join() {
+        Ok(()) => {
+            log_str(&format!(
+                "input worker joined queue=0x{:x}",
+                worker.queue
+            ));
+        }
+        Err(_) => {
+            log_str("input worker join failed");
+        }
+    }
+}
+
+fn start_input_worker(
+    state: *mut HostState,
+    queue: *mut AInputQueue,
+) {
+    if state.is_null() || queue.is_null() {
+        log_str("INPUT_QUEUE=FAIL null state/queue");
+        return;
+    }
+
+    stop_input_worker(state);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let looper = Arc::new(AtomicUsize::new(0));
+    let (ready_tx, ready_rx) = mpsc::channel();
+
+    let thread_stop = Arc::clone(&stop);
+    let thread_looper = Arc::clone(&looper);
+    let queue_value = queue as usize;
+    let state_value = state as usize;
+
+    let thread = std::thread::spawn(move || {
+        input_worker_main(
+            queue_value,
+            state_value,
+            thread_stop,
+            thread_looper,
+            ready_tx,
+        );
+    });
+
+    match ready_rx.recv_timeout(Duration::from_secs(1)) {
+        Ok(true) => {
+            let worker = InputWorker {
+                queue: queue_value,
+                stop,
+                looper,
+                thread,
+            };
+
+            let mut guard = match unsafe { &*state }.input_worker.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            *guard = Some(worker);
+        }
+        _ => {
+            stop.store(true, Ordering::Release);
+
+            let looper_value = looper.load(Ordering::Acquire);
+            if looper_value != 0 {
+                unsafe {
+                    ALooper_wake(looper_value as *mut ALooper);
+                }
+            }
+
+            let _ = thread.join();
+            log_str("INPUT_QUEUE=FAIL worker-not-ready");
+        }
+    }
+}
+
+unsafe extern "C" fn on_input_queue_created(
+    activity: *mut ANativeActivity,
+    queue: *mut AInputQueue,
+) {
+    log_str("native input queue created");
+
+    if activity.is_null() {
+        return;
+    }
+
+    let state = unsafe { (*activity).instance.cast::<HostState>() };
+    start_input_worker(state, queue);
+}
+
+unsafe extern "C" fn on_input_queue_destroyed(
+    activity: *mut ANativeActivity,
+    _queue: *mut AInputQueue,
+) {
+    log_str("native input queue destroyed");
+
+    if activity.is_null() {
+        return;
+    }
+
+    let state = unsafe { (*activity).instance.cast::<HostState>() };
+    stop_input_worker(state);
 }
 
 fn pixel_ratio(activity: *mut ANativeActivity) -> f64 {
@@ -812,9 +1348,7 @@ unsafe fn start_flutter(
 
     put_bool(&mut project, OFF_PROJECT_ENABLE_WIDE_GAMUT, false);
 
-    // Phase 6 uses Flutter's software renderer for first-frame proof.
-    // Explicitly disable Impeller so DisplayList text is generated for
-    // the Skia/software canvas instead of Impeller.
+    // Phase 6 software first-frame proof must keep Impeller disabled.
     static EXECUTABLE_NAME: &[u8] = b"rodin_essential\0";
     static DISABLE_IMPELLER: &[u8] = b"--enable-impeller=false\0";
 
@@ -1059,6 +1593,8 @@ unsafe extern "C" fn on_destroy(activity: *mut ANativeActivity) {
         return;
     }
 
+    stop_input_worker(state);
+
     let engine = {
         let mut guard = match unsafe { &*state }.engine.lock() {
             Ok(guard) => guard,
@@ -1136,6 +1672,8 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
         (*callbacks).on_native_window_resized = Some(on_window_resized);
         (*callbacks).on_native_window_redraw_needed = Some(on_window_redraw);
         (*callbacks).on_native_window_destroyed = Some(on_window_destroyed);
+        (*callbacks).on_input_queue_created = Some(on_input_queue_created);
+        (*callbacks).on_input_queue_destroyed = Some(on_input_queue_destroyed);
         (*callbacks).on_low_memory = Some(on_low_memory);
     }
 
