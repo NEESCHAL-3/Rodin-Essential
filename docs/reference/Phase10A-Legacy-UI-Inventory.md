@@ -3,7 +3,7 @@
 - Legacy root: `/home/neeschal/AndroidStudioProjects/XiaomiPartsProbe-Charging`
 - UI source: `app/src/main/kotlin/io/github/neeschal/xiaomiparts/MainActivity.kt`
 - MainActivity SHA-256: `abaa86b36c6b543ecebef57e540c0c4ad2e3a91858965722fb3dea886cba9971`
-- Purpose: visual/behavior reference only; no legacy runtime dependency.
+- Reference only; no legacy runtime dependency.
 
 ## Screen graph
 - `Home`
@@ -19,6 +19,66 @@
 - `Diagnostics`
 
 ## Composables
+- `XiaomiPartsApp` — line 211
+- `HomeScreen` — line 523
+- `HubsScreen` — line 638
+- `ChargingScreen` — line 761
+- `ChargingHeroCard` — line 1024
+- `PremiumTelemetryItem` — line 1765
+- `PremiumBatteryGlyph` — line 1795
+- `SupportScreen` — line 1882
+- `SocialLinkCard` — line 2020
+- `TouchBoostScreen` — line 2083
+- `DisplayStudioScreen` — line 2156
+- `AdvancedConfigurationScreen` — line 2378
+- `AdvancedChoiceCard` — line 2599
+- `AdvancedOptionChip` — line 2658
+- `CpuCoreControlScreen` — line 2687
+- `CpuCoreSwitchCard` — line 2906
+- `CpuLockedCoreCard` — line 2935
+- `PerformanceScreen` — line 2972
+- `ResolutionScreen` — line 3039
+- `DiagnosticsScreen` — line 3109
+- `AdaptiveBrightnessAssistCard` — line 3171
+- `BrightnessAssistantDiagnosticCard` — line 3243
+- `BrightnessSensorMapperCard` — line 3318
+- `PerAppManageAppsCard` — line 3561
+- `PerAppPerformanceModeCard` — line 3604
+- `PerformanceProfilesCard` — line 3655
+- `PerformanceProfileOption` — line 3774
+- `BottomGlassBar` — line 3833
+- `DetailHeader` — line 3968
+- `LiveChip` — line 4026
+- `PulseDot` — line 4053
+- `PremiumLiveGlyph` — line 4077
+- `ActiveFeatureMini` — line 4122
+- `LiveDashboardHero` — line 4158
+- `DisplayPreviewHero` — line 4272
+- `HeroCard` — line 4373
+- `SurfaceCard` — line 4413
+- `CompactFeatureCard` — line 4441
+- `HubRowItem` — line 4485
+- `IconTile` — line 4535
+- `BetterSummaryChip` — line 4557
+- `StatusPill` — line 4585
+- `SettingSwitchCard` — line 4607
+- `SunlightModeCard` — line 4647
+- `SilkyBrightnessCard` — line 4721
+- `VideoEnhancementCard` — line 4786
+- `DolbyHdrCard` — line 4856
+- `PlaceholderFeatureCard` — line 4926
+- `SupportGroupCard` — line 4956
+- `MiniInfoCard` — line 4976
+- `PreviewSwatch` — line 4999
+- `ResolutionVisualBar` — line 5043
+- `HubMiniPreview` — line 5074
+- `MiniBar` — line 5129
+- `MiniDot` — line 5144
+- `MiniRect` — line 5155
+- `MiniLogLine` — line 5170
+- `SmallBullet` — line 5182
+- `StatusLine` — line 5191
+- `SectionLabel` — line 5220
 
 ## UI strings
 - Rodin Essentials
@@ -62,11 +122,8 @@
 - Touch Boost
 - Display Studio
 - All modules
-- Display, performance, battery and charging controls
 - Community & Support
-- Join the community, get help, and report bugs
 - Touch
-- Boost on
 - Mode
 - Gamut
 - Voltage
@@ -77,54 +134,34 @@
 - Power
 - Temperature
 - GitHub
-- Source code and development
 - Telegram Group
-- Community chat and support
-- Low-latency touch response
 - Touch responsiveness
-- Applies Xiaomi touch values for faster tap response.
 - Behaviour
-- Colour and display tuning
 - Advanced Configuration
-- CPU/GPU governors and storage scheduler
 - Live hardware control
-- Verified controls with live applied-value readback
 - Efficiency
 - Performance
 - Prime
 - Efficiency cluster
-- CPU0–CPU3 governor
 - Performance cluster
-- CPU4–CPU6 governor
 - Prime cluster
-- CPU7 governor
 - GPU governor
-- Mali devfreq policy
 - Userdata UFS scheduler
-- /sys/block/sdc/queue/scheduler
 - CPU Core Control
-- Manage CPU clusters and active cores
 - 8-core CPU topology
-- 4 efficiency / 3 performance / 1 prime
 - Manual core control
 - CPU$core
-- Thermal and FPS tools
 - Performance System
 - Resolution
-- Display density controls
 - Screen presets
-- Choose display density profiles.
 - QHD+ 2560 × 1440
 - FHD+ 2400 × 1080
 - HD+ 1600 × 720
 - Diagnostics
-- Checks and calibration
 - Service status
-- Hardware interfaces and calibration tools
 - Fingerprint calibration
 - Speaker calibration
 - Adaptive Brightness Assist
-- Keeps auto brightness responsive using live light sensor data.
 - Brightness Assistant
 - Brightness Sensor Mapper
 - Per-app Profiles
@@ -132,6 +169,29 @@
 - Balanced
 - Battery Saver
 - Gaming
+- Display, performance, battery and charging controls
+- Join the community, get help, and report bugs
+- Boost on
+- Source code and development
+- Community chat and support
+- Low-latency touch response
+- Applies Xiaomi touch values for faster tap response.
+- Colour and display tuning
+- CPU/GPU governors and storage scheduler
+- Verified controls with live applied-value readback
+- CPU0–CPU3 governor
+- CPU4–CPU6 governor
+- CPU7 governor
+- Mali devfreq policy
+- /sys/block/sdc/queue/scheduler
+- Manage CPU clusters and active cores
+- 4 efficiency / 3 performance / 1 prime
+- Thermal and FPS tools
+- Display density controls
+- Choose display density profiles.
+- Checks and calibration
+- Hardware interfaces and calibration tools
+- Keeps auto brightness responsive using live light sensor data.
 - Quick controls
 - Live CPU clocks
 - CPU governors
@@ -225,6 +285,16 @@
 - `ic_aba_tile`
 
 ## Animation primitives
+- `AnimatedContent` — line 23
+- `animateFloatAsState` — line 28
+- `infiniteRepeatable` — line 29
+- `rememberInfiniteTransition` — line 30
+- `tween` — line 31
+- `fadeIn` — line 32
+- `fadeOut` — line 33
+- `slideInHorizontally` — line 34
+- `slideOutHorizontally` — line 35
+- `graphicsLayer` — line 108
 - `AnimatedContent` — line 327
 - `slideInHorizontally` — line 335
 - `tween` — line 337
@@ -234,6 +304,7 @@
 - `tween` — line 356
 - `fadeOut` — line 364
 - `tween` — line 366
+- `rememberInfiniteTransition` — line 1098
 - `infiniteRepeatable` — line 1111
 - `tween` — line 1113
 - `infiniteRepeatable` — line 1144
@@ -246,28 +317,46 @@
 - `tween` — line 1221
 - `animateFloatAsState` — line 1243
 - `tween` — line 1245
+- `graphicsLayer` — line 1348
+- `graphicsLayer` — line 1388
+- `graphicsLayer` — line 1411
+- `graphicsLayer` — line 1427
+- `graphicsLayer` — line 1457
+- `graphicsLayer` — line 1509
 - `AnimatedContent` — line 1546
-- `fadeIn` — line 1549
 - `tween` — line 1549
-- `fadeOut` — line 1550
+- `fadeIn` — line 1549
 - `tween` — line 1550
+- `fadeOut` — line 1550
 - `AnimatedContent` — line 1597
-- `fadeIn` — line 1600
 - `tween` — line 1600
-- `fadeOut` — line 1601
+- `fadeIn` — line 1600
 - `tween` — line 1601
+- `fadeOut` — line 1601
+- `graphicsLayer` — line 1632
+- `rememberInfiniteTransition` — line 1921
 - `infiniteRepeatable` — line 1926
 - `tween` — line 1927
+- `graphicsLayer` — line 1967
+- `tween` — line 3881
+- `rememberInfiniteTransition` — line 4054
 - `infiniteRepeatable` — line 4060
 - `tween` — line 4061
+- `graphicsLayer` — line 4071
+- `tween` — line 4206
+- `tween` — line 4325
+- `tween` — line 4665
+- `tween` — line 4739
+- `tween` — line 4804
+- `tween` — line 4874
+- `tween` — line 5052
 - `animateFloatAsState` — line 5238
 - `tween` — line 5240
+- `graphicsLayer` — line 5245
 
 ## Major component usage
 - `Scaffold`: 2
 - `LazyColumn`: 12
-- `Surface`: 12
-- `Card`: 7
 - `BottomGlassBar`: 2
 - `SurfaceCard`: 23
 - `CompactFeatureCard`: 3
@@ -275,7 +364,8 @@
 - `BetterSummaryChip`: 7
 - `LiveDashboardHero`: 2
 - `FlowRow`: 3
-- `AnimatedContent`: 4
+- `Card`: 7
+- `Surface`: 12
 
 ## UI/state preference keys
 - `sunlight_mode_enabled`
@@ -326,4 +416,3 @@
 - `app/src/main/res/values-night/themes.xml` — 710 bytes — `2085d9a356082b35738157979f39669d354027a5238ff2063896fd69f929fb92`
 - `app/src/main/res/xml/backup_rules.xml` — 478 bytes — `6cf1a27e6807b1d24e41d3fbe7ddc1bfe1f42226027964f6eaf477d71b43b283`
 - `app/src/main/res/xml/data_extraction_rules.xml` — 551 bytes — `cb1fc47ab4a984530ed60e0e6ee638929c3038290e7e7e0b4b03a3a30fbe7381`
-
