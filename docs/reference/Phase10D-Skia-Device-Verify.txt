@@ -1,5 +1,5 @@
 ===== RODIN ESSENTIAL PHASE 10D SKIA DEVICE VERIFY =====
-commit=869d010
+commit=ab23277
 renderer=Skia/OpenGL
 impeller_markers=0
 engine=PASS
@@ -9,5 +9,5 @@ vsync120=PASS
 input=PASS
 crash_anr=0
 context_errors=0
-screenshot=/home/neeschal/Nees/Rodin-Essential/out/phase10d-skia-device-verify/20260815-160827/phase10d-home.png
+screenshot=/home/neeschal/Nees/Rodin-Essential/out/phase10d-skia-device-verify/20260815-171044/phase10d-home.png
 PHASE10D_SKIA_DEVICE=PASS
