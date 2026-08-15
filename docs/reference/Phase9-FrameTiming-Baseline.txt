@@ -1,0 +1,30 @@
+===== RODIN ESSENTIAL PHASE 9B FLUTTER FRAME TIMING =====
+frames=1451
+observed_hz=119.654
+frame_budget_us=8334
+build_p95_us=699
+build_p99_us=1132
+raster_p95_us=4052
+raster_p99_us=4780
+total_p95_us=6782
+total_p99_us=7817
+build_missed_pct=0.000
+raster_missed_pct=0.276
+total_over_budget_pct=0.689
+
+PASS FRAME_COUNT: actual=1451 target=>=600
+PASS OBSERVED_VSYNC_RATE: actual=119.654 target=110..125 Hz
+PASS BUILD_P95: actual=699 target=<=8334 us
+PASS RASTER_P95: actual=4052 target=<=8334 us
+PASS BUILD_MISSED_RATE: actual=0.0 target=<=1.0%
+PASS RASTER_MISSED_RATE: actual=0.276 target=<=1.0%
+
+NOTE: Flutter FrameTiming measures framework build, raster-thread work, and total engine span.
+NOTE: SurfaceFlinger FrameTimeline attribution is unavailable for this direct NativeActivity/ANativeWindow path in the captured trace.
+PHASE9B_FRAME_TIMING=PASS
+
+commit_before=5a1caef
+benchmark_apk=/home/neeschal/Nees/Rodin-Essential/out/phase9b-frame-timing/20260815-125645/Rodin-Essential-Phase9B.apk
+benchmark_apk_sha256=305a2a34a5d7c41f2bcf1a380962bcd387107d0e34a842b2a3644bc39312531e
+raw_log=/home/neeschal/Nees/Rodin-Essential/out/phase9b-frame-timing/20260815-125645/frame-timing-logcat.txt
+measurement=Flutter SchedulerBinding.addTimingsCallback / FrameTiming
