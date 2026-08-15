@@ -96,12 +96,9 @@ pub struct ANativeActivityCallbacks {
         Option<unsafe extern "C" fn(*mut ANativeActivity, *mut ANativeWindow)>,
     on_native_window_destroyed:
         Option<unsafe extern "C" fn(*mut ANativeActivity, *mut ANativeWindow)>,
-    on_input_queue_created:
-        Option<unsafe extern "C" fn(*mut ANativeActivity, *mut AInputQueue)>,
-    on_input_queue_destroyed:
-        Option<unsafe extern "C" fn(*mut ANativeActivity, *mut AInputQueue)>,
-    on_content_rect_changed:
-        Option<unsafe extern "C" fn(*mut ANativeActivity, *const ARect)>,
+    on_input_queue_created: Option<unsafe extern "C" fn(*mut ANativeActivity, *mut AInputQueue)>,
+    on_input_queue_destroyed: Option<unsafe extern "C" fn(*mut ANativeActivity, *mut AInputQueue)>,
+    on_content_rect_changed: Option<unsafe extern "C" fn(*mut ANativeActivity, *const ARect)>,
     on_configuration_changed: Option<unsafe extern "C" fn(*mut ANativeActivity)>,
     on_low_memory: Option<unsafe extern "C" fn(*mut ANativeActivity)>,
 }
@@ -229,11 +226,7 @@ impl HostState {
 
 #[link(name = "log")]
 unsafe extern "C" {
-    fn __android_log_write(
-        prio: c_int,
-        tag: *const c_char,
-        text: *const c_char,
-    ) -> c_int;
+    fn __android_log_write(prio: c_int, tag: *const c_char, text: *const c_char) -> c_int;
 }
 
 #[link(name = "android")]
@@ -270,10 +263,7 @@ unsafe extern "C" {
 
     fn AConfiguration_new() -> *mut AConfiguration;
     fn AConfiguration_delete(config: *mut AConfiguration);
-    fn AConfiguration_fromAssetManager(
-        config: *mut AConfiguration,
-        manager: *mut AAssetManager,
-    );
+    fn AConfiguration_fromAssetManager(config: *mut AConfiguration, manager: *mut AAssetManager);
     fn AConfiguration_getDensity(config: *mut AConfiguration) -> i32;
 
     fn ALooper_prepare(opts: c_int) -> *mut ALooper;
@@ -289,46 +279,22 @@ unsafe extern "C" {
         queue: *mut AInputQueue,
         looper: *mut ALooper,
         ident: c_int,
-        callback: Option<
-            unsafe extern "C" fn(c_int, c_int, *mut c_void) -> c_int,
-        >,
+        callback: Option<unsafe extern "C" fn(c_int, c_int, *mut c_void) -> c_int>,
         data: *mut c_void,
     );
     fn AInputQueue_detachLooper(queue: *mut AInputQueue);
-    fn AInputQueue_getEvent(
-        queue: *mut AInputQueue,
-        out_event: *mut *mut AInputEvent,
-    ) -> i32;
-    fn AInputQueue_preDispatchEvent(
-        queue: *mut AInputQueue,
-        event: *mut AInputEvent,
-    ) -> i32;
-    fn AInputQueue_finishEvent(
-        queue: *mut AInputQueue,
-        event: *mut AInputEvent,
-        handled: c_int,
-    );
+    fn AInputQueue_getEvent(queue: *mut AInputQueue, out_event: *mut *mut AInputEvent) -> i32;
+    fn AInputQueue_preDispatchEvent(queue: *mut AInputQueue, event: *mut AInputEvent) -> i32;
+    fn AInputQueue_finishEvent(queue: *mut AInputQueue, event: *mut AInputEvent, handled: c_int);
 
     fn AInputEvent_getType(event: *const AInputEvent) -> i32;
     fn AMotionEvent_getAction(event: *const AInputEvent) -> i32;
     fn AMotionEvent_getEventTime(event: *const AInputEvent) -> i64;
     fn AMotionEvent_getPointerCount(event: *const AInputEvent) -> usize;
-    fn AMotionEvent_getPointerId(
-        event: *const AInputEvent,
-        pointer_index: usize,
-    ) -> i32;
-    fn AMotionEvent_getX(
-        event: *const AInputEvent,
-        pointer_index: usize,
-    ) -> f32;
-    fn AMotionEvent_getY(
-        event: *const AInputEvent,
-        pointer_index: usize,
-    ) -> f32;
-    fn AMotionEvent_getPressure(
-        event: *const AInputEvent,
-        pointer_index: usize,
-    ) -> f32;
+    fn AMotionEvent_getPointerId(event: *const AInputEvent, pointer_index: usize) -> i32;
+    fn AMotionEvent_getX(event: *const AInputEvent, pointer_index: usize) -> f32;
+    fn AMotionEvent_getY(event: *const AInputEvent, pointer_index: usize) -> f32;
+    fn AMotionEvent_getPressure(event: *const AInputEvent, pointer_index: usize) -> f32;
 
     fn AChoreographer_getInstance() -> *mut AChoreographer;
     fn AChoreographer_postFrameCallback64(
@@ -418,10 +384,7 @@ unsafe extern "C" {
 
     fn FlutterEngineShutdown(engine: *mut c_void) -> c_int;
 
-    fn FlutterEngineSendWindowMetricsEvent(
-        engine: *mut c_void,
-        event: *const c_void,
-    ) -> c_int;
+    fn FlutterEngineSendWindowMetricsEvent(engine: *mut c_void, event: *const c_void) -> c_int;
 
     fn FlutterEngineSendPointerEvent(
         engine: *mut c_void,
@@ -440,10 +403,7 @@ unsafe extern "C" {
 
     fn FlutterEngineNotifyLowMemoryWarning(engine: *mut c_void) -> c_int;
 
-    fn FlutterEngineSendPlatformMessage(
-        engine: *mut c_void,
-        message: *const c_void,
-    ) -> c_int;
+    fn FlutterEngineSendPlatformMessage(engine: *mut c_void, message: *const c_void) -> c_int;
 
     fn FlutterEngineRunsAOTCompiledDartCode() -> bool;
 }
@@ -454,11 +414,7 @@ fn log_str(message: &str) {
     let clean = message.replace('\0', " ");
     if let Ok(text) = CString::new(clean) {
         unsafe {
-            __android_log_write(
-                ANDROID_LOG_INFO,
-                TAG.as_ptr().cast(),
-                text.as_ptr(),
-            );
+            __android_log_write(ANDROID_LOG_INFO, TAG.as_ptr().cast(), text.as_ptr());
         }
     }
 }
@@ -485,10 +441,7 @@ fn dl_error_string() -> String {
 fn put_usize(buffer: &mut [u8], offset: usize, value: usize) {
     if offset + core::mem::size_of::<usize>() <= buffer.len() {
         unsafe {
-            ptr::write_unaligned(
-                buffer.as_mut_ptr().add(offset).cast::<usize>(),
-                value,
-            );
+            ptr::write_unaligned(buffer.as_mut_ptr().add(offset).cast::<usize>(), value);
         }
     }
 }
@@ -496,10 +449,7 @@ fn put_usize(buffer: &mut [u8], offset: usize, value: usize) {
 fn put_i32(buffer: &mut [u8], offset: usize, value: i32) {
     if offset + core::mem::size_of::<i32>() <= buffer.len() {
         unsafe {
-            ptr::write_unaligned(
-                buffer.as_mut_ptr().add(offset).cast::<i32>(),
-                value,
-            );
+            ptr::write_unaligned(buffer.as_mut_ptr().add(offset).cast::<i32>(), value);
         }
     }
 }
@@ -507,10 +457,7 @@ fn put_i32(buffer: &mut [u8], offset: usize, value: i32) {
 fn put_u64(buffer: &mut [u8], offset: usize, value: u64) {
     if offset + core::mem::size_of::<u64>() <= buffer.len() {
         unsafe {
-            ptr::write_unaligned(
-                buffer.as_mut_ptr().add(offset).cast::<u64>(),
-                value,
-            );
+            ptr::write_unaligned(buffer.as_mut_ptr().add(offset).cast::<u64>(), value);
         }
     }
 }
@@ -518,10 +465,7 @@ fn put_u64(buffer: &mut [u8], offset: usize, value: u64) {
 fn put_i64(buffer: &mut [u8], offset: usize, value: i64) {
     if offset + core::mem::size_of::<i64>() <= buffer.len() {
         unsafe {
-            ptr::write_unaligned(
-                buffer.as_mut_ptr().add(offset).cast::<i64>(),
-                value,
-            );
+            ptr::write_unaligned(buffer.as_mut_ptr().add(offset).cast::<i64>(), value);
         }
     }
 }
@@ -529,10 +473,7 @@ fn put_i64(buffer: &mut [u8], offset: usize, value: i64) {
 fn put_f64(buffer: &mut [u8], offset: usize, value: f64) {
     if offset + core::mem::size_of::<f64>() <= buffer.len() {
         unsafe {
-            ptr::write_unaligned(
-                buffer.as_mut_ptr().add(offset).cast::<f64>(),
-                value,
-            );
+            ptr::write_unaligned(buffer.as_mut_ptr().add(offset).cast::<f64>(), value);
         }
     }
 }
@@ -543,20 +484,10 @@ fn put_bool(buffer: &mut [u8], offset: usize, value: bool) {
     }
 }
 
-fn read_asset(
-    manager: *mut AAssetManager,
-    name: &str,
-) -> Result<Vec<u8>, String> {
-    let c_name = CString::new(name)
-        .map_err(|_| format!("invalid asset name: {name}"))?;
+fn read_asset(manager: *mut AAssetManager, name: &str) -> Result<Vec<u8>, String> {
+    let c_name = CString::new(name).map_err(|_| format!("invalid asset name: {name}"))?;
 
-    let asset = unsafe {
-        AAssetManager_open(
-            manager,
-            c_name.as_ptr(),
-            AASSET_MODE_STREAMING,
-        )
-    };
+    let asset = unsafe { AAssetManager_open(manager, c_name.as_ptr(), AASSET_MODE_STREAMING) };
 
     if asset.is_null() {
         return Err(format!("asset not found: {name}"));
@@ -603,12 +534,10 @@ fn read_asset(
 
 fn write_file(path: &Path, data: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        create_dir_all(parent)
-            .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
 
-    let mut file = File::create(path)
-        .map_err(|e| format!("create {}: {e}", path.display()))?;
+    let mut file = File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
 
     file.write_all(data)
         .map_err(|e| format!("write {}: {e}", path.display()))
@@ -632,14 +561,12 @@ fn prepare_runtime_files(
     let assets_dir = base.join("flutter_assets");
     let cache_dir = base.join("cache");
 
-    create_dir_all(&assets_dir)
-        .map_err(|e| format!("mkdir {}: {e}", assets_dir.display()))?;
-    create_dir_all(&cache_dir)
-        .map_err(|e| format!("mkdir {}: {e}", cache_dir.display()))?;
+    create_dir_all(&assets_dir).map_err(|e| format!("mkdir {}: {e}", assets_dir.display()))?;
+    create_dir_all(&cache_dir).map_err(|e| format!("mkdir {}: {e}", cache_dir.display()))?;
 
     let index_bytes = read_asset(manager, "flutter_assets.index")?;
-    let index = String::from_utf8(index_bytes)
-        .map_err(|e| format!("flutter_assets.index UTF-8: {e}"))?;
+    let index =
+        String::from_utf8(index_bytes).map_err(|e| format!("flutter_assets.index UTF-8: {e}"))?;
 
     let mut copied = 0usize;
 
@@ -714,11 +641,8 @@ unsafe fn send_touch_pointer(
 
     let x = unsafe { AMotionEvent_getX(motion_event, pointer_index) } as f64;
     let y = unsafe { AMotionEvent_getY(motion_event, pointer_index) } as f64;
-    let device =
-        unsafe { AMotionEvent_getPointerId(motion_event, pointer_index) };
-    let pressure =
-        unsafe { AMotionEvent_getPressure(motion_event, pointer_index) }
-            as f64;
+    let device = unsafe { AMotionEvent_getPointerId(motion_event, pointer_index) };
+    let pressure = unsafe { AMotionEvent_getPressure(motion_event, pointer_index) } as f64;
 
     let mut pointer = vec![0u8; FLUTTER_POINTER_EVENT_SIZE];
 
@@ -750,21 +674,13 @@ unsafe fn send_touch_pointer(
     put_f64(&mut pointer, OFF_POINTER_PRESSURE_MIN, 0.0);
     put_f64(&mut pointer, OFF_POINTER_PRESSURE_MAX, 1.0);
 
-    let result = unsafe {
-        FlutterEngineSendPointerEvent(
-            engine as *mut c_void,
-            pointer.as_ptr().cast(),
-            1,
-        )
-    };
+    let result =
+        unsafe { FlutterEngineSendPointerEvent(engine as *mut c_void, pointer.as_ptr().cast(), 1) };
 
     result == 0
 }
 
-unsafe fn handle_motion_event(
-    state: *mut HostState,
-    event: *mut AInputEvent,
-) -> bool {
+unsafe fn handle_motion_event(state: *mut HostState, event: *mut AInputEvent) -> bool {
     let action = unsafe { AMotionEvent_getAction(event) };
     let masked = action & AMOTION_EVENT_ACTION_MASK;
     let pointer_count = unsafe { AMotionEvent_getPointerCount(event) };
@@ -773,9 +689,8 @@ unsafe fn handle_motion_event(
         return false;
     }
 
-    let action_index =
-        ((action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)
-            >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT) as usize;
+    let action_index = ((action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)
+        >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT) as usize;
 
     match masked {
         AMOTION_EVENT_ACTION_DOWN | AMOTION_EVENT_ACTION_POINTER_DOWN => {
@@ -783,35 +698,19 @@ unsafe fn handle_motion_event(
                 return false;
             }
 
-            let add_ok = unsafe {
-                send_touch_pointer(
-                    state,
-                    event,
-                    action_index,
-                    FLUTTER_POINTER_ADD,
-                )
-            };
-            let down_ok = unsafe {
-                send_touch_pointer(
-                    state,
-                    event,
-                    action_index,
-                    FLUTTER_POINTER_DOWN,
-                )
-            };
+            let add_ok =
+                unsafe { send_touch_pointer(state, event, action_index, FLUTTER_POINTER_ADD) };
+            let down_ok =
+                unsafe { send_touch_pointer(state, event, action_index, FLUTTER_POINTER_DOWN) };
 
             if !state.is_null()
                 && !unsafe { &*state }
                     .first_input_logged
                     .swap(true, Ordering::AcqRel)
             {
-                let x =
-                    unsafe { AMotionEvent_getX(event, action_index) };
-                let y =
-                    unsafe { AMotionEvent_getY(event, action_index) };
-                log_str(&format!(
-                    "INPUT_TOUCH=PASS action=DOWN x={x:.1} y={y:.1}"
-                ));
+                let x = unsafe { AMotionEvent_getX(event, action_index) };
+                let y = unsafe { AMotionEvent_getY(event, action_index) };
+                log_str(&format!("INPUT_TOUCH=PASS action=DOWN x={x:.1} y={y:.1}"));
             }
 
             add_ok && down_ok
@@ -820,14 +719,7 @@ unsafe fn handle_motion_event(
             let mut ok = true;
 
             for index in 0..pointer_count {
-                ok &= unsafe {
-                    send_touch_pointer(
-                        state,
-                        event,
-                        index,
-                        FLUTTER_POINTER_MOVE,
-                    )
-                };
+                ok &= unsafe { send_touch_pointer(state, event, index, FLUTTER_POINTER_MOVE) };
             }
 
             ok
@@ -837,22 +729,10 @@ unsafe fn handle_motion_event(
                 return false;
             }
 
-            let up_ok = unsafe {
-                send_touch_pointer(
-                    state,
-                    event,
-                    action_index,
-                    FLUTTER_POINTER_UP,
-                )
-            };
-            let remove_ok = unsafe {
-                send_touch_pointer(
-                    state,
-                    event,
-                    action_index,
-                    FLUTTER_POINTER_REMOVE,
-                )
-            };
+            let up_ok =
+                unsafe { send_touch_pointer(state, event, action_index, FLUTTER_POINTER_UP) };
+            let remove_ok =
+                unsafe { send_touch_pointer(state, event, action_index, FLUTTER_POINTER_REMOVE) };
 
             up_ok && remove_ok
         }
@@ -860,22 +740,8 @@ unsafe fn handle_motion_event(
             let mut ok = true;
 
             for index in 0..pointer_count {
-                ok &= unsafe {
-                    send_touch_pointer(
-                        state,
-                        event,
-                        index,
-                        FLUTTER_POINTER_CANCEL,
-                    )
-                };
-                ok &= unsafe {
-                    send_touch_pointer(
-                        state,
-                        event,
-                        index,
-                        FLUTTER_POINTER_REMOVE,
-                    )
-                };
+                ok &= unsafe { send_touch_pointer(state, event, index, FLUTTER_POINTER_CANCEL) };
+                ok &= unsafe { send_touch_pointer(state, event, index, FLUTTER_POINTER_REMOVE) };
             }
 
             ok
@@ -900,8 +766,7 @@ fn input_worker_main(
     }
 
     unsafe {
-        let looper =
-            ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
+        let looper = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
 
         if looper.is_null() {
             log_str("INPUT_QUEUE=FAIL looper=null");
@@ -909,25 +774,14 @@ fn input_worker_main(
             return;
         }
 
-        AInputQueue_attachLooper(
-            queue,
-            looper,
-            INPUT_LOOPER_IDENT,
-            None,
-            ptr::null_mut(),
-        );
+        AInputQueue_attachLooper(queue, looper, INPUT_LOOPER_IDENT, None, ptr::null_mut());
 
         looper_slot.store(looper as usize, Ordering::Release);
         log_str("INPUT_QUEUE=READY");
         let _ = ready.send(true);
 
         while !stop.load(Ordering::Acquire) {
-            let ident = ALooper_pollOnce(
-                250,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-            );
+            let ident = ALooper_pollOnce(250, ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
 
             if stop.load(Ordering::Acquire) {
                 break;
@@ -1004,10 +858,7 @@ fn stop_input_worker(state: *mut HostState) {
 
     match worker.thread.join() {
         Ok(()) => {
-            log_str(&format!(
-                "input worker joined queue=0x{:x}",
-                worker.queue
-            ));
+            log_str(&format!("input worker joined queue=0x{:x}", worker.queue));
         }
         Err(_) => {
             log_str("input worker join failed");
@@ -1015,10 +866,7 @@ fn stop_input_worker(state: *mut HostState) {
     }
 }
 
-fn start_input_worker(
-    state: *mut HostState,
-    queue: *mut AInputQueue,
-) {
+fn start_input_worker(state: *mut HostState, queue: *mut AInputQueue) {
     if state.is_null() || queue.is_null() {
         log_str("INPUT_QUEUE=FAIL null state/queue");
         return;
@@ -1128,10 +976,7 @@ fn pixel_ratio(activity: *mut ANativeActivity) -> f64 {
     }
 }
 
-unsafe fn symbol(
-    handle: *mut c_void,
-    name: &'static [u8],
-) -> Result<*const u8, String> {
+unsafe fn symbol(handle: *mut c_void, name: &'static [u8]) -> Result<*const u8, String> {
     let symbol = unsafe { dlsym(handle, name.as_ptr().cast()) };
 
     if symbol.is_null() {
@@ -1159,10 +1004,7 @@ fn egl_error_hex() -> String {
     unsafe { format!("0x{:04x}", eglGetError()) }
 }
 
-unsafe fn init_egl(
-    state: *mut HostState,
-    window: *mut ANativeWindow,
-) -> Result<(), String> {
+unsafe fn init_egl(state: *mut HostState, window: *mut ANativeWindow) -> Result<(), String> {
     if state.is_null() || window.is_null() {
         return Err("init_egl null state/window".to_string());
     }
@@ -1216,34 +1058,24 @@ unsafe fn init_egl(
                 1,
                 &mut config_count,
             )
-        } == EGL_FALSE || config_count < 1 || config.is_null()
+        } == EGL_FALSE
+            || config_count < 1
+            || config.is_null()
         {
             unsafe { eglTerminate(display) };
             return Err(format!("eglChooseConfig failed {}", egl_error_hex()));
         }
 
         let context_attribs = [EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE];
-        let context = unsafe {
-            eglCreateContext(
-                display,
-                config,
-                ptr::null_mut(),
-                context_attribs.as_ptr(),
-            )
-        };
+        let context =
+            unsafe { eglCreateContext(display, config, ptr::null_mut(), context_attribs.as_ptr()) };
         if context.is_null() {
             unsafe { eglTerminate(display) };
             return Err(format!("eglCreateContext failed {}", egl_error_hex()));
         }
 
-        let resource_context = unsafe {
-            eglCreateContext(
-                display,
-                config,
-                context,
-                context_attribs.as_ptr(),
-            )
-        };
+        let resource_context =
+            unsafe { eglCreateContext(display, config, context, context_attribs.as_ptr()) };
         if resource_context.is_null() {
             unsafe {
                 eglDestroyContext(display, context);
@@ -1256,9 +1088,8 @@ unsafe fn init_egl(
         }
 
         let pbuffer_attribs = [EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE];
-        let resource_surface = unsafe {
-            eglCreatePbufferSurface(display, config, pbuffer_attribs.as_ptr())
-        };
+        let resource_surface =
+            unsafe { eglCreatePbufferSurface(display, config, pbuffer_attribs.as_ptr()) };
         if resource_surface.is_null() {
             unsafe {
                 eglDestroyContext(display, resource_context);
@@ -1288,14 +1119,9 @@ unsafe fn init_egl(
     let config = egl.config as *mut c_void;
 
     let mut visual_id = 0;
-    if unsafe {
-        eglGetConfigAttrib(
-            display,
-            config,
-            EGL_NATIVE_VISUAL_ID,
-            &mut visual_id,
-        )
-    } != EGL_FALSE && visual_id != 0
+    if unsafe { eglGetConfigAttrib(display, config, EGL_NATIVE_VISUAL_ID, &mut visual_id) }
+        != EGL_FALSE
+        && visual_id != 0
     {
         unsafe {
             ANativeWindow_setBuffersGeometry(window, 0, 0, visual_id);
@@ -1303,14 +1129,8 @@ unsafe fn init_egl(
     }
 
     let surface_attribs = [EGL_NONE];
-    let surface = unsafe {
-        eglCreateWindowSurface(
-            display,
-            config,
-            window.cast(),
-            surface_attribs.as_ptr(),
-        )
-    };
+    let surface =
+        unsafe { eglCreateWindowSurface(display, config, window.cast(), surface_attribs.as_ptr()) };
 
     if surface.is_null() {
         return Err(format!("eglCreateWindowSurface failed {}", egl_error_hex()));
@@ -1329,9 +1149,7 @@ unsafe fn init_egl(
     log_str(&format!(
         "EGL_INIT=PASS visual_id={visual_id} renderer=OpenGL_ES3 binding=deferred_raster generation={generation}"
     ));
-    log_str(&format!(
-        "EGL_SURFACE_READY=PASS generation={generation}"
-    ));
+    log_str(&format!("EGL_SURFACE_READY=PASS generation={generation}"));
 
     Ok(())
 }
@@ -1379,12 +1197,7 @@ unsafe fn destroy_egl_all(state: *mut HostState) {
     unsafe {
         // FlutterEngineShutdown has already completed before this full teardown,
         // so no raster thread can still own the render context here.
-        eglMakeCurrent(
-            display,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-        );
+        eglMakeCurrent(display, ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
 
         if egl.surface != 0 {
             eglDestroySurface(display, egl.surface as *mut c_void);
@@ -1432,12 +1245,7 @@ unsafe extern "C" fn egl_make_current(user_data: *mut c_void) -> bool {
         // context is still current here, detach it on its owning thread before
         // reclaiming retired window surfaces.
         let cleared = unsafe {
-            eglMakeCurrent(
-                display,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-            ) != EGL_FALSE
+            eglMakeCurrent(display, ptr::null_mut(), ptr::null_mut(), ptr::null_mut()) != EGL_FALSE
         };
 
         if cleared && !egl.retired_surfaces.is_empty() {
@@ -1447,9 +1255,7 @@ unsafe extern "C" fn egl_make_current(user_data: *mut c_void) -> bool {
                     unsafe { eglDestroySurface(display, surface as *mut c_void) };
                 }
             }
-            log_str(&format!(
-                "EGL_RASTER_DETACH=PASS retired={retired_count}"
-            ));
+            log_str(&format!("EGL_RASTER_DETACH=PASS retired={retired_count}"));
         }
 
         return false;
@@ -1530,10 +1336,7 @@ unsafe extern "C" fn egl_present(user_data: *mut c_void) -> bool {
     }
 
     let ok = unsafe {
-        eglSwapBuffers(
-            egl.display as *mut c_void,
-            egl.surface as *mut c_void,
-        ) != EGL_FALSE
+        eglSwapBuffers(egl.display as *mut c_void, egl.surface as *mut c_void) != EGL_FALSE
     };
 
     if ok {
@@ -1545,8 +1348,8 @@ unsafe extern "C" fn egl_present(user_data: *mut c_void) -> bool {
     }
 
     if ok && !host.first_frame_logged.swap(true, Ordering::AcqRel) {
-        log_str("GPU_FIRST_FRAME=PASS backend=EGL/OpenGL/Impeller");
-        log_str("FLUTTER_FIRST_FRAME=PASS renderer=Impeller/OpenGL");
+        log_str("GPU_FIRST_FRAME=PASS backend=EGL/OpenGL/Skia");
+        log_str("FLUTTER_FIRST_FRAME=PASS renderer=Skia/OpenGL");
     }
 
     if !ok {
@@ -1601,10 +1404,7 @@ struct VsyncRequest {
     baton: isize,
 }
 
-unsafe extern "C" fn choreographer_frame_callback(
-    frame_time_nanos: i64,
-    data: *mut c_void,
-) {
+unsafe extern "C" fn choreographer_frame_callback(frame_time_nanos: i64, data: *mut c_void) {
     if data.is_null() {
         return;
     }
@@ -1620,23 +1420,13 @@ unsafe extern "C" fn choreographer_frame_callback(
         return;
     }
 
-    let period = request
-        .shared
-        .period_nanos
-        .load(Ordering::Acquire)
-        .max(1);
+    let period = request.shared.period_nanos.load(Ordering::Acquire).max(1);
 
     let start = frame_time_nanos.max(0) as u64;
     let target = start.saturating_add(period as u64);
 
-    let result = unsafe {
-        FlutterEngineOnVsync(
-            engine as *mut c_void,
-            request.baton,
-            start,
-            target,
-        )
-    };
+    let result =
+        unsafe { FlutterEngineOnVsync(engine as *mut c_void, request.baton, start, target) };
 
     if !request.shared.first_logged.swap(true, Ordering::AcqRel) {
         log_str(&format!(
@@ -1645,10 +1435,7 @@ unsafe extern "C" fn choreographer_frame_callback(
     }
 }
 
-unsafe extern "C" fn flutter_vsync_callback(
-    user_data: *mut c_void,
-    baton: isize,
-) {
+unsafe extern "C" fn flutter_vsync_callback(user_data: *mut c_void, baton: isize) {
     if user_data.is_null() {
         return;
     }
@@ -1678,10 +1465,7 @@ unsafe extern "C" fn flutter_vsync_callback(
     }
 }
 
-unsafe extern "C" fn refresh_rate_callback(
-    period_nanos: i64,
-    data: *mut c_void,
-) {
+unsafe extern "C" fn refresh_rate_callback(period_nanos: i64, data: *mut c_void) {
     if data.is_null() || period_nanos <= 0 {
         return;
     }
@@ -1691,10 +1475,7 @@ unsafe extern "C" fn refresh_rate_callback(
     log_str(&format!("DISPLAY_VSYNC_PERIOD_NS={period_nanos}"));
 }
 
-unsafe fn send_metrics(
-    activity: *mut ANativeActivity,
-    state: *mut HostState,
-) {
+unsafe fn send_metrics(activity: *mut ANativeActivity, state: *mut HostState) {
     if activity.is_null() || state.is_null() {
         return;
     }
@@ -1747,10 +1528,7 @@ unsafe fn send_metrics(
     put_bool(&mut metrics, OFF_METRICS_HAS_CONSTRAINTS, false);
 
     let result = unsafe {
-        FlutterEngineSendWindowMetricsEvent(
-            engine_value as *mut c_void,
-            metrics.as_ptr().cast(),
-        )
+        FlutterEngineSendWindowMetricsEvent(engine_value as *mut c_void, metrics.as_ptr().cast())
     };
 
     log_str(&format!(
@@ -1781,22 +1559,17 @@ unsafe fn start_flutter(
         return Err("custom Flutter engine is not running AOT code".to_string());
     }
 
-    let (assets_path, icu_path, cache_path) =
-        prepare_runtime_files(activity)?;
+    let (assets_path, icu_path, cache_path) = prepare_runtime_files(activity)?;
 
     static LIBAPP: &[u8] = b"libapp.so\0";
 
-    let app_handle = unsafe {
-        dlopen(LIBAPP.as_ptr().cast(), RTLD_NOW)
-    };
+    let app_handle = unsafe { dlopen(LIBAPP.as_ptr().cast(), RTLD_NOW) };
 
     if app_handle.is_null() {
         return Err(format!("dlopen(libapp.so) failed: {}", dl_error_string()));
     }
 
-    let vm_data = match unsafe {
-        symbol(app_handle, b"_kDartVmSnapshotData\0")
-    } {
+    let vm_data = match unsafe { symbol(app_handle, b"_kDartVmSnapshotData\0") } {
         Ok(value) => value,
         Err(error) => {
             unsafe { dlclose(app_handle) };
@@ -1804,9 +1577,7 @@ unsafe fn start_flutter(
         }
     };
 
-    let vm_instructions = match unsafe {
-        symbol(app_handle, b"_kDartVmSnapshotInstructions\0")
-    } {
+    let vm_instructions = match unsafe { symbol(app_handle, b"_kDartVmSnapshotInstructions\0") } {
         Ok(value) => value,
         Err(error) => {
             unsafe { dlclose(app_handle) };
@@ -1814,9 +1585,7 @@ unsafe fn start_flutter(
         }
     };
 
-    let isolate_data = match unsafe {
-        symbol(app_handle, b"_kDartIsolateSnapshotData\0")
-    } {
+    let isolate_data = match unsafe { symbol(app_handle, b"_kDartIsolateSnapshotData\0") } {
         Ok(value) => value,
         Err(error) => {
             unsafe { dlclose(app_handle) };
@@ -1824,22 +1593,17 @@ unsafe fn start_flutter(
         }
     };
 
-    let isolate_instructions = match unsafe {
-        symbol(app_handle, b"_kDartIsolateSnapshotInstructions\0")
-    } {
-        Ok(value) => value,
-        Err(error) => {
-            unsafe { dlclose(app_handle) };
-            return Err(error);
-        }
-    };
+    let isolate_instructions =
+        match unsafe { symbol(app_handle, b"_kDartIsolateSnapshotInstructions\0") } {
+            Ok(value) => value,
+            Err(error) => {
+                unsafe { dlclose(app_handle) };
+                return Err(error);
+            }
+        };
 
     let mut renderer = vec![0u8; FLUTTER_RENDERER_CONFIG_SIZE];
-    put_i32(
-        &mut renderer,
-        OFF_RENDERER_TYPE,
-        FLUTTER_RENDERER_OPENGL,
-    );
+    put_i32(&mut renderer, OFF_RENDERER_TYPE, FLUTTER_RENDERER_OPENGL);
 
     let gl_base = OFF_RENDERER_OPENGL;
 
@@ -1912,33 +1676,21 @@ unsafe fn start_flutter(
         OFF_PROJECT_VM_INSTRUCTIONS,
         vm_instructions as usize,
     );
-    put_usize(
-        &mut project,
-        OFF_PROJECT_VM_INSTRUCTIONS_SIZE,
-        0,
-    );
+    put_usize(&mut project, OFF_PROJECT_VM_INSTRUCTIONS_SIZE, 0);
 
     put_usize(
         &mut project,
         OFF_PROJECT_ISOLATE_DATA,
         isolate_data as usize,
     );
-    put_usize(
-        &mut project,
-        OFF_PROJECT_ISOLATE_DATA_SIZE,
-        0,
-    );
+    put_usize(&mut project, OFF_PROJECT_ISOLATE_DATA_SIZE, 0);
 
     put_usize(
         &mut project,
         OFF_PROJECT_ISOLATE_INSTRUCTIONS,
         isolate_instructions as usize,
     );
-    put_usize(
-        &mut project,
-        OFF_PROJECT_ISOLATE_INSTRUCTIONS_SIZE,
-        0,
-    );
+    put_usize(&mut project, OFF_PROJECT_ISOLATE_INSTRUCTIONS_SIZE, 0);
 
     put_usize(
         &mut project,
@@ -1972,7 +1724,7 @@ unsafe fn start_flutter(
     // Phase 7A proves the real EGL/OpenGL GPU path first. Keep Impeller
     // disabled for this one gate; Phase 7B enables Impeller on the proven GPU path.
     static EXECUTABLE_NAME: &[u8] = b"rodin_essential\0";
-    static ENABLE_IMPELLER: &[u8] = b"--enable-impeller=true\0";
+    static ENABLE_IMPELLER: &[u8] = b"--enable-impeller=false\0";
 
     let command_line_args: [*const c_char; 2] = [
         EXECUTABLE_NAME.as_ptr().cast(),
@@ -1991,7 +1743,7 @@ unsafe fn start_flutter(
         command_line_args.as_ptr() as usize,
     );
 
-    log_str("IMPELLER_REQUEST=ON backend=OpenGL");
+    log_str("IMPELLER_REQUEST=OFF backend=OpenGL/Skia");
 
     let mut engine: *mut c_void = ptr::null_mut();
 
@@ -2045,10 +1797,7 @@ unsafe fn start_flutter(
     Ok(())
 }
 
-unsafe fn send_flutter_lifecycle(
-    state: *mut HostState,
-    lifecycle: &str,
-) -> bool {
+unsafe fn send_flutter_lifecycle(state: *mut HostState, lifecycle: &str) -> bool {
     if state.is_null() {
         return false;
     }
@@ -2078,23 +1827,11 @@ unsafe fn send_flutter_lifecycle(
         OFF_PLATFORM_MESSAGE_MESSAGE,
         bytes.as_ptr() as usize,
     );
-    put_usize(
-        &mut message,
-        OFF_PLATFORM_MESSAGE_MESSAGE_SIZE,
-        bytes.len(),
-    );
-    put_usize(
-        &mut message,
-        OFF_PLATFORM_MESSAGE_RESPONSE_HANDLE,
-        0,
-    );
+    put_usize(&mut message, OFF_PLATFORM_MESSAGE_MESSAGE_SIZE, bytes.len());
+    put_usize(&mut message, OFF_PLATFORM_MESSAGE_RESPONSE_HANDLE, 0);
 
-    let rc = unsafe {
-        FlutterEngineSendPlatformMessage(
-            engine as *mut c_void,
-            message.as_ptr().cast(),
-        )
-    };
+    let rc =
+        unsafe { FlutterEngineSendPlatformMessage(engine as *mut c_void, message.as_ptr().cast()) };
 
     log_str(&format!("FLUTTER_LIFECYCLE={lifecycle} rc={rc}"));
     rc == 0
@@ -2112,10 +1849,7 @@ fn has_egl_surface(state: *mut HostState) -> bool {
     egl.surface != 0
 }
 
-unsafe fn replace_window(
-    state: *mut HostState,
-    window: *mut ANativeWindow,
-) {
+unsafe fn replace_window(state: *mut HostState, window: *mut ANativeWindow) {
     if state.is_null() {
         return;
     }
@@ -2123,12 +1857,7 @@ unsafe fn replace_window(
     if !window.is_null() {
         unsafe {
             ANativeWindow_acquire(window);
-            ANativeWindow_setBuffersGeometry(
-                window,
-                0,
-                0,
-                WINDOW_FORMAT_RGBA_8888,
-            );
+            ANativeWindow_setBuffersGeometry(window, 0, 0, WINDOW_FORMAT_RGBA_8888);
         }
     }
 
@@ -2186,10 +1915,7 @@ unsafe extern "C" fn on_stop(activity: *mut ANativeActivity) {
     unsafe { send_flutter_lifecycle(state, "paused") };
 }
 
-unsafe extern "C" fn on_window_focus_changed(
-    activity: *mut ANativeActivity,
-    focused: c_int,
-) {
+unsafe extern "C" fn on_window_focus_changed(activity: *mut ANativeActivity, focused: c_int) {
     log_str(&format!("window focus={focused}"));
 
     if activity.is_null() {
@@ -2203,10 +1929,7 @@ unsafe extern "C" fn on_window_focus_changed(
     }
 }
 
-unsafe extern "C" fn on_window_created(
-    activity: *mut ANativeActivity,
-    window: *mut ANativeWindow,
-) {
+unsafe extern "C" fn on_window_created(activity: *mut ANativeActivity, window: *mut ANativeWindow) {
     log_str("native window created");
 
     if activity.is_null() {
@@ -2229,22 +1952,15 @@ unsafe extern "C" fn on_window_created(
 
             let engine = input_engine(state);
             if engine != 0 {
-                let rc = unsafe {
-                    FlutterEngineScheduleFrame(engine as *mut c_void)
-                };
-                log_str(&format!(
-                    "EGL_FOREGROUND_FRAME_SCHEDULE=PASS rc={rc}"
-                ));
+                let rc = unsafe { FlutterEngineScheduleFrame(engine as *mut c_void) };
+                log_str(&format!("EGL_FOREGROUND_FRAME_SCHEDULE=PASS rc={rc}"));
             }
         }
         Err(error) => log_str(&format!("FLUTTER_START=FAIL {error}")),
     }
 }
 
-unsafe extern "C" fn on_window_resized(
-    activity: *mut ANativeActivity,
-    window: *mut ANativeWindow,
-) {
+unsafe extern "C" fn on_window_resized(activity: *mut ANativeActivity, window: *mut ANativeWindow) {
     log_str("native window resized");
 
     if activity.is_null() {
@@ -2257,10 +1973,7 @@ unsafe extern "C" fn on_window_resized(
     unsafe { send_metrics(activity, state) };
 }
 
-unsafe extern "C" fn on_window_redraw(
-    activity: *mut ANativeActivity,
-    _: *mut ANativeWindow,
-) {
+unsafe extern "C" fn on_window_redraw(activity: *mut ANativeActivity, _: *mut ANativeWindow) {
     if activity.is_null() {
         return;
     }
@@ -2283,10 +1996,7 @@ unsafe extern "C" fn on_window_redraw(
     }
 }
 
-unsafe extern "C" fn on_window_destroyed(
-    activity: *mut ANativeActivity,
-    _: *mut ANativeWindow,
-) {
+unsafe extern "C" fn on_window_destroyed(activity: *mut ANativeActivity, _: *mut ANativeWindow) {
     log_str("native window destroyed");
 
     if activity.is_null() {
@@ -2372,9 +2082,7 @@ unsafe extern "C" fn on_destroy(activity: *mut ANativeActivity) {
 
     if engine != 0 {
         shared.engine.store(0, Ordering::Release);
-        let result = unsafe {
-            FlutterEngineShutdown(engine as *mut c_void)
-        };
+        let result = unsafe { FlutterEngineShutdown(engine as *mut c_void) };
         log_str(&format!("FlutterEngineShutdown rc={result}"));
     }
 
