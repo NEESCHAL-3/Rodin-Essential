@@ -1,0 +1,142 @@
+===== NEES XIAOMIPARTS NEXT — PHASE 0 =====
+time=2026-08-15T10:30:13+05:45
+legacy=/home/neeschal/AndroidStudioProjects/XiaomiPartsProbe-Charging
+next=/home/neeschal/Nees/XiaomiParts-Next
+
+===== LEGACY PROJECT =====
+LEGACY_PROJECT=FOUND
+255M	/home/neeschal/AndroidStudioProjects/XiaomiPartsProbe-Charging
+
+===== GIT =====
+ M app/build.gradle.kts
+ M app/src/main/AndroidManifest.xml
+ M app/src/main/java/io/github/neeschal/xiaomiparts/BootReceiver.java
+ M app/src/main/java/io/github/neeschal/xiaomiparts/ChargingManager.java
+ M app/src/main/kotlin/io/github/neeschal/xiaomiparts/MainActivity.kt
+ M rom/xiaomipartsd/sepolicy/xiaomipartsd.te
+ M rom/xiaomipartsd/xiaomipartsd-arm64
+ M rom/xiaomipartsd/xiaomipartsd.c
+ M xiaomiparts_priv_module/bin/xiaomipartsd
+ M xiaomiparts_priv_module/module.prop
+?? .advanced_configuration_backup_20260731_151914/
+?? .gpu_control_fix_backup_20260731_155542/
+?? .gpu_control_fix_backup_20260731_155557/
+?? .gpu_control_fix_backup_20260731_155800/
+?? .gpu_governor_only_backup_20260731_160815/
+?? .gpu_range_fix_backup_20260731_153844/
+?? .reboot_persistence_backup_20260731_162350/
+?? app/src/main/java/io/github/neeschal/xiaomiparts/AdvancedConfigurationManager.java
+?? app/src/main/java/io/github/neeschal/xiaomiparts/CpuCoreManager.java
+--- HEAD ---
+65530ce Polish charging interface and verify real boost performance
+
+===== CURRENT APP SOURCES =====
+AndroidManifest.xml
+java/io/github/neeschal/xiaomiparts/AdaptiveBrightnessService.java
+java/io/github/neeschal/xiaomiparts/AdaptiveBrightnessTileService.java
+java/io/github/neeschal/xiaomiparts/AdvancedConfigurationManager.java
+java/io/github/neeschal/xiaomiparts/BootReceiver.java
+java/io/github/neeschal/xiaomiparts/ChargingManager.java
+java/io/github/neeschal/xiaomiparts/CpuCoreManager.java
+java/io/github/neeschal/xiaomiparts/DisplayFeatureManager.java
+java/io/github/neeschal/xiaomiparts/DisplayKeepaliveService.java
+java/io/github/neeschal/xiaomiparts/InstalledAppsProvider.java
+java/io/github/neeschal/xiaomiparts/PackageChangeReceiver.java
+java/io/github/neeschal/xiaomiparts/PerformanceAppMonitorService.java
+java/io/github/neeschal/xiaomiparts/PerformanceProfileManager.java
+java/io/github/neeschal/xiaomiparts/SunlightModeController.java
+java/io/github/neeschal/xiaomiparts/TouchFeatureManager.java
+kotlin/io/github/neeschal/xiaomiparts/DisplayAdvancedSettingsActivity.kt
+kotlin/io/github/neeschal/xiaomiparts/DisplayColorModesActivity.kt
+kotlin/io/github/neeschal/xiaomiparts/MainActivity.kt
+kotlin/io/github/neeschal/xiaomiparts/ModernToggle.kt
+kotlin/io/github/neeschal/xiaomiparts/PerAppProfilesActivity.kt
+kotlin/io/github/neeschal/xiaomiparts/PremiumComponents.kt
+kotlin/io/github/neeschal/xiaomiparts/SwitchStyles.kt
+res/drawable/ic_aba_tile_off.xml
+res/drawable/ic_aba_tile_on.xml
+res/drawable/ic_aba_tile.xml
+res/drawable/ic_github.xml
+res/drawable/ic_launcher_background.xml
+res/drawable/ic_launcher_foreground.xml
+res/drawable/ic_launcher_monochrome.xml
+res/drawable/ic_telegram.xml
+res/drawable/splash_transparent_icon.xml
+res/layout/activity_main.xml
+res/mipmap-anydpi-v26/ic_launcher_round.xml
+res/mipmap-anydpi-v26/ic_launcher.xml
+res/values/colors.xml
+res/values-night/themes.xml
+res/values/strings.xml
+res/values/themes.xml
+res/xml/backup_rules.xml
+res/xml/data_extraction_rules.xml
+
+===== CURRENT DAEMON SOURCES =====
+Android.bp
+init.xiaomipartsd.rc
+sepolicy/file_contexts
+sepolicy/xiaomipartsd.te
+xiaomipartsd-arm64
+xiaomipartsd.c
+
+===== CURRENT DEBUG APK =====
+-rw-r--r--. 1 neeschal neeschal 66M Jul 31 16:23 /home/neeschal/AndroidStudioProjects/XiaomiPartsProbe-Charging/app/build/outputs/apk/debug/app-debug.apk
+13256b9e937e51974613bc4712ee18c9abeb6b2d888fbe78c4ee2cedb120a163  /home/neeschal/AndroidStudioProjects/XiaomiPartsProbe-Charging/app/build/outputs/apk/debug/app-debug.apk
+--- DEX ---
+ 41314352  01-01-1981 01:01   classes.dex
+   529660  01-01-1981 01:01   classes2.dex
+    20036  01-01-1981 01:01   classes4.dex
+ 15872356  01-01-1981 01:01   classes5.dex
+  7260412  01-01-1981 01:01   classes6.dex
+  1251808  01-01-1981 01:01   classes3.dex
+--- ARM64 LIBS ---
+    10096  01-01-1981 01:01   lib/arm64-v8a/libandroidx.graphics.path.so
+
+===== TOOLCHAIN =====
+flutter=
+┌─────────────────────────────────────────────────────────┐
+│ A new version of Flutter is available!                  │
+│                                                         │
+
+dart=Dart SDK version: 3.12.2 (stable) (Tue Jun 9 01:11:39 2026 -0700) on "linux_x64"
+
+rustc=rustc 1.96.1 (31fca3adb 2026-06-26)
+cargo=cargo 1.96.1 (356927216 2026-06-26)
+
+rustup=rustup 1.29.0 (28d1352db 2026-03-05)
+info: This is the version for the rustup toolchain manager, not the rustc compiler.
+--- installed targets ---
+aarch64-linux-android
+x86_64-unknown-linux-gnu
+
+java=openjdk version "25.0.4" 2026-07-21
+OpenJDK Runtime Environment (Red_Hat-25.0.4.0.7-2) (build 25.0.4+7)
+OpenJDK 64-Bit Server VM (Red_Hat-25.0.4.0.7-2) (build 25.0.4+7, mixed mode, sharing)
+
+cmake=cmake version 4.3.0
+ninja=1.13.2
+adb=Android Debug Bridge version 1.0.41
+Version 37.0.0-android-tools
+
+===== ANDROID SDK / NDK =====
+ANDROID_HOME=
+ANDROID_SDK_ROOT=
+resolved_sdk=/home/neeschal/Android/Sdk
+28.2.13676358
+30.0.15729638
+
+===== HOST =====
+Linux 192.168.1.14 7.1.8-200.fc44.x86_64 #1 SMP PREEMPT_DYNAMIC Mon Aug 10 03:35:23 UTC 2026 x86_64 GNU/Linux
+24
+               total        used        free      shared  buff/cache   available
+Mem:            15Gi       7.3Gi       1.1Gi       1.5Gi       8.5Gi       7.7Gi
+Swap:           47Gi       5.1Gi        42Gi
+
+===== CONNECTED DEVICE =====
+device=rodin
+model=2412DPC0AI
+release=16
+sdk=36
+abi=arm64-v8a
+refresh=    mActiveModeId=3
