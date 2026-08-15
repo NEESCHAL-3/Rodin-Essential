@@ -62,5 +62,22 @@ int main(void) {
   RUST_CONST("OFF_METRICS_HAS_CONSTRAINTS",
              offsetof(FlutterWindowMetricsEvent, has_constraints));
 
+  RUST_CONST("FLUTTER_POINTER_EVENT_SIZE", sizeof(FlutterPointerEvent));
+  RUST_CONST("OFF_POINTER_STRUCT_SIZE", offsetof(FlutterPointerEvent, struct_size));
+  RUST_CONST("OFF_POINTER_PHASE", offsetof(FlutterPointerEvent, phase));
+  RUST_CONST("OFF_POINTER_TIMESTAMP", offsetof(FlutterPointerEvent, timestamp));
+  RUST_CONST("OFF_POINTER_X", offsetof(FlutterPointerEvent, x));
+  RUST_CONST("OFF_POINTER_Y", offsetof(FlutterPointerEvent, y));
+  RUST_CONST("OFF_POINTER_DEVICE", offsetof(FlutterPointerEvent, device));
+  RUST_CONST("OFF_POINTER_SIGNAL_KIND", offsetof(FlutterPointerEvent, signal_kind));
+  RUST_CONST("OFF_POINTER_SCROLL_X", offsetof(FlutterPointerEvent, scroll_delta_x));
+  RUST_CONST("OFF_POINTER_SCROLL_Y", offsetof(FlutterPointerEvent, scroll_delta_y));
+  RUST_CONST("OFF_POINTER_DEVICE_KIND", offsetof(FlutterPointerEvent, device_kind));
+  RUST_CONST("OFF_POINTER_BUTTONS", offsetof(FlutterPointerEvent, buttons));
+  RUST_CONST("OFF_POINTER_VIEW_ID", offsetof(FlutterPointerEvent, view_id));
+  RUST_CONST("OFF_POINTER_PRESSURE", offsetof(FlutterPointerEvent, pressure));
+  RUST_CONST("OFF_POINTER_PRESSURE_MIN", offsetof(FlutterPointerEvent, pressure_min));
+  RUST_CONST("OFF_POINTER_PRESSURE_MAX", offsetof(FlutterPointerEvent, pressure_max));
+
   return 0;
 }
