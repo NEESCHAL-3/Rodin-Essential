@@ -1,0 +1,7 @@
+===== RODIN ESSENTIAL PHASE 10B sRGB SURFACE FIX =====
+problem=whole-surface color/tint changes with composition activity
+native_window_dataspace=ADATASPACE_SRGB
+egl_colorspace=EGL_GL_COLORSPACE_SRGB_KHR
+private_android_api=NO
+minimum_api_required=28
+PHASE10B_SRGB_SURFACE_FIX=BUILT
