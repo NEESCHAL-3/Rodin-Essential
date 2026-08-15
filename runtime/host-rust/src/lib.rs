@@ -175,6 +175,10 @@ struct EglState {
     context: usize,
     resource_surface: usize,
     resource_context: usize,
+    retired_surfaces: Vec<usize>,
+    surface_generation: u64,
+    bound_generation: u64,
+    presented_generation: u64,
 }
 
 struct VsyncShared {
@@ -435,6 +439,11 @@ unsafe extern "C" {
     ) -> c_int;
 
     fn FlutterEngineNotifyLowMemoryWarning(engine: *mut c_void) -> c_int;
+
+    fn FlutterEngineSendPlatformMessage(
+        engine: *mut c_void,
+        message: *const c_void,
+    ) -> c_int;
 
     fn FlutterEngineRunsAOTCompiledDartCode() -> bool;
 }
@@ -1307,32 +1316,27 @@ unsafe fn init_egl(
         return Err(format!("eglCreateWindowSurface failed {}", egl_error_hex()));
     }
 
-    let context = egl.context as *mut c_void;
-    if unsafe { eglMakeCurrent(display, surface, surface, context) } == EGL_FALSE {
-        unsafe { eglDestroySurface(display, surface) };
-        return Err(format!("eglMakeCurrent(init) failed {}", egl_error_hex()));
-    }
-
-    unsafe {
-        eglSwapInterval(display, 1);
-        eglMakeCurrent(
-            display,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-        );
-    }
-
+    // The onscreen context belongs to Flutter's raster thread after startup.
+    // Never bind it here on the NativeActivity/platform thread. Rebinding is
+    // deferred to the embedder make_current callback on the raster thread.
     egl.surface = surface as usize;
+    egl.surface_generation = egl.surface_generation.wrapping_add(1);
+    if egl.surface_generation == 0 {
+        egl.surface_generation = 1;
+    }
+    let generation = egl.surface_generation;
 
     log_str(&format!(
-        "EGL_INIT=PASS visual_id={visual_id} renderer=OpenGL_ES3"
+        "EGL_INIT=PASS visual_id={visual_id} renderer=OpenGL_ES3 binding=deferred_raster generation={generation}"
+    ));
+    log_str(&format!(
+        "EGL_SURFACE_READY=PASS generation={generation}"
     ));
 
     Ok(())
 }
 
-unsafe fn destroy_egl_surface(state: *mut HostState) {
+unsafe fn retire_egl_surface(state: *mut HostState) {
     if state.is_null() {
         return;
     }
@@ -1343,22 +1347,15 @@ unsafe fn destroy_egl_surface(state: *mut HostState) {
         Err(poisoned) => poisoned.into_inner(),
     };
 
-    if egl.display != 0 && egl.surface != 0 {
-        let display = egl.display as *mut c_void;
-        let surface = egl.surface as *mut c_void;
-
-        unsafe {
-            eglMakeCurrent(
-                display,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-            );
-            eglDestroySurface(display, surface);
-        }
-
+    if egl.surface != 0 {
+        let retired = egl.surface;
         egl.surface = 0;
-        log_str("EGL_WINDOW_SURFACE=DESTROYED");
+        egl.retired_surfaces.push(retired);
+        log_str(&format!(
+            "EGL_WINDOW_SURFACE=RETIRED generation={} pending={} ",
+            egl.surface_generation,
+            egl.retired_surfaces.len(),
+        ));
     }
 }
 
@@ -1366,8 +1363,6 @@ unsafe fn destroy_egl_all(state: *mut HostState) {
     if state.is_null() {
         return;
     }
-
-    unsafe { destroy_egl_surface(state) };
 
     let host = unsafe { &*state };
     let mut egl = match host.egl.lock() {
@@ -1382,6 +1377,8 @@ unsafe fn destroy_egl_all(state: *mut HostState) {
     let display = egl.display as *mut c_void;
 
     unsafe {
+        // FlutterEngineShutdown has already completed before this full teardown,
+        // so no raster thread can still own the render context here.
         eglMakeCurrent(
             display,
             ptr::null_mut(),
@@ -1389,6 +1386,14 @@ unsafe fn destroy_egl_all(state: *mut HostState) {
             ptr::null_mut(),
         );
 
+        if egl.surface != 0 {
+            eglDestroySurface(display, egl.surface as *mut c_void);
+        }
+        for surface in egl.retired_surfaces.drain(..) {
+            if surface != 0 {
+                eglDestroySurface(display, surface as *mut c_void);
+            }
+        }
         if egl.resource_surface != 0 {
             eglDestroySurface(display, egl.resource_surface as *mut c_void);
         }
@@ -1411,23 +1416,77 @@ unsafe extern "C" fn egl_make_current(user_data: *mut c_void) -> bool {
     }
 
     let host = unsafe { &*(user_data.cast::<HostState>()) };
-    let egl = match host.egl.lock() {
+    let mut egl = match host.egl.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
 
-    if egl.display == 0 || egl.surface == 0 || egl.context == 0 {
+    if egl.display == 0 || egl.context == 0 {
+        return false;
+    }
+
+    let display = egl.display as *mut c_void;
+
+    if egl.surface == 0 {
+        // This callback runs on Flutter's raster thread. If the old onscreen
+        // context is still current here, detach it on its owning thread before
+        // reclaiming retired window surfaces.
+        let cleared = unsafe {
+            eglMakeCurrent(
+                display,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            ) != EGL_FALSE
+        };
+
+        if cleared && !egl.retired_surfaces.is_empty() {
+            let retired_count = egl.retired_surfaces.len();
+            for surface in egl.retired_surfaces.drain(..) {
+                if surface != 0 {
+                    unsafe { eglDestroySurface(display, surface as *mut c_void) };
+                }
+            }
+            log_str(&format!(
+                "EGL_RASTER_DETACH=PASS retired={retired_count}"
+            ));
+        }
+
+        return false;
+    }
+
+    let surface = egl.surface as *mut c_void;
+    let context = egl.context as *mut c_void;
+
+    if unsafe { eglMakeCurrent(display, surface, surface, context) } == EGL_FALSE {
+        log_str(&format!(
+            "EGL_RASTER_REBIND=FAIL generation={} error={}",
+            egl.surface_generation,
+            egl_error_hex(),
+        ));
         return false;
     }
 
     unsafe {
-        eglMakeCurrent(
-            egl.display as *mut c_void,
-            egl.surface as *mut c_void,
-            egl.surface as *mut c_void,
-            egl.context as *mut c_void,
-        ) != EGL_FALSE
+        eglSwapInterval(display, 1);
     }
+
+    let retired_count = egl.retired_surfaces.len();
+    for retired in egl.retired_surfaces.drain(..) {
+        if retired != 0 && retired != surface as usize {
+            unsafe { eglDestroySurface(display, retired as *mut c_void) };
+        }
+    }
+
+    let generation = egl.surface_generation;
+    if egl.bound_generation != generation {
+        egl.bound_generation = generation;
+        log_str(&format!(
+            "EGL_RASTER_REBIND=PASS generation={generation} retired={retired_count}"
+        ));
+    }
+
+    true
 }
 
 unsafe extern "C" fn egl_clear_current(user_data: *mut c_void) -> bool {
@@ -1461,7 +1520,7 @@ unsafe extern "C" fn egl_present(user_data: *mut c_void) -> bool {
     }
 
     let host = unsafe { &*(user_data.cast::<HostState>()) };
-    let egl = match host.egl.lock() {
+    let mut egl = match host.egl.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
@@ -1476,6 +1535,14 @@ unsafe extern "C" fn egl_present(user_data: *mut c_void) -> bool {
             egl.surface as *mut c_void,
         ) != EGL_FALSE
     };
+
+    if ok {
+        let generation = egl.surface_generation;
+        if egl.presented_generation != generation {
+            egl.presented_generation = generation;
+            log_str(&format!("EGL_PRESENT=PASS generation={generation}"));
+        }
+    }
 
     if ok && !host.first_frame_logged.swap(true, Ordering::AcqRel) {
         log_str("GPU_FIRST_FRAME=PASS backend=EGL/OpenGL/Impeller");
@@ -1978,6 +2045,73 @@ unsafe fn start_flutter(
     Ok(())
 }
 
+unsafe fn send_flutter_lifecycle(
+    state: *mut HostState,
+    lifecycle: &str,
+) -> bool {
+    if state.is_null() {
+        return false;
+    }
+
+    let engine = input_engine(state);
+    if engine == 0 {
+        return false;
+    }
+
+    static CHANNEL: &[u8] = b"flutter/lifecycle\0";
+    let payload = format!("AppLifecycleState.{lifecycle}");
+    let bytes = payload.as_bytes();
+    let mut message = vec![0u8; FLUTTER_PLATFORM_MESSAGE_SIZE];
+
+    put_usize(
+        &mut message,
+        OFF_PLATFORM_MESSAGE_STRUCT_SIZE,
+        FLUTTER_PLATFORM_MESSAGE_SIZE,
+    );
+    put_usize(
+        &mut message,
+        OFF_PLATFORM_MESSAGE_CHANNEL,
+        CHANNEL.as_ptr() as usize,
+    );
+    put_usize(
+        &mut message,
+        OFF_PLATFORM_MESSAGE_MESSAGE,
+        bytes.as_ptr() as usize,
+    );
+    put_usize(
+        &mut message,
+        OFF_PLATFORM_MESSAGE_MESSAGE_SIZE,
+        bytes.len(),
+    );
+    put_usize(
+        &mut message,
+        OFF_PLATFORM_MESSAGE_RESPONSE_HANDLE,
+        0,
+    );
+
+    let rc = unsafe {
+        FlutterEngineSendPlatformMessage(
+            engine as *mut c_void,
+            message.as_ptr().cast(),
+        )
+    };
+
+    log_str(&format!("FLUTTER_LIFECYCLE={lifecycle} rc={rc}"));
+    rc == 0
+}
+
+fn has_egl_surface(state: *mut HostState) -> bool {
+    if state.is_null() {
+        return false;
+    }
+
+    let egl = match unsafe { &*state }.egl.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    egl.surface != 0
+}
+
 unsafe fn replace_window(
     state: *mut HostState,
     window: *mut ANativeWindow,
@@ -2018,23 +2152,55 @@ unsafe extern "C" fn on_start(_: *mut ANativeActivity) {
     log_str("onStart");
 }
 
-unsafe extern "C" fn on_resume(_: *mut ANativeActivity) {
+unsafe extern "C" fn on_resume(activity: *mut ANativeActivity) {
     log_str("onResume");
+
+    if activity.is_null() {
+        return;
+    }
+    let state = unsafe { (*activity).instance.cast::<HostState>() };
+    // During a normal foreground recreation onResume arrives before the new
+    // ANativeWindow. Resume Flutter only when an onscreen surface is ready.
+    if has_egl_surface(state) {
+        unsafe { send_flutter_lifecycle(state, "resumed") };
+    }
 }
 
-unsafe extern "C" fn on_pause(_: *mut ANativeActivity) {
+unsafe extern "C" fn on_pause(activity: *mut ANativeActivity) {
     log_str("onPause");
+
+    if activity.is_null() {
+        return;
+    }
+    let state = unsafe { (*activity).instance.cast::<HostState>() };
+    unsafe { send_flutter_lifecycle(state, "inactive") };
 }
 
-unsafe extern "C" fn on_stop(_: *mut ANativeActivity) {
+unsafe extern "C" fn on_stop(activity: *mut ANativeActivity) {
     log_str("onStop");
+
+    if activity.is_null() {
+        return;
+    }
+    let state = unsafe { (*activity).instance.cast::<HostState>() };
+    unsafe { send_flutter_lifecycle(state, "paused") };
 }
 
 unsafe extern "C" fn on_window_focus_changed(
-    _: *mut ANativeActivity,
+    activity: *mut ANativeActivity,
     focused: c_int,
 ) {
     log_str(&format!("window focus={focused}"));
+
+    if activity.is_null() {
+        return;
+    }
+    let state = unsafe { (*activity).instance.cast::<HostState>() };
+    if focused == 0 {
+        unsafe { send_flutter_lifecycle(state, "inactive") };
+    } else if has_egl_surface(state) {
+        unsafe { send_flutter_lifecycle(state, "resumed") };
+    }
 }
 
 unsafe extern "C" fn on_window_created(
@@ -2057,7 +2223,20 @@ unsafe extern "C" fn on_window_created(
     }
 
     match unsafe { start_flutter(activity, state) } {
-        Ok(()) => unsafe { send_metrics(activity, state) },
+        Ok(()) => {
+            unsafe { send_metrics(activity, state) };
+            unsafe { send_flutter_lifecycle(state, "resumed") };
+
+            let engine = input_engine(state);
+            if engine != 0 {
+                let rc = unsafe {
+                    FlutterEngineScheduleFrame(engine as *mut c_void)
+                };
+                log_str(&format!(
+                    "EGL_FOREGROUND_FRAME_SCHEDULE=PASS rc={rc}"
+                ));
+            }
+        }
         Err(error) => log_str(&format!("FLUTTER_START=FAIL {error}")),
     }
 }
@@ -2115,7 +2294,12 @@ unsafe extern "C" fn on_window_destroyed(
     }
 
     let state = unsafe { (*activity).instance.cast::<HostState>() };
-    unsafe { destroy_egl_surface(state) };
+
+    // Stop Dart frame production before detaching the native surface. Any
+    // already in-flight raster frame is still safe because the old EGLSurface
+    // is retired, not destroyed from this platform thread.
+    unsafe { send_flutter_lifecycle(state, "paused") };
+    unsafe { retire_egl_surface(state) };
     unsafe { replace_window(state, ptr::null_mut()) };
 }
 
@@ -2160,6 +2344,7 @@ unsafe extern "C" fn on_destroy(activity: *mut ANativeActivity) {
     }
 
     stop_input_worker(state);
+    unsafe { send_flutter_lifecycle(state, "detached") };
 
     let shared = unsafe { &*state }.vsync.clone();
     shared.alive.store(false, Ordering::Release);
