@@ -210,28 +210,22 @@ class _RodinShellState extends State<RodinShell> {
         body: SafeArea(
           bottom: false,
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 280),
-            reverseDuration: const Duration(milliseconds: 240),
+            duration: const Duration(milliseconds: 240),
             switchInCurve: Curves.easeOutCubic,
             switchOutCurve: Curves.easeOutCubic,
             layoutBuilder:
                 (Widget? currentChild, List<Widget> previousChildren) {
+                  // Keep exactly one full-screen page in the render tree.
+                  // This prevents the blue wash caused by compositing/fading
+                  // full-screen pages against each other.
                   return ClipRect(
                     child: currentChild ?? const SizedBox.shrink(),
                   );
                 },
             transitionBuilder: (Widget child, Animation<double> animation) {
-              final Animation<double> opacity =
-                  Tween<double>(begin: 0.88, end: 1).animate(
-                    CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutCubic,
-                    ),
-                  );
-
               final Animation<Offset> slide =
                   Tween<Offset>(
-                    begin: Offset(_transitionForward ? 0.075 : -0.075, 0),
+                    begin: Offset(_transitionForward ? 0.055 : -0.055, 0),
                     end: Offset.zero,
                   ).animate(
                     CurvedAnimation(
@@ -240,8 +234,7 @@ class _RodinShellState extends State<RodinShell> {
                     ),
                   );
 
-              return FadeTransition(
-                opacity: opacity,
+              return ClipRect(
                 child: SlideTransition(position: slide, child: child),
               );
             },

@@ -1,0 +1,7 @@
+===== RODIN ESSENTIAL PHASE 10B BLUE-WASH FIX =====
+full_page_opacity_animation=REMOVED
+outgoing_full_page_layer=REMOVED
+transition=clipped_translation_only
+transition_ms=240
+slide_fraction=0.055
+PHASE10B_BLUE_WASH_FIX=PASS
