@@ -11,4 +11,4 @@ dependencies:
     sdk: flutter
 
 flutter:
-  uses-material-design: false
+  uses-material-design: true
