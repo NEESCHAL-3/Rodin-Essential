@@ -1,0 +1,16 @@
+===== RODIN ESSENTIAL PHASE 10B DEVICE SMOKE =====
+commit=0eeb304
+apk=/home/neeschal/Nees/Rodin-Essential/out/phase10b-device-smoke/20260815-131018/Rodin-Essential-Phase10B.apk
+apk_sha256=346847e28ad765fc8c62710ac99b6d667afe3824cd07484cc6f5b1719b4e77de
+pid=15576
+zero_dex=PASS
+zipalign_16k=PASS
+engine=PASS
+impeller_opengl=PASS
+egl=PASS
+vsync_120hz=PASS
+input_queue=PASS
+first_frame=PASS
+crash_anr=0
+context_errors=0
+PHASE10B_DEVICE=PASS
