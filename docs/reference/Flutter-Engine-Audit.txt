@@ -1,0 +1,49 @@
+===== FLUTTER SDK =====
+flutter_bin=/home/neeschal/development/flutter/bin/flutter
+flutter_root=/home/neeschal/development/flutter
+
+===== VERSION =====
+{
+  "frameworkVersion": "3.44.8",
+  "channel": "stable",
+  "repositoryUrl": "https://github.com/flutter/flutter.git",
+  "frameworkRevision": "058e0af2c2b57e369d905a03ac9748b0ebf543c6",
+  "frameworkCommitDate": "2026-07-23 10:56:21 -0700",
+  "engineRevision": "0cd610717bde95fd88343c64f81c11ba4e5c0010",
+  "engineCommitDate": "2026-07-23 16:11:34.000Z",
+  "engineContentHash": "13ffd72b2f9a5ca4db2a74ea52d5353ec2e8f939",
+  "engineBuildDate": "2026-07-23 22:21:29.809",
+  "dartSdkVersion": "3.12.2",
+  "devToolsVersion": "2.57.0",
+  "flutterVersion": "3.44.8",
+  "flutterRoot": "/home/neeschal/development/flutter"
+}
+
+===== ENGINE PIN =====
+--- /home/neeschal/development/flutter/bin/internal/engine.version ---
+0cd610717bde95fd88343c64f81c11ba4e5c0010
+
+--- /home/neeschal/development/flutter/bin/cache/engine.stamp ---
+0cd610717bde95fd88343c64f81c11ba4e5c0010
+
+--- /home/neeschal/development/flutter/bin/cache/engine.realm ---
+
+
+===== ANDROID ARM64 RELEASE ARTIFACTS =====
+artifact_dir=/home/neeschal/development/flutter/bin/cache/artifacts/engine/android-arm64-release
+linux-x64/gen_snapshot 6112728 bytes
+linux-x64/LICENSE.gen_snapshot.md 591 bytes
+
+===== STANDARD ANDROID ENGINE EXPORTS =====
+libflutter.so=MISSING
+
+===== EMBEDDER HEADER =====
+/home/neeschal/development/flutter/engine/src/flutter/shell/platform/embedder/embedder.h
+
+===== HOST CAPACITY =====
+24
+               total        used        free      shared  buff/cache   available
+Mem:            15Gi       7.7Gi       847Mi       1.7Gi       8.8Gi       7.3Gi
+Swap:           47Gi       5.0Gi        43Gi
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p5  952G  749G  198G  80% /
