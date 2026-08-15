@@ -655,7 +655,6 @@ class RodinScrollPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       padding: EdgeInsets.fromLTRB(16, topPadding, 16, 96),
-      addRepaintBoundaries: false,
       children: children,
     );
   }
