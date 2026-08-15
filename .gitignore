@@ -35,3 +35,11 @@ local.properties
 *.log
 *.trace
 perf-captures/
+
+# Development signing material
+*.jks
+*.keystore
+
+# Development signing material
+*.jks
+*.keystore
