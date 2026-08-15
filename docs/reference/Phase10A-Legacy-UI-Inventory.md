@@ -1,0 +1,329 @@
+# Rodin Essential — Phase 10A Legacy UI Inventory
+
+- Legacy root: `/home/neeschal/AndroidStudioProjects/XiaomiPartsProbe-Charging`
+- UI source: `app/src/main/kotlin/io/github/neeschal/xiaomiparts/MainActivity.kt`
+- MainActivity SHA-256: `abaa86b36c6b543ecebef57e540c0c4ad2e3a91858965722fb3dea886cba9971`
+- Purpose: visual/behavior reference only; no legacy runtime dependency.
+
+## Screen graph
+- `Home`
+- `Hubs`
+- `Charging`
+- `Support`
+- `TouchBoost`
+- `DisplayStudio`
+- `Performance`
+- `CpuCoreControl`
+- `AdvancedConfiguration`
+- `Resolution`
+- `Diagnostics`
+
+## Composables
+
+## UI strings
+- Rodin Essentials
+- Compact device controls for custom ROMs
+- Control hubs
+- Control Hubs
+- Feature areas and modules
+- Battery & Charging
+- Fast charging controls and live hardware status
+- Live details
+- Electrical input and charger connection
+- Active backend
+- Xiaomi MiCharge / sic_mode verified
+- sic_mode 8
+- Version 1.0 • ColorOS Edition
+- Crafted for the community by NEESCHAL 🇳🇵
+- Thank you for using Rodin Essentials! This project is dedicated to bringing the best out of your device. Join our community to stay updated, report bugs, or just chat with other users.
+- Colour temperature
+- Choose the white balance that feels right for your display.
+- Display colour modes
+- ›
+- Enable manual control to manage CPU1-CPU7.
+- CPU0
+- Primary efficiency core
+- LOCKED
+- Add Quick Settings tile
+- Adds Rodin Essentials ABA to Control Center for quick toggle.
+- Manage app profiles
+- Choose Balanced, Performance, Battery Saver or Gaming for each installed app.
+- Global profiles
+- Dashboard
+- $displayModeName · $gamutName · $colorName
+- Display preview
+- Sunlight mode
+- Silky brightness
+- Video enhancement
+- Dolby Vision
+- • $item
+- • $it
+- • $text
+- Touch Boost
+- Display Studio
+- All modules
+- Display, performance, battery and charging controls
+- Community & Support
+- Join the community, get help, and report bugs
+- Touch
+- Boost on
+- Mode
+- Gamut
+- Voltage
+- Current
+- USB type
+- Connection
+- Boost charging speed
+- Power
+- Temperature
+- GitHub
+- Source code and development
+- Telegram Group
+- Community chat and support
+- Low-latency touch response
+- Touch responsiveness
+- Applies Xiaomi touch values for faster tap response.
+- Behaviour
+- Colour and display tuning
+- Advanced Configuration
+- CPU/GPU governors and storage scheduler
+- Live hardware control
+- Verified controls with live applied-value readback
+- Efficiency
+- Performance
+- Prime
+- Efficiency cluster
+- CPU0–CPU3 governor
+- Performance cluster
+- CPU4–CPU6 governor
+- Prime cluster
+- CPU7 governor
+- GPU governor
+- Mali devfreq policy
+- Userdata UFS scheduler
+- /sys/block/sdc/queue/scheduler
+- CPU Core Control
+- Manage CPU clusters and active cores
+- 8-core CPU topology
+- 4 efficiency / 3 performance / 1 prime
+- Manual core control
+- CPU$core
+- Thermal and FPS tools
+- Performance System
+- Resolution
+- Display density controls
+- Screen presets
+- Choose display density profiles.
+- QHD+ 2560 × 1440
+- FHD+ 2400 × 1080
+- HD+ 1600 × 720
+- Diagnostics
+- Checks and calibration
+- Service status
+- Hardware interfaces and calibration tools
+- Fingerprint calibration
+- Speaker calibration
+- Adaptive Brightness Assist
+- Keeps auto brightness responsive using live light sensor data.
+- Brightness Assistant
+- Brightness Sensor Mapper
+- Per-app Profiles
+- Global profiles paused
+- Balanced
+- Battery Saver
+- Gaming
+- Quick controls
+- Live CPU clocks
+- CPU governors
+- Storage scheduler
+
+## Visual tokens
+
+### Colors
+- `#FF000000`
+- `#FF050505`
+- `#FF0D0D0D`
+- `#FF4DBBFF`
+- `#FF46E6B4`
+- `#FFFFB84D`
+- `#FFF5F7FA`
+- `#FFA8B0BA`
+- `#FF202020`
+- `#FFF4F8FD`
+- `#FFFFFFFF`
+- `#FFEAF2FB`
+- `#FF0A7DCE`
+- `#FF0A9F86`
+- `#FFC17A10`
+- `#FF0D1726`
+- `#FF54657C`
+- `#FFD3E0EE`
+- `#FF41C98A`
+- `#FFFFB74D`
+- `#FF67C2FF`
+- `#FFB087FF`
+- `#FF56D8C7`
+- `#FFFF9F68`
+- `#FF35C997`
+- `#FFFFBE63`
+- `#FF74E6C6`
+- `#FFFF6E6E`
+- `#FF18DFA2`
+- `#FF32C995`
+- `#FF66D8FF`
+- `#FFFFB85C`
+- `#FF719BFF`
+- `#FF45A8FF`
+- `#FF64E7C5`
+- `#FFFFD27A`
+- `#FFA68CFF`
+- `#FFFF8A65`
+- `#FF24292F`
+- `#FF26A5E4`
+- `#FF46CFA1`
+- `#FFFFD54F`
+- `#FF4FC3F7`
+- `#FF7E57C2`
+- `#FF5A2A23`
+- `#FF7E4A2A`
+- `#FFBB7B41`
+- `#FF12304D`
+- `#FF1B4870`
+- `#FF3D6FB1`
+- `#FF183049`
+- `#FF1F4958`
+- `#FF425090`
+
+### dp values
+- 0dp, 1dp, 2dp, 3dp, 4dp, 5dp, 6dp, 7dp, 8dp, 9dp, 10dp, 11dp, 12dp, 13dp, 14dp, 15dp, 16dp, 17dp, 18dp, 19dp, 20dp, 22dp, 23dp, 24dp, 26dp, 28dp, 29dp, 30dp, 32dp, 36dp, 38dp, 42dp, 48dp, 52dp, 54dp, 56dp, 58dp, 64dp, 74dp, 76dp, 92dp, 96dp, 100dp, 108dp, 120dp, 140dp, 172dp, 999dp
+
+### sp values
+- 0.8sp, 16sp, 20sp, 22sp
+
+## Icons
+- `Bolt`
+- `Palette`
+- `GridView`
+- `HelpOutline`
+- `Speed`
+- `AutoAwesome`
+- `BatteryStd`
+- `BugReport`
+- `Cable`
+- `Home`
+- `DashboardCustomize`
+- `ArrowBack`
+- `WbSunny`
+- `BrightnessAuto`
+- `MovieFilter`
+- `Tonality`
+
+## Referenced drawables
+- `ic_launcher_foreground`
+- `ic_github`
+- `ic_telegram`
+- `ic_aba_tile`
+
+## Animation primitives
+- `AnimatedContent` — line 327
+- `slideInHorizontally` — line 335
+- `tween` — line 337
+- `fadeIn` — line 345
+- `tween` — line 347
+- `slideOutHorizontally` — line 354
+- `tween` — line 356
+- `fadeOut` — line 364
+- `tween` — line 366
+- `infiniteRepeatable` — line 1111
+- `tween` — line 1113
+- `infiniteRepeatable` — line 1144
+- `tween` — line 1146
+- `infiniteRepeatable` — line 1175
+- `tween` — line 1176
+- `infiniteRepeatable` — line 1187
+- `tween` — line 1189
+- `infiniteRepeatable` — line 1219
+- `tween` — line 1221
+- `animateFloatAsState` — line 1243
+- `tween` — line 1245
+- `AnimatedContent` — line 1546
+- `fadeIn` — line 1549
+- `tween` — line 1549
+- `fadeOut` — line 1550
+- `tween` — line 1550
+- `AnimatedContent` — line 1597
+- `fadeIn` — line 1600
+- `tween` — line 1600
+- `fadeOut` — line 1601
+- `tween` — line 1601
+- `infiniteRepeatable` — line 1926
+- `tween` — line 1927
+- `infiniteRepeatable` — line 4060
+- `tween` — line 4061
+- `animateFloatAsState` — line 5238
+- `tween` — line 5240
+
+## Major component usage
+- `Scaffold`: 2
+- `LazyColumn`: 12
+- `Surface`: 12
+- `Card`: 7
+- `BottomGlassBar`: 2
+- `SurfaceCard`: 23
+- `CompactFeatureCard`: 3
+- `HubRowItem`: 4
+- `BetterSummaryChip`: 7
+- `LiveDashboardHero`: 2
+- `FlowRow`: 3
+- `AnimatedContent`: 4
+
+## UI/state preference keys
+- `sunlight_mode_enabled`
+- `silky_brightness_enabled`
+- `video_enhancement_enabled`
+- `dolby_hdr_enabled`
+- `expert_display_enabled`
+- `aba_qs_tile_added_or_requested`
+
+## Active source manifest
+- `app/src/main/AndroidManifest.xml` — 4417 bytes — `0067790c72b79e4c25dec9159d70e0b06c9c346588297d70a9a66df806fccb83`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/AdaptiveBrightnessService.java` — 18743 bytes — `25aa70a20b61a17b5ddfad7875141b12ccb6003a510917a41e420a685c00505a`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/AdaptiveBrightnessTileService.java` — 3085 bytes — `c65d14b747cdb6b8b83179f0c2c8f41cf7b7890aa45d5bc9e077b66dfd7b494e`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/AdvancedConfigurationManager.java` — 10356 bytes — `6e348f10a438928661c7be8128ad7d9f7c7630e39c3f18f90df7e81b654d7563`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/BootReceiver.java` — 21067 bytes — `23b78c283a6a6385562b8b58a3fa1c907cf0940e9dd2598fe17092349d2b565c`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/ChargingManager.java` — 8756 bytes — `b7702d2a034e12a2ef5e578472fffb66c1210dce4f876d83dc944ec8b57cd7e4`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/CpuCoreManager.java` — 6991 bytes — `4e4902a1be8e5fe27d9ac8a212fb290f768d70238876d57f0862022a50d64a56`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/DisplayFeatureManager.java` — 12521 bytes — `3fd9a77288fa9b1657b36dcf0fa4e041bd59d24324852da1fc91effb64169e64`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/DisplayKeepaliveService.java` — 4030 bytes — `6e81cf213fca77dc3386dc9a30e87ac562a72343090913094dd9234aaa8d51a8`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/InstalledAppsProvider.java` — 2724 bytes — `01b4dac681b5e4534efd2806bf0fd9707b8c1d8d7a34d43c579de0cb4ce3ddb0`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/PackageChangeReceiver.java` — 902 bytes — `687c3437f263b815dbd91b858ab78603fe8a03bbace73f5686f69990b00263df`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/PerformanceAppMonitorService.java` — 12339 bytes — `a92de82bf4420eecf2250b05f993a75ca7444827cab0aa31cd64e91975ea097e`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/PerformanceProfileManager.java` — 7587 bytes — `0ccb6f663c1242cb8ddc2e7bc085c4435c6f1c9fb8e7898632c2c11e569b7b15`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/SunlightModeController.java` — 4812 bytes — `6130fdc4a5624491404222031849b3598b229036b713558a79659e18fc74304f`
+- `app/src/main/java/io/github/neeschal/xiaomiparts/TouchFeatureManager.java` — 3016 bytes — `b09a04a18250d6bcb07bd4e42c7be75078f9a4a4a837428acab56cf783ca7553`
+- `app/src/main/kotlin/io/github/neeschal/xiaomiparts/DisplayAdvancedSettingsActivity.kt` — 31581 bytes — `eaed2b605b5ea16abcb0758547d6f4e4c2e9768cec74baed581e5419e65ca54f`
+- `app/src/main/kotlin/io/github/neeschal/xiaomiparts/DisplayColorModesActivity.kt` — 26511 bytes — `b9da4fa0b213b454c01e8aec8671c1b5d3d39ebb96c4afb50b163f8049e0da48`
+- `app/src/main/kotlin/io/github/neeschal/xiaomiparts/MainActivity.kt` — 191107 bytes — `abaa86b36c6b543ecebef57e540c0c4ad2e3a91858965722fb3dea886cba9971`
+- `app/src/main/kotlin/io/github/neeschal/xiaomiparts/ModernToggle.kt` — 3000 bytes — `c2ef1d291567185df57dd3c653c21fcc71c8dc54edff677ce53d82eb958ea519`
+- `app/src/main/kotlin/io/github/neeschal/xiaomiparts/PerAppProfilesActivity.kt` — 33838 bytes — `f10ed2432baa9ce77a18b84065c495a53dcdbe6f1de983004cbefe683e63d676`
+- `app/src/main/kotlin/io/github/neeschal/xiaomiparts/PremiumComponents.kt` — 10858 bytes — `c75855f1a3bb3458d1649564a9b60678165be7314cf0db84e64e7774b307df9b`
+- `app/src/main/kotlin/io/github/neeschal/xiaomiparts/SwitchStyles.kt` — 712 bytes — `f17e5ddeb6cb31eca33f7b40a8bba045047b0ce9870d3e7522f9abcfcc4b7b6a`
+- `app/src/main/res/drawable/ic_aba_tile.xml` — 12254 bytes — `e0ffd644283346b515b1101f9e283cf2df011dfbbc100a1f4f86ade68c91f296`
+- `app/src/main/res/drawable/ic_aba_tile_off.xml` — 12254 bytes — `e0ffd644283346b515b1101f9e283cf2df011dfbbc100a1f4f86ade68c91f296`
+- `app/src/main/res/drawable/ic_aba_tile_on.xml` — 12254 bytes — `44ab3edba54bacdc60742e4a60645c6a789418928faa2387c84e4b8f196876ae`
+- `app/src/main/res/drawable/ic_github.xml` — 1176 bytes — `63c7b843afb569a79e564ab3e1b17341126fc305cc1427b29e7468e882b334ec`
+- `app/src/main/res/drawable/ic_launcher_background.xml` — 1721 bytes — `df096f786add55e699bf32fad922de4bb1abde7461a3eec304175eeee22b887a`
+- `app/src/main/res/drawable/ic_launcher_foreground.xml` — 2856 bytes — `af0c269a0f413bf8963968caa50b98c53e1f36ef9ed499e3bb8ca1b5e4c7c22e`
+- `app/src/main/res/drawable/ic_launcher_monochrome.xml` — 1083 bytes — `c9ab32a65595166e21c4c0e11fcb9f11f1ba91082ec012c48087a0fe2784cdec`
+- `app/src/main/res/drawable/ic_telegram.xml` — 768 bytes — `274862feb5650511ce1bd531c5497920017555cb9d784cb08e3ea87e70c1bf63`
+- `app/src/main/res/drawable/splash_transparent_icon.xml` — 318 bytes — `4f5600a77a9e8d8502680de3c22eea6c143feba88b8bd7283ec79afda8e5e5d7`
+- `app/src/main/res/layout/activity_main.xml` — 805 bytes — `4edb8f1a46136317c0f7745ebe5157e785132339b16e228c2b4340da66a1d9be`
+- `app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml` — 343 bytes — `82add00a72df2cdba968fe524e20f108a89b90b1e22ee1f9c8bf6d43f195abea`
+- `app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml` — 343 bytes — `82add00a72df2cdba968fe524e20f108a89b90b1e22ee1f9c8bf6d43f195abea`
+- `app/src/main/res/values/colors.xml` — 147 bytes — `efb70d7499549a57cea32b00e790ef0632cb0c95cdaeefd16903c8cd12c889e4`
+- `app/src/main/res/values/strings.xml` — 78 bytes — `745a32897a3ceff6a886dc1e34f9bb08bddc8416010eee1b9329baa1090510ec`
+- `app/src/main/res/values/themes.xml` — 709 bytes — `d1d7e38191a8b91b41c4090c310b2b5a2a6560c94bd55fb70e46c74178f7d795`
+- `app/src/main/res/values-night/themes.xml` — 710 bytes — `2085d9a356082b35738157979f39669d354027a5238ff2063896fd69f929fb92`
+- `app/src/main/res/xml/backup_rules.xml` — 478 bytes — `6cf1a27e6807b1d24e41d3fbe7ddc1bfe1f42226027964f6eaf477d71b43b283`
+- `app/src/main/res/xml/data_extraction_rules.xml` — 551 bytes — `cb1fc47ab4a984530ed60e0e6ee638929c3038290e7e7e0b4b03a3a30fbe7381`
+
