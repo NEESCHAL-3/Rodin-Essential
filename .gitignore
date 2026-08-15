@@ -1,0 +1,37 @@
+# Rust
+target/
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+build/
+
+# Android packaging output
+out/
+dist/
+*.apk
+*.aab
+
+# Native build
+*.o
+*.a
+*.so
+.cxx/
+cmake-build-*/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Local machine
+local.properties
+.env
+
+# Logs / captures
+*.log
+*.trace
+perf-captures/
