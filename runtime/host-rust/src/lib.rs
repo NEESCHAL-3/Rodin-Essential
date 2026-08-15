@@ -4,7 +4,7 @@ use std::ffi::{CStr, CString};
 use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -15,7 +15,24 @@ const ANDROID_LOG_INFO: c_int = 4;
 const WINDOW_FORMAT_RGBA_8888: c_int = 1;
 const AASSET_MODE_STREAMING: c_int = 2;
 const FLUTTER_ENGINE_VERSION: usize = 1;
-const FLUTTER_RENDERER_SOFTWARE: i32 = 1;
+const FLUTTER_RENDERER_OPENGL: i32 = 0;
+
+const EGL_FALSE: c_int = 0;
+const EGL_NONE: c_int = 0x3038;
+const EGL_SURFACE_TYPE: c_int = 0x3033;
+const EGL_WINDOW_BIT: c_int = 0x0004;
+const EGL_PBUFFER_BIT: c_int = 0x0001;
+const EGL_RENDERABLE_TYPE: c_int = 0x3040;
+const EGL_OPENGL_ES3_BIT: c_int = 0x0040;
+const EGL_RED_SIZE: c_int = 0x3024;
+const EGL_GREEN_SIZE: c_int = 0x3023;
+const EGL_BLUE_SIZE: c_int = 0x3022;
+const EGL_ALPHA_SIZE: c_int = 0x3021;
+const EGL_CONTEXT_CLIENT_VERSION: c_int = 0x3098;
+const EGL_NATIVE_VISUAL_ID: c_int = 0x302E;
+const EGL_WIDTH: c_int = 0x3057;
+const EGL_HEIGHT: c_int = 0x3056;
+const EGL_OPENGL_ES_API: u32 = 0x30A0;
 const RTLD_NOW: c_int = 2;
 
 const ALOOPER_PREPARE_ALLOW_NON_CALLBACKS: c_int = 1;
@@ -124,6 +141,11 @@ pub struct ALooper {
 }
 
 #[repr(C)]
+pub struct AChoreographer {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
 pub struct AAssetManager {
     _private: [u8; 0],
 }
@@ -145,11 +167,43 @@ struct InputWorker {
     thread: JoinHandle<()>,
 }
 
+#[derive(Default)]
+struct EglState {
+    display: usize,
+    config: usize,
+    surface: usize,
+    context: usize,
+    resource_surface: usize,
+    resource_context: usize,
+}
+
+struct VsyncShared {
+    engine: AtomicUsize,
+    choreographer: AtomicUsize,
+    period_nanos: AtomicI64,
+    alive: AtomicBool,
+    first_logged: AtomicBool,
+}
+
+impl VsyncShared {
+    fn new() -> Self {
+        Self {
+            engine: AtomicUsize::new(0),
+            choreographer: AtomicUsize::new(0),
+            period_nanos: AtomicI64::new(8_333_333),
+            alive: AtomicBool::new(true),
+            first_logged: AtomicBool::new(false),
+        }
+    }
+}
+
 struct HostState {
     window: Mutex<usize>,
     engine: Mutex<usize>,
     app_handle: Mutex<usize>,
     input_worker: Mutex<Option<InputWorker>>,
+    egl: Mutex<EglState>,
+    vsync: Arc<VsyncShared>,
     first_frame_logged: AtomicBool,
     first_input_logged: AtomicBool,
 }
@@ -161,6 +215,8 @@ impl HostState {
             engine: Mutex::new(0),
             app_handle: Mutex::new(0),
             input_worker: Mutex::new(None),
+            egl: Mutex::new(EglState::default()),
+            vsync: Arc::new(VsyncShared::new()),
             first_frame_logged: AtomicBool::new(false),
             first_input_logged: AtomicBool::new(false),
         }
@@ -269,6 +325,73 @@ unsafe extern "C" {
         event: *const AInputEvent,
         pointer_index: usize,
     ) -> f32;
+
+    fn AChoreographer_getInstance() -> *mut AChoreographer;
+    fn AChoreographer_postFrameCallback64(
+        choreographer: *mut AChoreographer,
+        callback: unsafe extern "C" fn(i64, *mut c_void),
+        data: *mut c_void,
+    );
+    fn AChoreographer_registerRefreshRateCallback(
+        choreographer: *mut AChoreographer,
+        callback: unsafe extern "C" fn(i64, *mut c_void),
+        data: *mut c_void,
+    );
+    fn AChoreographer_unregisterRefreshRateCallback(
+        choreographer: *mut AChoreographer,
+        callback: unsafe extern "C" fn(i64, *mut c_void),
+        data: *mut c_void,
+    );
+}
+
+#[link(name = "EGL")]
+unsafe extern "C" {
+    fn eglGetDisplay(native_display: *mut c_void) -> *mut c_void;
+    fn eglInitialize(display: *mut c_void, major: *mut c_int, minor: *mut c_int) -> c_int;
+    fn eglTerminate(display: *mut c_void) -> c_int;
+    fn eglBindAPI(api: u32) -> c_int;
+    fn eglChooseConfig(
+        display: *mut c_void,
+        attribs: *const c_int,
+        configs: *mut *mut c_void,
+        config_size: c_int,
+        num_config: *mut c_int,
+    ) -> c_int;
+    fn eglGetConfigAttrib(
+        display: *mut c_void,
+        config: *mut c_void,
+        attribute: c_int,
+        value: *mut c_int,
+    ) -> c_int;
+    fn eglCreateWindowSurface(
+        display: *mut c_void,
+        config: *mut c_void,
+        native_window: *mut c_void,
+        attribs: *const c_int,
+    ) -> *mut c_void;
+    fn eglCreatePbufferSurface(
+        display: *mut c_void,
+        config: *mut c_void,
+        attribs: *const c_int,
+    ) -> *mut c_void;
+    fn eglDestroySurface(display: *mut c_void, surface: *mut c_void) -> c_int;
+    fn eglCreateContext(
+        display: *mut c_void,
+        config: *mut c_void,
+        share_context: *mut c_void,
+        attribs: *const c_int,
+    ) -> *mut c_void;
+    fn eglDestroyContext(display: *mut c_void, context: *mut c_void) -> c_int;
+    fn eglMakeCurrent(
+        display: *mut c_void,
+        draw: *mut c_void,
+        read: *mut c_void,
+        context: *mut c_void,
+    ) -> c_int;
+    fn eglSwapBuffers(display: *mut c_void, surface: *mut c_void) -> c_int;
+    fn eglSwapInterval(display: *mut c_void, interval: c_int) -> c_int;
+    fn eglGetError() -> c_int;
+    fn eglGetProcAddress(procname: *const c_char) -> *const c_void;
 }
 
 #[link(name = "dl")]
@@ -303,6 +426,13 @@ unsafe extern "C" {
     ) -> c_int;
 
     fn FlutterEngineScheduleFrame(engine: *mut c_void) -> c_int;
+
+    fn FlutterEngineOnVsync(
+        engine: *mut c_void,
+        baton: isize,
+        frame_start_time_nanos: u64,
+        frame_target_time_nanos: u64,
+    ) -> c_int;
 
     fn FlutterEngineNotifyLowMemoryWarning(engine: *mut c_void) -> c_int;
 
@@ -1016,93 +1146,482 @@ unsafe extern "C" fn flutter_log_callback(
     log_str(&format!("flutter[{tag}] {message}"));
 }
 
-unsafe extern "C" fn software_present(
-    user_data: *mut c_void,
-    allocation: *const c_void,
-    row_bytes: usize,
-    height: usize,
-) -> bool {
-    if user_data.is_null() || allocation.is_null() {
-        return false;
+fn egl_error_hex() -> String {
+    unsafe { format!("0x{:04x}", eglGetError()) }
+}
+
+unsafe fn init_egl(
+    state: *mut HostState,
+    window: *mut ANativeWindow,
+) -> Result<(), String> {
+    if state.is_null() || window.is_null() {
+        return Err("init_egl null state/window".to_string());
     }
 
-    let state = unsafe { &*(user_data.cast::<HostState>()) };
+    let host = unsafe { &*state };
+    let mut egl = match host.egl.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
 
-    let window_value = {
-        let guard = match state.window.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
+    if egl.display == 0 {
+        let display = unsafe { eglGetDisplay(ptr::null_mut()) };
+        if display.is_null() {
+            return Err(format!("eglGetDisplay failed {}", egl_error_hex()));
+        }
+
+        let mut major = 0;
+        let mut minor = 0;
+        if unsafe { eglInitialize(display, &mut major, &mut minor) } == EGL_FALSE {
+            return Err(format!("eglInitialize failed {}", egl_error_hex()));
+        }
+
+        if unsafe { eglBindAPI(EGL_OPENGL_ES_API) } == EGL_FALSE {
+            unsafe { eglTerminate(display) };
+            return Err(format!("eglBindAPI failed {}", egl_error_hex()));
+        }
+
+        let config_attribs = [
+            EGL_SURFACE_TYPE,
+            EGL_WINDOW_BIT | EGL_PBUFFER_BIT,
+            EGL_RENDERABLE_TYPE,
+            EGL_OPENGL_ES3_BIT,
+            EGL_RED_SIZE,
+            8,
+            EGL_GREEN_SIZE,
+            8,
+            EGL_BLUE_SIZE,
+            8,
+            EGL_ALPHA_SIZE,
+            8,
+            EGL_NONE,
+        ];
+
+        let mut config: *mut c_void = ptr::null_mut();
+        let mut config_count = 0;
+        if unsafe {
+            eglChooseConfig(
+                display,
+                config_attribs.as_ptr(),
+                &mut config,
+                1,
+                &mut config_count,
+            )
+        } == EGL_FALSE || config_count < 1 || config.is_null()
+        {
+            unsafe { eglTerminate(display) };
+            return Err(format!("eglChooseConfig failed {}", egl_error_hex()));
+        }
+
+        let context_attribs = [EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE];
+        let context = unsafe {
+            eglCreateContext(
+                display,
+                config,
+                ptr::null_mut(),
+                context_attribs.as_ptr(),
+            )
         };
-
-        let value = *guard;
-        if value != 0 {
-            unsafe { ANativeWindow_acquire(value as *mut ANativeWindow) };
+        if context.is_null() {
+            unsafe { eglTerminate(display) };
+            return Err(format!("eglCreateContext failed {}", egl_error_hex()));
         }
-        value
-    };
 
-    if window_value == 0 {
-        return true;
+        let resource_context = unsafe {
+            eglCreateContext(
+                display,
+                config,
+                context,
+                context_attribs.as_ptr(),
+            )
+        };
+        if resource_context.is_null() {
+            unsafe {
+                eglDestroyContext(display, context);
+                eglTerminate(display);
+            }
+            return Err(format!(
+                "eglCreateContext(resource) failed {}",
+                egl_error_hex()
+            ));
+        }
+
+        let pbuffer_attribs = [EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE];
+        let resource_surface = unsafe {
+            eglCreatePbufferSurface(display, config, pbuffer_attribs.as_ptr())
+        };
+        if resource_surface.is_null() {
+            unsafe {
+                eglDestroyContext(display, resource_context);
+                eglDestroyContext(display, context);
+                eglTerminate(display);
+            }
+            return Err(format!(
+                "eglCreatePbufferSurface failed {}",
+                egl_error_hex()
+            ));
+        }
+
+        egl.display = display as usize;
+        egl.config = config as usize;
+        egl.context = context as usize;
+        egl.resource_context = resource_context as usize;
+        egl.resource_surface = resource_surface as usize;
+
+        log_str(&format!("EGL_CONTEXTS=PASS version={major}.{minor}"));
     }
 
-    let window = window_value as *mut ANativeWindow;
-
-    let mut buffer = ANativeWindowBuffer {
-        width: 0,
-        height: 0,
-        stride: 0,
-        format: 0,
-        bits: ptr::null_mut(),
-        reserved: [0; 6],
-    };
-
-    let lock_result = unsafe {
-        ANativeWindow_lock(window, &mut buffer, ptr::null_mut())
-    };
-
-    if lock_result != 0 || buffer.bits.is_null() {
-        unsafe { ANativeWindow_release(window) };
-        log_str(&format!("software present lock failed rc={lock_result}"));
-        return false;
+    if egl.surface != 0 {
+        return Ok(());
     }
 
-    let dest_height = buffer.height.max(0) as usize;
-    let dest_width = buffer.width.max(0) as usize;
-    let dest_stride = buffer.stride.max(0) as usize;
+    let display = egl.display as *mut c_void;
+    let config = egl.config as *mut c_void;
 
-    let rows = height.min(dest_height);
-    let bytes_per_dest_row = dest_stride.saturating_mul(4);
-    let visible_dest_bytes = dest_width.saturating_mul(4);
-    let copy_bytes = row_bytes.min(visible_dest_bytes);
-
-    let source = allocation.cast::<u8>();
-    let destination = buffer.bits.cast::<u8>();
-
-    for y in 0..rows {
+    let mut visual_id = 0;
+    if unsafe {
+        eglGetConfigAttrib(
+            display,
+            config,
+            EGL_NATIVE_VISUAL_ID,
+            &mut visual_id,
+        )
+    } != EGL_FALSE && visual_id != 0
+    {
         unsafe {
-            ptr::copy_nonoverlapping(
-                source.add(y.saturating_mul(row_bytes)),
-                destination.add(y.saturating_mul(bytes_per_dest_row)),
-                copy_bytes,
-            );
+            ANativeWindow_setBuffersGeometry(window, 0, 0, visual_id);
         }
     }
 
-    let post_result = unsafe { ANativeWindow_unlockAndPost(window) };
-    unsafe { ANativeWindow_release(window) };
+    let surface_attribs = [EGL_NONE];
+    let surface = unsafe {
+        eglCreateWindowSurface(
+            display,
+            config,
+            window.cast(),
+            surface_attribs.as_ptr(),
+        )
+    };
 
-    if post_result != 0 {
-        log_str(&format!("software present post failed rc={post_result}"));
+    if surface.is_null() {
+        return Err(format!("eglCreateWindowSurface failed {}", egl_error_hex()));
+    }
+
+    let context = egl.context as *mut c_void;
+    if unsafe { eglMakeCurrent(display, surface, surface, context) } == EGL_FALSE {
+        unsafe { eglDestroySurface(display, surface) };
+        return Err(format!("eglMakeCurrent(init) failed {}", egl_error_hex()));
+    }
+
+    unsafe {
+        eglSwapInterval(display, 1);
+        eglMakeCurrent(
+            display,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+        );
+    }
+
+    egl.surface = surface as usize;
+
+    log_str(&format!(
+        "EGL_INIT=PASS visual_id={visual_id} renderer=OpenGL_ES3"
+    ));
+
+    Ok(())
+}
+
+unsafe fn destroy_egl_surface(state: *mut HostState) {
+    if state.is_null() {
+        return;
+    }
+
+    let host = unsafe { &*state };
+    let mut egl = match host.egl.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    if egl.display != 0 && egl.surface != 0 {
+        let display = egl.display as *mut c_void;
+        let surface = egl.surface as *mut c_void;
+
+        unsafe {
+            eglMakeCurrent(
+                display,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            );
+            eglDestroySurface(display, surface);
+        }
+
+        egl.surface = 0;
+        log_str("EGL_WINDOW_SURFACE=DESTROYED");
+    }
+}
+
+unsafe fn destroy_egl_all(state: *mut HostState) {
+    if state.is_null() {
+        return;
+    }
+
+    unsafe { destroy_egl_surface(state) };
+
+    let host = unsafe { &*state };
+    let mut egl = match host.egl.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    if egl.display == 0 {
+        return;
+    }
+
+    let display = egl.display as *mut c_void;
+
+    unsafe {
+        eglMakeCurrent(
+            display,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+        );
+
+        if egl.resource_surface != 0 {
+            eglDestroySurface(display, egl.resource_surface as *mut c_void);
+        }
+        if egl.resource_context != 0 {
+            eglDestroyContext(display, egl.resource_context as *mut c_void);
+        }
+        if egl.context != 0 {
+            eglDestroyContext(display, egl.context as *mut c_void);
+        }
+        eglTerminate(display);
+    }
+
+    *egl = EglState::default();
+    log_str("EGL_SHUTDOWN=PASS");
+}
+
+unsafe extern "C" fn egl_make_current(user_data: *mut c_void) -> bool {
+    if user_data.is_null() {
         return false;
     }
 
-    if !state.first_frame_logged.swap(true, Ordering::AcqRel) {
+    let host = unsafe { &*(user_data.cast::<HostState>()) };
+    let egl = match host.egl.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    if egl.display == 0 || egl.surface == 0 || egl.context == 0 {
+        return false;
+    }
+
+    unsafe {
+        eglMakeCurrent(
+            egl.display as *mut c_void,
+            egl.surface as *mut c_void,
+            egl.surface as *mut c_void,
+            egl.context as *mut c_void,
+        ) != EGL_FALSE
+    }
+}
+
+unsafe extern "C" fn egl_clear_current(user_data: *mut c_void) -> bool {
+    if user_data.is_null() {
+        return false;
+    }
+
+    let host = unsafe { &*(user_data.cast::<HostState>()) };
+    let egl = match host.egl.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    if egl.display == 0 {
+        return false;
+    }
+
+    unsafe {
+        eglMakeCurrent(
+            egl.display as *mut c_void,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+        ) != EGL_FALSE
+    }
+}
+
+unsafe extern "C" fn egl_present(user_data: *mut c_void) -> bool {
+    if user_data.is_null() {
+        return false;
+    }
+
+    let host = unsafe { &*(user_data.cast::<HostState>()) };
+    let egl = match host.egl.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    if egl.display == 0 || egl.surface == 0 {
+        return false;
+    }
+
+    let ok = unsafe {
+        eglSwapBuffers(
+            egl.display as *mut c_void,
+            egl.surface as *mut c_void,
+        ) != EGL_FALSE
+    };
+
+    if ok && !host.first_frame_logged.swap(true, Ordering::AcqRel) {
+        log_str("GPU_FIRST_FRAME=PASS backend=EGL/OpenGL");
+        log_str("FLUTTER_FIRST_FRAME=PASS renderer=OpenGL");
+    }
+
+    if !ok {
+        log_str(&format!("eglSwapBuffers failed {}", egl_error_hex()));
+    }
+
+    ok
+}
+
+unsafe extern "C" fn egl_fbo(_user_data: *mut c_void) -> u32 {
+    0
+}
+
+unsafe extern "C" fn egl_make_resource_current(user_data: *mut c_void) -> bool {
+    if user_data.is_null() {
+        return false;
+    }
+
+    let host = unsafe { &*(user_data.cast::<HostState>()) };
+    let egl = match host.egl.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    if egl.display == 0 || egl.resource_surface == 0 || egl.resource_context == 0 {
+        return false;
+    }
+
+    unsafe {
+        eglMakeCurrent(
+            egl.display as *mut c_void,
+            egl.resource_surface as *mut c_void,
+            egl.resource_surface as *mut c_void,
+            egl.resource_context as *mut c_void,
+        ) != EGL_FALSE
+    }
+}
+
+unsafe extern "C" fn egl_proc_resolver(
+    _user_data: *mut c_void,
+    name: *const c_char,
+) -> *const c_void {
+    if name.is_null() {
+        ptr::null()
+    } else {
+        unsafe { eglGetProcAddress(name) }
+    }
+}
+
+struct VsyncRequest {
+    shared: Arc<VsyncShared>,
+    baton: isize,
+}
+
+unsafe extern "C" fn choreographer_frame_callback(
+    frame_time_nanos: i64,
+    data: *mut c_void,
+) {
+    if data.is_null() {
+        return;
+    }
+
+    let request = unsafe { Box::from_raw(data.cast::<VsyncRequest>()) };
+
+    if !request.shared.alive.load(Ordering::Acquire) {
+        return;
+    }
+
+    let engine = request.shared.engine.load(Ordering::Acquire);
+    if engine == 0 {
+        return;
+    }
+
+    let period = request
+        .shared
+        .period_nanos
+        .load(Ordering::Acquire)
+        .max(1);
+
+    let start = frame_time_nanos.max(0) as u64;
+    let target = start.saturating_add(period as u64);
+
+    let result = unsafe {
+        FlutterEngineOnVsync(
+            engine as *mut c_void,
+            request.baton,
+            start,
+            target,
+        )
+    };
+
+    if !request.shared.first_logged.swap(true, Ordering::AcqRel) {
         log_str(&format!(
-            "FLUTTER_FIRST_FRAME=PASS row_bytes={row_bytes} height={height}"
+            "VSYNC_CHOREOGRAPHER=PASS period_ns={period} rc={result}"
         ));
     }
+}
 
-    true
+unsafe extern "C" fn flutter_vsync_callback(
+    user_data: *mut c_void,
+    baton: isize,
+) {
+    if user_data.is_null() {
+        return;
+    }
+
+    let host = unsafe { &*(user_data.cast::<HostState>()) };
+    let shared = host.vsync.clone();
+
+    if !shared.alive.load(Ordering::Acquire) {
+        return;
+    }
+
+    let choreographer = shared.choreographer.load(Ordering::Acquire);
+    if choreographer == 0 {
+        log_str("VSYNC_CHOREOGRAPHER=FAIL no instance");
+        return;
+    }
+
+    let request = Box::new(VsyncRequest { shared, baton });
+    let request_ptr = Box::into_raw(request).cast::<c_void>();
+
+    unsafe {
+        AChoreographer_postFrameCallback64(
+            choreographer as *mut AChoreographer,
+            choreographer_frame_callback,
+            request_ptr,
+        );
+    }
+}
+
+unsafe extern "C" fn refresh_rate_callback(
+    period_nanos: i64,
+    data: *mut c_void,
+) {
+    if data.is_null() || period_nanos <= 0 {
+        return;
+    }
+
+    let shared = unsafe { &*(data.cast::<VsyncShared>()) };
+    shared.period_nanos.store(period_nanos, Ordering::Release);
+    log_str(&format!("DISPLAY_VSYNC_PERIOD_NS={period_nanos}"));
 }
 
 unsafe fn send_metrics(
@@ -1252,21 +1771,50 @@ unsafe fn start_flutter(
     put_i32(
         &mut renderer,
         OFF_RENDERER_TYPE,
-        FLUTTER_RENDERER_SOFTWARE,
+        FLUTTER_RENDERER_OPENGL,
     );
 
-    let software_base = OFF_RENDERER_SOFTWARE;
+    let gl_base = OFF_RENDERER_OPENGL;
 
     put_usize(
         &mut renderer,
-        software_base + OFF_SOFTWARE_STRUCT_SIZE,
-        FLUTTER_SOFTWARE_RENDERER_CONFIG_SIZE,
+        gl_base + OFF_OPENGL_STRUCT_SIZE,
+        FLUTTER_OPENGL_RENDERER_CONFIG_SIZE,
     );
-
     put_usize(
         &mut renderer,
-        software_base + OFF_SOFTWARE_PRESENT,
-        software_present as usize,
+        gl_base + OFF_OPENGL_MAKE_CURRENT,
+        egl_make_current as *const () as usize,
+    );
+    put_usize(
+        &mut renderer,
+        gl_base + OFF_OPENGL_CLEAR_CURRENT,
+        egl_clear_current as *const () as usize,
+    );
+    put_usize(
+        &mut renderer,
+        gl_base + OFF_OPENGL_PRESENT,
+        egl_present as *const () as usize,
+    );
+    put_usize(
+        &mut renderer,
+        gl_base + OFF_OPENGL_FBO,
+        egl_fbo as *const () as usize,
+    );
+    put_usize(
+        &mut renderer,
+        gl_base + OFF_OPENGL_MAKE_RESOURCE_CURRENT,
+        egl_make_resource_current as *const () as usize,
+    );
+    put_bool(
+        &mut renderer,
+        gl_base + OFF_OPENGL_FBO_RESET_AFTER_PRESENT,
+        false,
+    );
+    put_usize(
+        &mut renderer,
+        gl_base + OFF_OPENGL_GL_PROC_RESOLVER,
+        egl_proc_resolver as *const () as usize,
     );
 
     let mut project = vec![0u8; FLUTTER_PROJECT_ARGS_SIZE];
@@ -1348,7 +1896,14 @@ unsafe fn start_flutter(
 
     put_bool(&mut project, OFF_PROJECT_ENABLE_WIDE_GAMUT, false);
 
-    // Phase 6 software first-frame proof must keep Impeller disabled.
+    put_usize(
+        &mut project,
+        OFF_PROJECT_VSYNC_CALLBACK,
+        flutter_vsync_callback as *const () as usize,
+    );
+
+    // Phase 7A proves the real EGL/OpenGL GPU path first. Keep Impeller
+    // disabled for this one gate; Phase 7B enables Impeller on the proven GPU path.
     static EXECUTABLE_NAME: &[u8] = b"rodin_essential\0";
     static DISABLE_IMPELLER: &[u8] = b"--enable-impeller=false\0";
 
@@ -1369,7 +1924,7 @@ unsafe fn start_flutter(
         command_line_args.as_ptr() as usize,
     );
 
-    log_str("software proof flag: --enable-impeller=false");
+    log_str("GPU proof flag: --enable-impeller=false (OpenGL/Skia)");
 
     let mut engine: *mut c_void = ptr::null_mut();
 
@@ -1408,7 +1963,12 @@ unsafe fn start_flutter(
         *guard = engine as usize;
     }
 
-    log_str("FLUTTER_ENGINE_RUN=PASS");
+    unsafe { &*state }
+        .vsync
+        .engine
+        .store(engine as usize, Ordering::Release);
+
+    log_str("FLUTTER_ENGINE_RUN=PASS renderer=OpenGL");
 
     unsafe { send_metrics(activity, state) };
 
@@ -1491,6 +2051,11 @@ unsafe extern "C" fn on_window_created(
 
     unsafe { replace_window(state, window) };
 
+    if let Err(error) = unsafe { init_egl(state, window) } {
+        log_str(&format!("EGL_INIT=FAIL {error}"));
+        return;
+    }
+
     match unsafe { start_flutter(activity, state) } {
         Ok(()) => unsafe { send_metrics(activity, state) },
         Err(error) => log_str(&format!("FLUTTER_START=FAIL {error}")),
@@ -1550,6 +2115,7 @@ unsafe extern "C" fn on_window_destroyed(
     }
 
     let state = unsafe { (*activity).instance.cast::<HostState>() };
+    unsafe { destroy_egl_surface(state) };
     unsafe { replace_window(state, ptr::null_mut()) };
 }
 
@@ -1595,6 +2161,20 @@ unsafe extern "C" fn on_destroy(activity: *mut ANativeActivity) {
 
     stop_input_worker(state);
 
+    let shared = unsafe { &*state }.vsync.clone();
+    shared.alive.store(false, Ordering::Release);
+
+    let choreographer = shared.choreographer.swap(0, Ordering::AcqRel);
+    if choreographer != 0 {
+        unsafe {
+            AChoreographer_unregisterRefreshRateCallback(
+                choreographer as *mut AChoreographer,
+                refresh_rate_callback,
+                Arc::as_ptr(&shared) as *mut c_void,
+            );
+        }
+    }
+
     let engine = {
         let mut guard = match unsafe { &*state }.engine.lock() {
             Ok(guard) => guard,
@@ -1606,12 +2186,14 @@ unsafe extern "C" fn on_destroy(activity: *mut ANativeActivity) {
     };
 
     if engine != 0 {
+        shared.engine.store(0, Ordering::Release);
         let result = unsafe {
             FlutterEngineShutdown(engine as *mut c_void)
         };
         log_str(&format!("FlutterEngineShutdown rc={result}"));
     }
 
+    unsafe { destroy_egl_all(state) };
     unsafe { replace_window(state, ptr::null_mut()) };
 
     let app_handle = {
@@ -1661,6 +2243,26 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
 
     unsafe {
         (*activity).instance = state_ptr.cast();
+
+        let choreographer = AChoreographer_getInstance();
+        if !choreographer.is_null() {
+            let state_ref: &HostState = &*state_ptr;
+
+            state_ref
+                .vsync
+                .choreographer
+                .store(choreographer as usize, Ordering::Release);
+
+            AChoreographer_registerRefreshRateCallback(
+                choreographer,
+                refresh_rate_callback,
+                Arc::as_ptr(&state_ref.vsync) as *mut c_void,
+            );
+
+            log_str("ACHOREOGRAPHER=READY");
+        } else {
+            log_str("ACHOREOGRAPHER=FAIL");
+        }
 
         (*callbacks).on_start = Some(on_start);
         (*callbacks).on_resume = Some(on_resume);

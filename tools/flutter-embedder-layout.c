@@ -8,13 +8,25 @@
 int main(void) {
   RUST_CONST("FLUTTER_RENDERER_CONFIG_SIZE", sizeof(FlutterRendererConfig));
   RUST_CONST("OFF_RENDERER_TYPE", offsetof(FlutterRendererConfig, type));
-  RUST_CONST("OFF_RENDERER_SOFTWARE", offsetof(FlutterRendererConfig, software));
-  RUST_CONST("FLUTTER_SOFTWARE_RENDERER_CONFIG_SIZE",
-             sizeof(FlutterSoftwareRendererConfig));
-  RUST_CONST("OFF_SOFTWARE_STRUCT_SIZE",
-             offsetof(FlutterSoftwareRendererConfig, struct_size));
-  RUST_CONST("OFF_SOFTWARE_PRESENT",
-             offsetof(FlutterSoftwareRendererConfig, surface_present_callback));
+  RUST_CONST("OFF_RENDERER_OPENGL", offsetof(FlutterRendererConfig, open_gl));
+  RUST_CONST("FLUTTER_OPENGL_RENDERER_CONFIG_SIZE",
+             sizeof(FlutterOpenGLRendererConfig));
+  RUST_CONST("OFF_OPENGL_STRUCT_SIZE",
+             offsetof(FlutterOpenGLRendererConfig, struct_size));
+  RUST_CONST("OFF_OPENGL_MAKE_CURRENT",
+             offsetof(FlutterOpenGLRendererConfig, make_current));
+  RUST_CONST("OFF_OPENGL_CLEAR_CURRENT",
+             offsetof(FlutterOpenGLRendererConfig, clear_current));
+  RUST_CONST("OFF_OPENGL_PRESENT",
+             offsetof(FlutterOpenGLRendererConfig, present));
+  RUST_CONST("OFF_OPENGL_FBO",
+             offsetof(FlutterOpenGLRendererConfig, fbo_callback));
+  RUST_CONST("OFF_OPENGL_MAKE_RESOURCE_CURRENT",
+             offsetof(FlutterOpenGLRendererConfig, make_resource_current));
+  RUST_CONST("OFF_OPENGL_FBO_RESET_AFTER_PRESENT",
+             offsetof(FlutterOpenGLRendererConfig, fbo_reset_after_present));
+  RUST_CONST("OFF_OPENGL_GL_PROC_RESOLVER",
+             offsetof(FlutterOpenGLRendererConfig, gl_proc_resolver));
 
   RUST_CONST("FLUTTER_PROJECT_ARGS_SIZE", sizeof(FlutterProjectArgs));
   RUST_CONST("OFF_PROJECT_STRUCT_SIZE", offsetof(FlutterProjectArgs, struct_size));
@@ -48,6 +60,8 @@ int main(void) {
   RUST_CONST("OFF_PROJECT_LOG_TAG", offsetof(FlutterProjectArgs, log_tag));
   RUST_CONST("OFF_PROJECT_ENABLE_WIDE_GAMUT",
              offsetof(FlutterProjectArgs, enable_wide_gamut));
+  RUST_CONST("OFF_PROJECT_VSYNC_CALLBACK",
+             offsetof(FlutterProjectArgs, vsync_callback));
 
   RUST_CONST("FLUTTER_WINDOW_METRICS_SIZE", sizeof(FlutterWindowMetricsEvent));
   RUST_CONST("OFF_METRICS_STRUCT_SIZE",
