@@ -1,0 +1,208 @@
+===== RODIN ESSENTIAL PHASE 8 EGL LIFECYCLE =====
+timestamp=20260815-124125
+root=/home/neeschal/Nees/Rodin-Essential
+commit_before=be5a78f7601142a9d2f6a57cd2f9fdbdb487999a
+apk=/home/neeschal/Nees/Rodin-Essential/out/phase8-egl-lifecycle/20260815-124125/Rodin-Essential-Phase8.apk
+screenshot=/home/neeschal/Nees/Rodin-Essential/out/phase8-egl-lifecycle/20260815-124125/phase8-egl-lifecycle.png
+
+initial_pid=30483
+final_pid=30483
+settle_pid=30483
+surface_ready=7
+raster_rebind=7
+present_generation=7
+surface_retired=6
+lifecycle_paused=12
+lifecycle_resumed=14
+egl_init_fail=0
+raster_rebind_fail=0
+context_acquire_errors_total=8
+settle_context_errors=0
+settle_egl_failures=0
+
+===== RUNTIME =====
+08-15 12:41:30.219 30483 30483 I RodinEssential: ANativeActivity_onCreate
+08-15 12:41:30.220 30483 30483 I RodinEssential: ACHOREOGRAPHER=READY
+08-15 12:41:30.220 30483 30483 I RodinEssential: native callbacks installed
+08-15 12:41:30.221 30483 30483 I RodinEssential: onStart
+08-15 12:41:30.229 30483 30483 I RodinEssential: onResume
+08-15 12:41:30.263 30483 30483 I RodinEssential: native input queue created
+08-15 12:41:30.264 30483  2390 I RodinEssential: INPUT_QUEUE=READY
+08-15 12:41:30.266 30483 30483 I RodinEssential: DISPLAY_VSYNC_PERIOD_NS=8333333
+08-15 12:41:30.290 30483 30483 I RodinEssential: native window created
+08-15 12:41:30.312 30483 30483 I RodinEssential: EGL_CONTEXTS=PASS version=1.5
+08-15 12:41:30.316 30483 30483 I RodinEssential: EGL_INIT=PASS visual_id=1 renderer=OpenGL_ES3 binding=deferred_raster generation=1
+08-15 12:41:30.316 30483 30483 I RodinEssential: EGL_SURFACE_READY=PASS generation=1
+08-15 12:41:30.356 30483 30483 I RodinEssential: runtime assets extracted: files=6 icu=9242032 bytes
+08-15 12:41:30.359 30483 30483 I RodinEssential: IMPELLER_REQUEST=ON backend=OpenGL
+08-15 12:41:30.359 30483 30483 I RodinEssential: starting FlutterEngineRun
+08-15 12:41:30.371 30483 30483 I RodinEssential: EGL_RASTER_REBIND=PASS generation=1 retired=0
+08-15 12:41:30.375 30483 30483 I flutter : [IMPORTANT:flutter/shell/platform/embedder/embedder_surface_gl_impeller.cc(124)] Using the Impeller rendering backend (OpenGL).
+08-15 12:41:30.474 30483 30483 I RodinEssential: FLUTTER_ENGINE_RUN=PASS renderer=OpenGL
+08-15 12:41:30.474 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:30.475 30483 30483 I RodinEssential: FlutterEngineScheduleFrame rc=0
+08-15 12:41:30.475 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:30.475 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:30.475 30483 30483 I RodinEssential: EGL_FOREGROUND_FRAME_SCHEDULE=PASS rc=0
+08-15 12:41:30.475 30483 30483 I RodinEssential: native window resized
+08-15 12:41:30.475 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:30.489 30483 30483 I RodinEssential: VSYNC_CHOREOGRAPHER=PASS period_ns=8333333 rc=0
+08-15 12:41:30.502 30483 30483 I RodinEssential: window focus=1
+08-15 12:41:30.502 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:30.544 30483  2512 I RodinEssential: EGL_PRESENT=PASS generation=1
+08-15 12:41:30.544 30483  2512 I RodinEssential: GPU_FIRST_FRAME=PASS backend=EGL/OpenGL/Impeller
+08-15 12:41:30.544 30483  2512 I RodinEssential: FLUTTER_FIRST_FRAME=PASS renderer=Impeller/OpenGL
+08-15 12:41:31.537 30483 30483 W io.flutter.rast: type=1400 audit(0.0:42940): avc:  denied  { getattr } for  path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=133432 scontext=u:r:untrusted_app:s0:c41,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=io.github.neeschal.rodinessential
+08-15 12:41:33.572 30483  2390 I RodinEssential: INPUT_TOUCH=PASS action=DOWN x=943.5 y=1943.8
+08-15 12:41:34.646 30483 30483 I RodinEssential: onPause
+08-15 12:41:34.647 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=inactive rc=0
+08-15 12:41:34.657 30483 30483 I RodinEssential: window focus=0
+08-15 12:41:34.657 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=inactive rc=0
+08-15 12:41:35.344 30483 30483 I RodinEssential: native window destroyed
+08-15 12:41:35.344 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=paused rc=0
+08-15 12:41:35.344 30483 30483 I RodinEssential: EGL_WINDOW_SURFACE=RETIRED generation=1 pending=1 
+08-15 12:41:35.349 30483 30483 I RodinEssential: onStop
+08-15 12:41:35.349 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=paused rc=0
+08-15 12:41:35.357 30483  2512 I RodinEssential: EGL_RASTER_DETACH=PASS retired=1
+08-15 12:41:35.357 30483  2512 E flutter : [ERROR:flutter/shell/gpu/gpu_surface_gl_impeller.cc(76)] Could not make the context current to acquire the frame.
+08-15 12:41:36.780 30483 30483 I RodinEssential: onStart
+08-15 12:41:36.781 30483 30483 I RodinEssential: onResume
+08-15 12:41:36.795 30483 30483 I RodinEssential: native window created
+08-15 12:41:36.795 30483 30483 I RodinEssential: EGL_INIT=PASS visual_id=1 renderer=OpenGL_ES3 binding=deferred_raster generation=2
+08-15 12:41:36.795 30483 30483 I RodinEssential: EGL_SURFACE_READY=PASS generation=2
+08-15 12:41:36.795 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:36.795 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:36.795 30483 30483 I RodinEssential: EGL_FOREGROUND_FRAME_SCHEDULE=PASS rc=0
+08-15 12:41:36.795 30483 30483 I RodinEssential: native window resized
+08-15 12:41:36.795 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:36.801 30483  2512 I RodinEssential: EGL_RASTER_REBIND=PASS generation=2 retired=0
+08-15 12:41:36.805 30483  2512 I RodinEssential: EGL_PRESENT=PASS generation=2
+08-15 12:41:36.828 30483 30483 I RodinEssential: window focus=1
+08-15 12:41:36.828 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:38.940 30483 30483 I RodinEssential: onPause
+08-15 12:41:38.940 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=inactive rc=0
+08-15 12:41:38.947 30483 30483 I RodinEssential: window focus=0
+08-15 12:41:38.948 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=inactive rc=0
+08-15 12:41:39.620 30483 30483 I RodinEssential: native window destroyed
+08-15 12:41:39.620 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=paused rc=0
+08-15 12:41:39.620 30483 30483 I RodinEssential: EGL_WINDOW_SURFACE=RETIRED generation=2 pending=1 
+08-15 12:41:39.624 30483 30483 I RodinEssential: onStop
+08-15 12:41:39.624 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=paused rc=0
+08-15 12:41:39.625 30483  2512 I RodinEssential: EGL_RASTER_DETACH=PASS retired=1
+08-15 12:41:39.625 30483  2512 E flutter : [ERROR:flutter/shell/gpu/gpu_surface_gl_impeller.cc(76)] Could not make the context current to acquire the frame.
+08-15 12:41:39.633 30483  2512 E flutter : [ERROR:flutter/shell/gpu/gpu_surface_gl_impeller.cc(76)] Could not make the context current to acquire the frame.
+08-15 12:41:41.074 30483 30483 I RodinEssential: onStart
+08-15 12:41:41.075 30483 30483 I RodinEssential: onResume
+08-15 12:41:41.090 30483 30483 I RodinEssential: native window created
+08-15 12:41:41.090 30483 30483 I RodinEssential: EGL_INIT=PASS visual_id=1 renderer=OpenGL_ES3 binding=deferred_raster generation=3
+08-15 12:41:41.090 30483 30483 I RodinEssential: EGL_SURFACE_READY=PASS generation=3
+08-15 12:41:41.091 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:41.091 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:41.091 30483 30483 I RodinEssential: EGL_FOREGROUND_FRAME_SCHEDULE=PASS rc=0
+08-15 12:41:41.091 30483 30483 I RodinEssential: native window resized
+08-15 12:41:41.091 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:41.100 30483  2512 I RodinEssential: EGL_RASTER_REBIND=PASS generation=3 retired=0
+08-15 12:41:41.108 30483  2512 I RodinEssential: EGL_PRESENT=PASS generation=3
+08-15 12:41:41.114 30483 30483 I RodinEssential: window focus=1
+08-15 12:41:41.114 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:43.216 30483 30483 I RodinEssential: onPause
+08-15 12:41:43.216 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=inactive rc=0
+08-15 12:41:43.220 30483 30483 I RodinEssential: window focus=0
+08-15 12:41:43.220 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=inactive rc=0
+08-15 12:41:43.903 30483 30483 I RodinEssential: native window destroyed
+08-15 12:41:43.903 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=paused rc=0
+08-15 12:41:43.903 30483 30483 I RodinEssential: EGL_WINDOW_SURFACE=RETIRED generation=3 pending=1 
+08-15 12:41:43.905 30483 30483 I RodinEssential: onStop
+08-15 12:41:43.905 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=paused rc=0
+08-15 12:41:43.926 30483  2512 I RodinEssential: EGL_RASTER_DETACH=PASS retired=1
+08-15 12:41:43.926 30483  2512 E flutter : [ERROR:flutter/shell/gpu/gpu_surface_gl_impeller.cc(76)] Could not make the context current to acquire the frame.
+08-15 12:41:45.323 30483 30483 I RodinEssential: onStart
+08-15 12:41:45.324 30483 30483 I RodinEssential: onResume
+08-15 12:41:45.339 30483 30483 I RodinEssential: native window created
+08-15 12:41:45.339 30483 30483 I RodinEssential: EGL_INIT=PASS visual_id=1 renderer=OpenGL_ES3 binding=deferred_raster generation=4
+08-15 12:41:45.339 30483 30483 I RodinEssential: EGL_SURFACE_READY=PASS generation=4
+08-15 12:41:45.339 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:45.339 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:45.339 30483 30483 I RodinEssential: EGL_FOREGROUND_FRAME_SCHEDULE=PASS rc=0
+08-15 12:41:45.339 30483 30483 I RodinEssential: native window resized
+08-15 12:41:45.339 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:45.347 30483  2512 I RodinEssential: EGL_RASTER_REBIND=PASS generation=4 retired=0
+08-15 12:41:45.351 30483  2512 I RodinEssential: EGL_PRESENT=PASS generation=4
+08-15 12:41:45.362 30483 30483 I RodinEssential: window focus=1
+08-15 12:41:45.362 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:47.488 30483 30483 I RodinEssential: onPause
+08-15 12:41:47.488 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=inactive rc=0
+08-15 12:41:47.501 30483 30483 I RodinEssential: window focus=0
+08-15 12:41:47.501 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=inactive rc=0
+08-15 12:41:48.181 30483 30483 I RodinEssential: native window destroyed
+08-15 12:41:48.181 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=paused rc=0
+08-15 12:41:48.182 30483 30483 I RodinEssential: EGL_WINDOW_SURFACE=RETIRED generation=4 pending=1 
+08-15 12:41:48.183 30483 30483 I RodinEssential: onStop
+08-15 12:41:48.183 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=paused rc=0
+08-15 12:41:48.183 30483  2512 I RodinEssential: EGL_RASTER_DETACH=PASS retired=1
+08-15 12:41:48.183 30483  2512 E flutter : [ERROR:flutter/shell/gpu/gpu_surface_gl_impeller.cc(76)] Could not make the context current to acquire the frame.
+08-15 12:41:48.188 30483  2512 E flutter : [ERROR:flutter/shell/gpu/gpu_surface_gl_impeller.cc(76)] Could not make the context current to acquire the frame.
+08-15 12:41:49.618 30483 30483 I RodinEssential: onStart
+08-15 12:41:49.619 30483 30483 I RodinEssential: onResume
+08-15 12:41:49.636 30483 30483 I RodinEssential: native window created
+08-15 12:41:49.637 30483 30483 I RodinEssential: EGL_INIT=PASS visual_id=1 renderer=OpenGL_ES3 binding=deferred_raster generation=5
+08-15 12:41:49.637 30483 30483 I RodinEssential: EGL_SURFACE_READY=PASS generation=5
+08-15 12:41:49.637 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:49.637 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:49.637 30483 30483 I RodinEssential: EGL_FOREGROUND_FRAME_SCHEDULE=PASS rc=0
+08-15 12:41:49.637 30483 30483 I RodinEssential: native window resized
+08-15 12:41:49.637 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:49.652 30483  2512 I RodinEssential: EGL_RASTER_REBIND=PASS generation=5 retired=0
+08-15 12:41:49.659 30483 30483 I RodinEssential: window focus=1
+08-15 12:41:49.659 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:49.662 30483  2512 I RodinEssential: EGL_PRESENT=PASS generation=5
+08-15 12:41:51.761 30483 30483 I RodinEssential: onPause
+08-15 12:41:51.761 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=inactive rc=0
+08-15 12:41:51.773 30483 30483 I RodinEssential: window focus=0
+08-15 12:41:51.773 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=inactive rc=0
+08-15 12:41:52.455 30483 30483 I RodinEssential: native window destroyed
+08-15 12:41:52.455 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=paused rc=0
+08-15 12:41:52.457 30483 30483 I RodinEssential: EGL_WINDOW_SURFACE=RETIRED generation=5 pending=1 
+08-15 12:41:52.459 30483 30483 I RodinEssential: onStop
+08-15 12:41:52.459 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=paused rc=0
+08-15 12:41:52.475 30483  2512 I RodinEssential: EGL_RASTER_DETACH=PASS retired=1
+08-15 12:41:52.476 30483  2512 E flutter : [ERROR:flutter/shell/gpu/gpu_surface_gl_impeller.cc(76)] Could not make the context current to acquire the frame.
+08-15 12:41:53.891 30483 30483 I RodinEssential: onStart
+08-15 12:41:53.891 30483 30483 I RodinEssential: onResume
+08-15 12:41:53.901 30483 30483 I RodinEssential: native window created
+08-15 12:41:53.901 30483 30483 I RodinEssential: EGL_INIT=PASS visual_id=1 renderer=OpenGL_ES3 binding=deferred_raster generation=6
+08-15 12:41:53.901 30483 30483 I RodinEssential: EGL_SURFACE_READY=PASS generation=6
+08-15 12:41:53.902 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:53.902 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:53.902 30483 30483 I RodinEssential: EGL_FOREGROUND_FRAME_SCHEDULE=PASS rc=0
+08-15 12:41:53.902 30483 30483 I RodinEssential: native window resized
+08-15 12:41:53.902 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:53.908 30483  2512 I RodinEssential: EGL_RASTER_REBIND=PASS generation=6 retired=0
+08-15 12:41:53.918 30483  2512 I RodinEssential: EGL_PRESENT=PASS generation=6
+08-15 12:41:53.932 30483 30483 I RodinEssential: window focus=1
+08-15 12:41:53.932 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:56.053 30483 30483 I RodinEssential: onPause
+08-15 12:41:56.053 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=inactive rc=0
+08-15 12:41:56.055 30483 30483 I RodinEssential: window focus=0
+08-15 12:41:56.055 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=inactive rc=0
+08-15 12:41:56.733 30483 30483 I RodinEssential: native window destroyed
+08-15 12:41:56.734 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=paused rc=0
+08-15 12:41:56.734 30483 30483 I RodinEssential: EGL_WINDOW_SURFACE=RETIRED generation=6 pending=1 
+08-15 12:41:56.735 30483 30483 I RodinEssential: onStop
+08-15 12:41:56.735 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=paused rc=0
+08-15 12:41:56.752 30483  2512 I RodinEssential: EGL_RASTER_DETACH=PASS retired=1
+08-15 12:41:56.752 30483  2512 E flutter : [ERROR:flutter/shell/gpu/gpu_surface_gl_impeller.cc(76)] Could not make the context current to acquire the frame.
+08-15 12:41:58.166 30483 30483 I RodinEssential: onStart
+08-15 12:41:58.167 30483 30483 I RodinEssential: onResume
+08-15 12:41:58.181 30483 30483 I RodinEssential: native window created
+08-15 12:41:58.181 30483 30483 I RodinEssential: EGL_INIT=PASS visual_id=1 renderer=OpenGL_ES3 binding=deferred_raster generation=7
+08-15 12:41:58.181 30483 30483 I RodinEssential: EGL_SURFACE_READY=PASS generation=7
+08-15 12:41:58.181 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:58.181 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:58.181 30483 30483 I RodinEssential: EGL_FOREGROUND_FRAME_SCHEDULE=PASS rc=0
+08-15 12:41:58.181 30483 30483 I RodinEssential: native window resized
+08-15 12:41:58.181 30483 30483 I RodinEssential: window metrics width=1220 height=2712 ratio=3.250 rc=0
+08-15 12:41:58.191 30483  2512 I RodinEssential: EGL_RASTER_REBIND=PASS generation=7 retired=0
+08-15 12:41:58.194 30483 30483 I RodinEssential: window focus=1
+08-15 12:41:58.194 30483 30483 I RodinEssential: FLUTTER_LIFECYCLE=resumed rc=0
+08-15 12:41:58.202 30483  2512 I RodinEssential: EGL_PRESENT=PASS generation=7

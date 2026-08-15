@@ -93,5 +93,19 @@ int main(void) {
   RUST_CONST("OFF_POINTER_PRESSURE_MIN", offsetof(FlutterPointerEvent, pressure_min));
   RUST_CONST("OFF_POINTER_PRESSURE_MAX", offsetof(FlutterPointerEvent, pressure_max));
 
+
+  RUST_CONST("FLUTTER_PLATFORM_MESSAGE_SIZE",
+             sizeof(FlutterPlatformMessage));
+  RUST_CONST("OFF_PLATFORM_MESSAGE_STRUCT_SIZE",
+             offsetof(FlutterPlatformMessage, struct_size));
+  RUST_CONST("OFF_PLATFORM_MESSAGE_CHANNEL",
+             offsetof(FlutterPlatformMessage, channel));
+  RUST_CONST("OFF_PLATFORM_MESSAGE_MESSAGE",
+             offsetof(FlutterPlatformMessage, message));
+  RUST_CONST("OFF_PLATFORM_MESSAGE_MESSAGE_SIZE",
+             offsetof(FlutterPlatformMessage, message_size));
+  RUST_CONST("OFF_PLATFORM_MESSAGE_RESPONSE_HANDLE",
+             offsetof(FlutterPlatformMessage, response_handle));
+
   return 0;
 }
