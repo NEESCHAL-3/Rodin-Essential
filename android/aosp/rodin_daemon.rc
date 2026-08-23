@@ -5,12 +5,12 @@ service rodin_daemon /product/bin/rodin_daemon
     capabilities DAC_OVERRIDE DAC_READ_SEARCH SYS_ADMIN SYS_NICE SYS_PTRACE
     priority -10
     oom_score_adjust -900
-    seclabel u:r:rodin_daemon:s0
     setenv RODIN_STATE_DIR /data/system/rodin-essential
     disabled
     restart_period 2
 
 on post-fs-data
+    restorecon /product/bin/rodin_daemon
     mkdir /data/system/rodin-essential 0700 root root
     restorecon_recursive /data/system/rodin-essential
 
