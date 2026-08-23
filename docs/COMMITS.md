@@ -1,20 +1,36 @@
-# Commit Convention
+# Commit convention
 
-Use concise Conventional Commit messages with meaningful scopes.
+Use Conventional Commit subjects:
+
+```text
+<type>(<scope>): <imperative summary>
+```
+
+Recommended types are `feat`, `fix`, `perf`, `refactor`, `docs`, `test`,
+`build`, `ci`, and `chore`.
+
+Common scopes:
+
+- `ui`: Flutter screens, text, layout, motion, and theme.
+- `host`: NativeActivity, EGL, Flutter embedder, JNI, and FFI.
+- `daemon`: IPC, persistence, telemetry, and hardware controls.
+- `gpu`, `cpu`, `touch`, `storage`, `display`, `zram`: feature-specific work.
+- `android`: manifest, resources, signing, init, and packaging.
+- `aosp`: Soong, product integration, and SELinux.
+- `kernelsu`: backend module packaging and service lifecycle.
+- `docs`: maintainer and contributor documentation.
 
 Examples:
 
-- `chore: initialize Rodin Essential native workspace`
-- `feat(host): boot zero-DEX NativeActivity runtime`
-- `feat(render): add Vulkan-backed Flutter embedder`
-- `feat(ui): reproduce Rodin Essential home surface`
-- `feat(core): add persistent asynchronous command state`
-- `feat(daemon): migrate charging control to Rust`
-- `perf(ui): eliminate rebuilds during telemetry updates`
-- `perf(render): stabilize 120 Hz frame pacing`
-- `fix(touch): preserve selected sampling mode after reboot`
-- `test(runtime): verify APK contains no DEX`
-- `build(android): package signed ARM64 release APK`
+```text
+fix(gpu): persist GED ownership for active profiles
+fix(touch): restore selected timing mode after boot
+fix(storage): verify scheduler across every UFS LUN
+perf(ui): smooth route transitions at 120 Hz
+build(aosp): export product prebuilts and split policy
+docs(aosp): document rootless ROM integration
+```
 
-Do not mix unrelated subsystems in one commit.
-Every migration commit should leave the tree buildable.
+Keep commits buildable. Combine multiple scopes only for a deliberate release
+or repository-wide consolidation where separating them would leave incompatible
+protocol, packaging, or version state.

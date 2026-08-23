@@ -1,0 +1,18 @@
+service rodin_daemon /product/bin/rodin_daemon
+    class late_start
+    user root
+    group root system input graphics readproc wakelock
+    capabilities DAC_OVERRIDE DAC_READ_SEARCH SYS_ADMIN SYS_NICE SYS_PTRACE
+    priority -10
+    oom_score_adjust -900
+    seclabel u:r:rodin_daemon:s0
+    setenv RODIN_STATE_DIR /data/system/rodin-essential
+    disabled
+    restart_period 2
+
+on post-fs-data
+    mkdir /data/system/rodin-essential 0700 root root
+    restorecon_recursive /data/system/rodin-essential
+
+on property:sys.boot_completed=1
+    start rodin_daemon

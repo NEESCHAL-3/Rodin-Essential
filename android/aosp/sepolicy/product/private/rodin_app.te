@@ -1,0 +1,2 @@
+type rodin_app, domain;
+app_domain(rodin_app)

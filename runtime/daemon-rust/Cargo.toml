@@ -1,0 +1,18 @@
+[package]
+name = "rodin-essential-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "rodin_essential_backend"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rodin_daemon"
+path = "src/bin/rodin_essentiald.rs"
+
+[[bin]]
+name = "rodin_ctl"
+path = "src/bin/rodin_essentialctl.rs"

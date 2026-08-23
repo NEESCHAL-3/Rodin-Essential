@@ -1,0 +1,3 @@
+# Public daemon types referenced by Rodin's vendor policy.
+type rodin_daemon, domain, coredomain;
+type rodin_daemon_exec, system_file_type, exec_type, file_type;

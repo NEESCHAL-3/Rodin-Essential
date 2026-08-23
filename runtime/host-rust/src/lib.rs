@@ -1,13 +1,1213 @@
+mod backend_bridge;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 use std::ffi::{CStr, CString};
-use std::fs::{create_dir_all, File};
+use std::fs::{File, create_dir_all};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::Duration;
+
+// Zero-DEX media permission bridge.
+// FFI reads are atomic only; permission UI is requested from the
+// NativeActivity/main choreographer thread.
+
+static RODIN_PHOTO_ACTIVITY: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+static RODIN_PHOTO_CHOREOGRAPHER: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+static RODIN_PHOTO_PERMISSION_STATE: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+static RODIN_PHOTO_REQUEST_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static RODIN_PHOTO_REQUEST_SCHEDULED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn rodin_photo_vm_and_object(
+    activity: *mut ANativeActivity,
+) -> Option<(jni::JavaVM, jni::sys::jobject, i32)> {
+    if activity.is_null() {
+        return None;
+    }
+
+    let (vm_raw, object_raw, sdk) = unsafe {
+        (
+            (*activity).vm as *mut jni::sys::JavaVM,
+            (*activity).clazz as jni::sys::jobject,
+            (*activity).sdk_version,
+        )
+    };
+
+    if vm_raw.is_null() || object_raw.is_null() {
+        return None;
+    }
+
+    let vm = unsafe { jni::JavaVM::from_raw(vm_raw) }.ok()?;
+    Some((vm, object_raw, sdk))
+}
+
+fn rodin_photo_check_named(activity: *mut ANativeActivity, permission_name: &str) -> bool {
+    let Some((vm, object_raw, _)) = rodin_photo_vm_and_object(activity) else {
+        return false;
+    };
+
+    let mut env = match vm.get_env() {
+        Ok(env) => env,
+        Err(_) => return false,
+    };
+
+    let result: jni::errors::Result<bool> = env.with_local_frame(8, |env| {
+        let activity_obj = unsafe { jni::objects::JObject::from_raw(object_raw) };
+
+        let permission = env.new_string(permission_name)?;
+        let permission_obj = jni::objects::JObject::from(permission);
+
+        let grant = env
+            .call_method(
+                &activity_obj,
+                "checkSelfPermission",
+                "(Ljava/lang/String;)I",
+                &[jni::objects::JValue::Object(&permission_obj)],
+            )?
+            .i()?;
+
+        Ok(grant == 0)
+    });
+
+    match result {
+        Ok(value) => value,
+        Err(_) => {
+            let _ = env.exception_clear();
+            false
+        }
+    }
+}
+
+fn rodin_photo_compute_permission_state(activity: *mut ANativeActivity) -> i32 {
+    if activity.is_null() {
+        return 0;
+    }
+
+    let sdk = unsafe { (*activity).sdk_version };
+
+    if sdk >= 33 {
+        if rodin_photo_check_named(activity, "android.permission.READ_MEDIA_IMAGES") {
+            return 2;
+        }
+
+        if sdk >= 34
+            && rodin_photo_check_named(
+                activity,
+                "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+            )
+        {
+            return 1;
+        }
+
+        0
+    } else if rodin_photo_check_named(activity, "android.permission.READ_EXTERNAL_STORAGE") {
+        2
+    } else {
+        0
+    }
+}
+
+fn rodin_photo_refresh_permission(activity: *mut ANativeActivity) {
+    let state = rodin_photo_compute_permission_state(activity);
+
+    RODIN_PHOTO_PERMISSION_STATE.store(state, std::sync::atomic::Ordering::Release);
+}
+
+fn rodin_photo_request_on_main(activity: *mut ANativeActivity) -> bool {
+    let Some((vm, object_raw, sdk)) = rodin_photo_vm_and_object(activity) else {
+        return false;
+    };
+
+    let mut env = match vm.get_env() {
+        Ok(env) => env,
+        Err(_) => return false,
+    };
+
+    let result: jni::errors::Result<bool> = env.with_local_frame(24, |env| {
+        let activity_obj = unsafe { jni::objects::JObject::from_raw(object_raw) };
+
+        let permissions: Vec<&str> = if sdk >= 34 {
+            vec![
+                "android.permission.READ_MEDIA_IMAGES",
+                "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+            ]
+        } else if sdk >= 33 {
+            vec!["android.permission.READ_MEDIA_IMAGES"]
+        } else {
+            vec!["android.permission.READ_EXTERNAL_STORAGE"]
+        };
+
+        let string_class = env.find_class("java/lang/String")?;
+
+        let array = env.new_object_array(
+            permissions.len() as i32,
+            string_class,
+            jni::objects::JObject::null(),
+        )?;
+
+        for (index, name) in permissions.iter().enumerate() {
+            let value = env.new_string(*name)?;
+            env.set_object_array_element(&array, index as i32, value)?;
+        }
+
+        let array_obj = jni::objects::JObject::from(array);
+
+        env.call_method(
+            &activity_obj,
+            "requestPermissions",
+            "([Ljava/lang/String;I)V",
+            &[
+                jni::objects::JValue::Object(&array_obj),
+                jni::objects::JValue::Int(19019),
+            ],
+        )?;
+
+        Ok(true)
+    });
+
+    match result {
+        Ok(value) => value,
+        Err(_) => {
+            let _ = env.exception_clear();
+            false
+        }
+    }
+}
+
+extern "C" fn rodin_photo_frame_callback(_frame_time_nanos: i64, _data: *mut core::ffi::c_void) {
+    RODIN_PHOTO_REQUEST_SCHEDULED.store(false, std::sync::atomic::Ordering::Release);
+
+    if !RODIN_PHOTO_REQUEST_PENDING.swap(false, std::sync::atomic::Ordering::AcqRel) {
+        return;
+    }
+
+    let activity =
+        RODIN_PHOTO_ACTIVITY.load(std::sync::atomic::Ordering::Acquire) as *mut ANativeActivity;
+
+    if !activity.is_null() {
+        let _ = rodin_photo_request_on_main(activity);
+    }
+}
+
+fn rodin_photo_schedule_request() -> bool {
+    let choreographer = RODIN_PHOTO_CHOREOGRAPHER.load(std::sync::atomic::Ordering::Acquire)
+        as *mut core::ffi::c_void;
+
+    if choreographer.is_null() {
+        return false;
+    }
+
+    RODIN_PHOTO_REQUEST_PENDING.store(true, std::sync::atomic::Ordering::Release);
+
+    if RODIN_PHOTO_REQUEST_SCHEDULED
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return true;
+    }
+
+    unsafe {
+        AChoreographer_postFrameCallback64(
+            choreographer as *mut AChoreographer,
+            rodin_photo_frame_callback,
+            core::ptr::null_mut(),
+        );
+    }
+
+    true
+}
+
+fn rodin_photo_init(activity: *mut ANativeActivity) {
+    if activity.is_null() {
+        return;
+    }
+
+    RODIN_PHOTO_ACTIVITY.store(activity as usize, std::sync::atomic::Ordering::Release);
+
+    let choreographer = unsafe { AChoreographer_getInstance() };
+
+    RODIN_PHOTO_CHOREOGRAPHER.store(choreographer as usize, std::sync::atomic::Ordering::Release);
+
+    rodin_photo_refresh_permission(activity);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_photo_permission_state() -> i32 {
+    RODIN_PHOTO_PERMISSION_STATE.load(std::sync::atomic::Ordering::Acquire)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_request_photo_permission() -> i32 {
+    if rodin_photo_schedule_request() { 1 } else { 0 }
+}
+// Zero-DEX launcher catalog. PackageManager access stays in the native host;
+// Dart receives a compact read-only snapshot and queues profile writes through
+// the existing nonblocking Rust backend worker.
+
+#[derive(Clone, PartialEq, Eq)]
+struct RodinLaunchableApp {
+    package: String,
+    label: String,
+    system: bool,
+    icon_path: String,
+}
+
+static RODIN_APPS_ACTIVITY: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static RODIN_APPS_REFRESH_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static RODIN_APPS_REVISION: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+static RODIN_APPS: std::sync::OnceLock<std::sync::Mutex<Vec<RodinLaunchableApp>>> =
+    std::sync::OnceLock::new();
+static RODIN_APPS_BLOB: std::sync::OnceLock<std::sync::Mutex<Vec<u8>>> = std::sync::OnceLock::new();
+
+fn rodin_apps() -> &'static std::sync::Mutex<Vec<RodinLaunchableApp>> {
+    RODIN_APPS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn rodin_apps_blob() -> &'static std::sync::Mutex<Vec<u8>> {
+    RODIN_APPS_BLOB.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn rodin_apps_clean_field(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if matches!(c, '\t' | '\r' | '\n') {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+fn rodin_query_launchable_apps(activity: *mut ANativeActivity) -> Option<Vec<RodinLaunchableApp>> {
+    let (vm, object_raw, _) = rodin_photo_vm_and_object(activity)?;
+
+    let mut env = vm.attach_current_thread().ok()?;
+
+    let icons_dir = unsafe {
+        let internal = (*activity).internal_data_path;
+        if !internal.is_null() {
+            let p = std::path::PathBuf::from(c_string(internal))
+                .join("rodin_flutter")
+                .join("icons");
+            let _ = std::fs::create_dir_all(&p);
+            p
+        } else {
+            let p = std::path::PathBuf::from("/data/local/tmp/rodin_icons");
+            let _ = std::fs::create_dir_all(&p);
+            p
+        }
+    };
+
+    let result: jni::errors::Result<Vec<RodinLaunchableApp>> =
+        env.with_local_frame(32, |env| {
+            let activity_obj = unsafe {
+                jni::objects::JObject::from_raw(object_raw)
+            };
+
+            let package_manager = env
+                .call_method(
+                    &activity_obj,
+                    "getPackageManager",
+                    "()Landroid/content/pm/PackageManager;",
+                    &[],
+                )?
+                .l()?;
+
+            let action_string =
+                env.new_string("android.intent.action.MAIN")?;
+            let action_obj =
+                jni::objects::JObject::from(action_string);
+
+            let intent = env.new_object(
+                "android/content/Intent",
+                "(Ljava/lang/String;)V",
+                &[jni::objects::JValue::Object(&action_obj)],
+            )?;
+
+            let category_string =
+                env.new_string("android.intent.category.LAUNCHER")?;
+            let category_obj =
+                jni::objects::JObject::from(category_string);
+
+            env.call_method(
+                &intent,
+                "addCategory",
+                "(Ljava/lang/String;)Landroid/content/Intent;",
+                &[jni::objects::JValue::Object(&category_obj)],
+            )?;
+
+            let activities = env
+                .call_method(
+                    &package_manager,
+                    "queryIntentActivities",
+                    "(Landroid/content/Intent;I)Ljava/util/List;",
+                    &[
+                        jni::objects::JValue::Object(&intent),
+                        jni::objects::JValue::Int(0),
+                    ],
+                )?
+                .l()?;
+
+            let size = env
+                .call_method(
+                    &activities,
+                    "size",
+                    "()I",
+                    &[],
+                )?
+                .i()?
+                .max(0);
+
+            let mut unique =
+                std::collections::BTreeMap::<String, RodinLaunchableApp>::new();
+
+            for index in 0..size {
+                let entry: jni::errors::Result<Option<RodinLaunchableApp>> =
+                    env.with_local_frame(24, |env| {
+                        let resolve_info = env
+                            .call_method(
+                                &activities,
+                                "get",
+                                "(I)Ljava/lang/Object;",
+                                &[jni::objects::JValue::Int(index)],
+                            )?
+                            .l()?;
+
+                        if resolve_info.is_null() {
+                            return Ok(None);
+                        }
+
+                        let activity_info = env
+                            .get_field(
+                                &resolve_info,
+                                "activityInfo",
+                                "Landroid/content/pm/ActivityInfo;",
+                            )?
+                            .l()?;
+
+                        if activity_info.is_null() {
+                            return Ok(None);
+                        }
+
+                        let package_obj = env
+                            .get_field(
+                                &activity_info,
+                                "packageName",
+                                "Ljava/lang/String;",
+                            )?
+                            .l()?;
+
+                        if package_obj.is_null() {
+                            return Ok(None);
+                        }
+
+                        let package_jstring =
+                            jni::objects::JString::from(package_obj);
+                        let package: String = env
+                            .get_string(&package_jstring)?
+                            .into();
+
+                        if package.is_empty()
+                            || package
+                                == "io.github.neeschal.rodinessential"
+                        {
+                            return Ok(None);
+                        }
+
+                        let label_char_sequence = env
+                            .call_method(
+                                &resolve_info,
+                                "loadLabel",
+                                "(Landroid/content/pm/PackageManager;)Ljava/lang/CharSequence;",
+                                &[jni::objects::JValue::Object(
+                                    &package_manager,
+                                )],
+                            )?
+                            .l()?;
+
+                        let label = if label_char_sequence.is_null() {
+                            package.clone()
+                        } else {
+                            let label_obj = env
+                                .call_method(
+                                    &label_char_sequence,
+                                    "toString",
+                                    "()Ljava/lang/String;",
+                                    &[],
+                                )?
+                                .l()?;
+
+                            if label_obj.is_null() {
+                                package.clone()
+                            } else {
+                                let label_jstring =
+                                    jni::objects::JString::from(label_obj);
+
+                                let raw: String = env
+                                    .get_string(&label_jstring)?
+                                    .into();
+
+                                if raw.trim().is_empty() {
+                                    package.clone()
+                                } else {
+                                    rodin_apps_clean_field(raw.trim())
+                                }
+                            }
+                        };
+
+                        let app_info = env
+                            .get_field(
+                                &activity_info,
+                                "applicationInfo",
+                                "Landroid/content/pm/ApplicationInfo;",
+                            )?
+                            .l()?;
+
+                        let flags = if app_info.is_null() {
+                            0
+                        } else {
+                            env.get_field(
+                                &app_info,
+                                "flags",
+                                "I",
+                            )?
+                            .i()?
+                        };
+
+                        let icon_file = icons_dir.join(format!("{package}.png"));
+                        let icon_path = icon_file.to_string_lossy().to_string();
+
+                        if !icon_file.exists() {
+                            let _: jni::errors::Result<()> = env.with_local_frame(32, |env| {
+                                let drawable = env
+                                    .call_method(
+                                        &resolve_info,
+                                        "loadIcon",
+                                        "(Landroid/content/pm/PackageManager;)Landroid/graphics/drawable/Drawable;",
+                                        &[jni::objects::JValue::Object(&package_manager)],
+                                    )?
+                                    .l()?;
+
+                                if drawable.is_null() {
+                                    return Ok(());
+                                }
+
+                                let mut w = env.call_method(&drawable, "getIntrinsicWidth", "()I", &[])?.i()?;
+                                let mut h = env.call_method(&drawable, "getIntrinsicHeight", "()I", &[])?.i()?;
+
+                                if w <= 0 || h <= 0 {
+                                    w = 96;
+                                    h = 96;
+                                } else {
+                                    w = w.clamp(48, 144);
+                                    h = h.clamp(48, 144);
+                                }
+
+                                let config_class = env.find_class("android/graphics/Bitmap$Config")?;
+                                let argb_8888 = env.get_static_field(
+                                    &config_class,
+                                    "ARGB_8888",
+                                    "Landroid/graphics/Bitmap$Config;",
+                                )?.l()?;
+
+                                let bitmap = env.call_static_method(
+                                    "android/graphics/Bitmap",
+                                    "createBitmap",
+                                    "(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;",
+                                    &[
+                                        jni::objects::JValue::Int(w),
+                                        jni::objects::JValue::Int(h),
+                                        jni::objects::JValue::Object(&argb_8888),
+                                    ],
+                                )?.l()?;
+
+                                if bitmap.is_null() {
+                                    return Ok(());
+                                }
+
+                                let canvas = env.new_object(
+                                    "android/graphics/Canvas",
+                                    "(Landroid/graphics/Bitmap;)V",
+                                    &[jni::objects::JValue::Object(&bitmap)],
+                                )?;
+
+                                let _ = env.call_method(
+                                    &drawable,
+                                    "setBounds",
+                                    "(IIII)V",
+                                    &[
+                                        jni::objects::JValue::Int(0),
+                                        jni::objects::JValue::Int(0),
+                                        jni::objects::JValue::Int(w),
+                                        jni::objects::JValue::Int(h),
+                                    ],
+                                )?;
+
+                                let _ = env.call_method(
+                                    &drawable,
+                                    "draw",
+                                    "(Landroid/graphics/Canvas;)V",
+                                    &[jni::objects::JValue::Object(&canvas)],
+                                )?;
+
+                                let format_class = env.find_class("android/graphics/Bitmap$CompressFormat")?;
+                                let png_format = env.get_static_field(
+                                    &format_class,
+                                    "PNG",
+                                    "Landroid/graphics/Bitmap$CompressFormat;",
+                                )?.l()?;
+
+                                let path_jstr = env.new_string(&icon_path)?;
+                                let path_obj = jni::objects::JObject::from(path_jstr);
+
+                                let fos = env.new_object(
+                                    "java/io/FileOutputStream",
+                                    "(Ljava/lang/String;)V",
+                                    &[jni::objects::JValue::Object(&path_obj)],
+                                )?;
+
+                                let _ = env.call_method(
+                                    &bitmap,
+                                    "compress",
+                                    "(Landroid/graphics/Bitmap$CompressFormat;ILjava/io/OutputStream;)Z",
+                                    &[
+                                        jni::objects::JValue::Object(&png_format),
+                                        jni::objects::JValue::Int(90),
+                                        jni::objects::JValue::Object(&fos),
+                                    ],
+                                )?;
+
+                                let _ = env.call_method(&fos, "flush", "()V", &[])?;
+                                let _ = env.call_method(&fos, "close", "()V", &[])?;
+
+                                Ok(())
+                            });
+                        }
+
+                        Ok(Some(RodinLaunchableApp {
+                            package,
+                            label,
+                            system: (flags & 1) != 0,
+                            icon_path,
+                        }))
+                    });
+
+                if let Some(app) = entry? {
+                    unique.entry(app.package.clone()).or_insert(app);
+                }
+            }
+
+            let mut apps: Vec<RodinLaunchableApp> =
+                unique.into_values().collect();
+
+            apps.sort_by(|left, right| {
+                left.label
+                    .to_lowercase()
+                    .cmp(&right.label.to_lowercase())
+                    .then_with(|| left.package.cmp(&right.package))
+            });
+
+            Ok(apps)
+        });
+
+    match result {
+        Ok(apps) => Some(apps),
+        Err(error) => {
+            let _ = env.exception_clear();
+            log_str(&format!("RODIN_APPS_REFRESH=FAIL error={error}"));
+            None
+        }
+    }
+}
+
+fn rodin_apps_publish(apps: Vec<RodinLaunchableApp>) {
+    let changed = {
+        let mut current = match rodin_apps().lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        if *current == apps {
+            false
+        } else {
+            *current = apps.clone();
+            true
+        }
+    };
+
+    if changed {
+        let mut blob = Vec::<u8>::new();
+
+        for app in &apps {
+            let row = format!(
+                "{}\t{}\t{}\t{}\n",
+                rodin_apps_clean_field(&app.package),
+                rodin_apps_clean_field(&app.label),
+                if app.system { 1 } else { 0 },
+                rodin_apps_clean_field(&app.icon_path),
+            );
+
+            blob.extend_from_slice(row.as_bytes());
+        }
+
+        {
+            let mut current_blob = match rodin_apps_blob().lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            *current_blob = blob;
+        }
+
+        let revision = RODIN_APPS_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+
+        log_str(&format!(
+            "RODIN_APPS_REFRESH=PASS changed=1 count={} revision={revision}",
+            apps.len(),
+        ));
+    } else {
+        log_str(&format!(
+            "RODIN_APPS_REFRESH=PASS changed=0 count={} revision={}",
+            apps.len(),
+            RODIN_APPS_REVISION.load(std::sync::atomic::Ordering::Acquire,),
+        ));
+    }
+}
+
+fn rodin_apps_refresh_async() -> bool {
+    let activity = RODIN_APPS_ACTIVITY.load(std::sync::atomic::Ordering::Acquire);
+
+    if activity == 0 {
+        return false;
+    }
+
+    if RODIN_APPS_REFRESH_PENDING
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return true;
+    }
+
+    std::thread::spawn(move || {
+        let apps = rodin_query_launchable_apps(activity as *mut ANativeActivity);
+
+        if let Some(apps) = apps {
+            rodin_apps_publish(apps);
+        }
+
+        RODIN_APPS_REFRESH_PENDING.store(false, std::sync::atomic::Ordering::Release);
+    });
+
+    true
+}
+
+fn rodin_apps_init(activity: *mut ANativeActivity) {
+    if activity.is_null() {
+        return;
+    }
+
+    RODIN_APPS_ACTIVITY.store(activity as usize, std::sync::atomic::Ordering::Release);
+
+    log_str("RODIN_APPS_INIT=PASS deferred_refresh=1");
+}
+
+fn rodin_app_package(index: i32) -> Option<String> {
+    if index < 0 {
+        return None;
+    }
+
+    let apps = match rodin_apps().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    apps.get(index as usize).map(|app| app.package.clone())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_apps_refresh() -> i32 {
+    if rodin_apps_refresh_async() { 1 } else { 0 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_apps_revision() -> i32 {
+    RODIN_APPS_REVISION.load(std::sync::atomic::Ordering::Acquire)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_apps_count() -> i32 {
+    let apps = match rodin_apps().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    apps.len().min(i32::MAX as usize) as i32
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_apps_blob_len() -> i32 {
+    let blob = match rodin_apps_blob().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    blob.len().min(i32::MAX as usize) as i32
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_apps_blob_byte(offset: i32) -> i32 {
+    if offset < 0 {
+        return -1;
+    }
+
+    let blob = match rodin_apps_blob().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    blob.get(offset as usize)
+        .copied()
+        .map(i32::from)
+        .unwrap_or(-1)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_app_profile(index: i32) -> i32 {
+    let Some(package) = rodin_app_package(index) else {
+        return -1;
+    };
+
+    backend_bridge::per_app_profile_for_package(&package)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_set_app_profile(index: i32, profile: i32) -> i32 {
+    let Some(package) = rodin_app_package(index) else {
+        return 0;
+    };
+
+    backend_bridge::set_per_app_package_profile(&package, profile)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_active_app_index() -> i32 {
+    let package = backend_bridge::last_per_app_package();
+
+    if package.is_empty() {
+        return -1;
+    }
+
+    let apps = match rodin_apps().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    apps.iter()
+        .position(|app| app.package == package)
+        .map(|index| index.min(i32::MAX as usize) as i32)
+        .unwrap_or(-1)
+}
+// Dart only posts a semantic integer. JNI work is deferred to the
+// NativeActivity main AChoreographer and never runs on Flutter's UI thread.
+static RODIN_HAPTIC_ACTIVITY: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+static RODIN_HAPTIC_CHOREOGRAPHER: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+static RODIN_HAPTIC_PENDING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+static RODIN_HAPTIC_SCHEDULED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[link(name = "android")]
+unsafe extern "C" {
+    #[link_name = "AChoreographer_getInstance"]
+    fn rodin_haptic_choreographer_get_instance() -> *mut AChoreographer;
+
+    #[link_name = "AChoreographer_postFrameCallback64"]
+    fn rodin_haptic_post_frame_callback64(
+        choreographer: *mut AChoreographer,
+        callback: unsafe extern "C" fn(i64, *mut c_void),
+        data: *mut c_void,
+    );
+}
+
+fn rodin_haptic_constant(kind: i32, sdk: i32) -> i32 {
+    match kind {
+        1 => 1, // VIRTUAL_KEY
+        2 => 6, // CONTEXT_CLICK
+        3 => {
+            if sdk >= 34 {
+                21
+            } else {
+                6
+            }
+        } // TOGGLE_ON
+        4 => {
+            if sdk >= 34 {
+                22
+            } else {
+                6
+            }
+        } // TOGGLE_OFF
+        5 => {
+            if sdk >= 34 {
+                26
+            } else {
+                4
+            }
+        } // SEGMENT_TICK
+        6 => {
+            if sdk >= 34 {
+                27
+            } else {
+                4
+            }
+        } // SEGMENT_FREQUENT_TICK
+        7 => {
+            if sdk >= 30 {
+                16
+            } else {
+                1
+            }
+        } // CONFIRM
+        8 => {
+            if sdk >= 30 {
+                17
+            } else {
+                6
+            }
+        } // REJECT
+        9 => {
+            if sdk >= 30 {
+                13
+            } else {
+                8
+            }
+        } // End gesture.
+        _ => 1,
+    }
+}
+
+fn rodin_haptic_perform_on_main(kind: i32) -> bool {
+    let activity_ptr =
+        RODIN_HAPTIC_ACTIVITY.load(std::sync::atomic::Ordering::Acquire) as *mut ANativeActivity;
+
+    if activity_ptr.is_null() {
+        return false;
+    }
+
+    let (vm_raw, activity_raw, sdk) = unsafe {
+        (
+            (*activity_ptr).vm as *mut jni::sys::JavaVM,
+            (*activity_ptr).clazz as jni::sys::jobject,
+            (*activity_ptr).sdk_version,
+        )
+    };
+
+    if vm_raw.is_null() || activity_raw.is_null() {
+        return false;
+    }
+
+    let vm = match unsafe { jni::JavaVM::from_raw(vm_raw) } {
+        Ok(vm) => vm,
+        Err(_) => return false,
+    };
+
+    let mut env = match vm.get_env() {
+        Ok(env) => env,
+        Err(_) => return false,
+    };
+
+    let constant = rodin_haptic_constant(kind, sdk);
+
+    let result: jni::errors::Result<bool> = env.with_local_frame(8, |env| {
+        let activity = unsafe { jni::objects::JObject::from_raw(activity_raw) };
+
+        let window = env
+            .call_method(&activity, "getWindow", "()Landroid/view/Window;", &[])?
+            .l()?;
+
+        let decor = env
+            .call_method(&window, "getDecorView", "()Landroid/view/View;", &[])?
+            .l()?;
+
+        env.call_method(
+            &decor,
+            "performHapticFeedback",
+            "(I)Z",
+            &[jni::objects::JValue::Int(constant)],
+        )?
+        .z()
+    });
+
+    match result {
+        Ok(accepted) => accepted,
+        Err(_) => {
+            let _ = env.exception_clear();
+            false
+        }
+    }
+}
+
+extern "C" fn rodin_haptic_frame_callback(_frame_time_nanos: i64, _data: *mut core::ffi::c_void) {
+    RODIN_HAPTIC_SCHEDULED.store(false, std::sync::atomic::Ordering::Release);
+
+    let kind = RODIN_HAPTIC_PENDING.swap(0, std::sync::atomic::Ordering::AcqRel);
+
+    if kind != 0 {
+        let _ = rodin_haptic_perform_on_main(kind);
+    }
+
+    if RODIN_HAPTIC_PENDING.load(std::sync::atomic::Ordering::Acquire) != 0 {
+        let _ = rodin_host_haptic_schedule();
+    }
+}
+
+fn rodin_host_haptic_schedule() -> bool {
+    let choreographer = RODIN_HAPTIC_CHOREOGRAPHER.load(std::sync::atomic::Ordering::Acquire)
+        as *mut core::ffi::c_void;
+
+    if choreographer.is_null() {
+        return false;
+    }
+
+    if RODIN_HAPTIC_SCHEDULED
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return true;
+    }
+
+    unsafe {
+        rodin_haptic_post_frame_callback64(
+            choreographer as *mut AChoreographer,
+            rodin_haptic_frame_callback,
+            core::ptr::null_mut(),
+        );
+    }
+
+    true
+}
+
+fn rodin_haptic_init(activity: *mut ANativeActivity) {
+    if activity.is_null() {
+        return;
+    }
+
+    RODIN_HAPTIC_ACTIVITY.store(activity as usize, std::sync::atomic::Ordering::Release);
+
+    let choreographer = unsafe { rodin_haptic_choreographer_get_instance() };
+    RODIN_HAPTIC_CHOREOGRAPHER.store(choreographer as usize, std::sync::atomic::Ordering::Release);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_haptic(kind: i32) -> i32 {
+    if !(1..=9).contains(&kind) {
+        return 0;
+    }
+
+    if RODIN_HAPTIC_ACTIVITY.load(std::sync::atomic::Ordering::Acquire) == 0 {
+        return 0;
+    }
+
+    // Coalesce bursts to one semantic feedback request per Android frame.
+    RODIN_HAPTIC_PENDING.store(kind, std::sync::atomic::Ordering::Release);
+    if rodin_host_haptic_schedule() { 1 } else { 0 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_haptic_ready() -> i32 {
+    if RODIN_HAPTIC_ACTIVITY.load(std::sync::atomic::Ordering::Acquire) != 0
+        && RODIN_HAPTIC_CHOREOGRAPHER.load(std::sync::atomic::Ordering::Acquire) != 0
+    {
+        1
+    } else {
+        0
+    }
+}
+
+pub fn rodin_host_open_url_jni(code: i32) -> bool {
+    let url = match code {
+        0 => "https://github.com/NEESCHAL-3",
+        1 => "https://t.me/PocoX7ProNepalChat",
+        _ => return false,
+    };
+
+    let activity_ptr =
+        RODIN_HAPTIC_ACTIVITY.load(std::sync::atomic::Ordering::Acquire) as *mut ANativeActivity;
+
+    if activity_ptr.is_null() {
+        eprintln!("RODIN_OPEN_URL activity_ptr is null");
+        return false;
+    }
+
+    let (vm_raw, activity_raw) = unsafe {
+        (
+            (*activity_ptr).vm as *mut jni::sys::JavaVM,
+            (*activity_ptr).clazz as jni::sys::jobject,
+        )
+    };
+
+    if vm_raw.is_null() || activity_raw.is_null() {
+        eprintln!("RODIN_OPEN_URL vm or activity is null");
+        return false;
+    }
+
+    let vm = match unsafe { jni::JavaVM::from_raw(vm_raw) } {
+        Ok(vm) => vm,
+        Err(e) => {
+            eprintln!("RODIN_OPEN_URL JavaVM::from_raw error {e:?}");
+            return false;
+        }
+    };
+
+    let mut env = match vm.attach_current_thread() {
+        Ok(env) => env,
+        Err(e) => {
+            eprintln!("RODIN_OPEN_URL attach_current_thread error {e:?}");
+            return false;
+        }
+    };
+
+    let result: jni::errors::Result<bool> = env.with_local_frame(16, |env| {
+        let activity = unsafe { jni::objects::JObject::from_raw(activity_raw) };
+        let url_jstring = env.new_string(url)?;
+
+        let uri_class = env.find_class("android/net/Uri")?;
+        let uri = env
+            .call_static_method(
+                &uri_class,
+                "parse",
+                "(Ljava/lang/String;)Landroid/net/Uri;",
+                &[(&url_jstring).into()],
+            )?
+            .l()?;
+
+        let action_view = env.new_string("android.intent.action.VIEW")?;
+        let intent_class = env.find_class("android/content/Intent")?;
+        let intent = env.new_object(
+            &intent_class,
+            "(Ljava/lang/String;Landroid/net/Uri;)V",
+            &[(&action_view).into(), (&uri).into()],
+        )?;
+
+        let _ = env.call_method(
+            &intent,
+            "addFlags",
+            "(I)Landroid/content/Intent;",
+            &[jni::objects::JValue::Int(0x10000000)],
+        );
+
+        env.call_method(
+            &activity,
+            "startActivity",
+            "(Landroid/content/Intent;)V",
+            &[(&intent).into()],
+        )?;
+
+        Ok(true)
+    });
+
+    match result {
+        Ok(true) => {
+            eprintln!("RODIN_OPEN_URL launched {url}");
+            true
+        }
+        Ok(false) => false,
+        Err(e) => {
+            eprintln!("RODIN_OPEN_URL JNI error {e:?}");
+            false
+        }
+    }
+}
+static RODIN_BACK_INTERCEPT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static RODIN_BACK_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[link(name = "android")]
+unsafe extern "C" {
+    #[link_name = "AInputEvent_getType"]
+    fn rodin_input_event_get_type(event: *const AInputEvent) -> i32;
+
+    #[link_name = "AKeyEvent_getAction"]
+    fn rodin_key_event_get_action(event: *const AInputEvent) -> i32;
+
+    #[link_name = "AKeyEvent_getKeyCode"]
+    fn rodin_key_event_get_key_code(event: *const AInputEvent) -> i32;
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_set_back_intercept(enabled: i32) -> i32 {
+    let value = enabled != 0;
+    RODIN_BACK_INTERCEPT.store(value, std::sync::atomic::Ordering::Release);
+
+    if !value {
+        RODIN_BACK_PENDING.store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    1
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_consume_back_request() -> i32 {
+    if RODIN_BACK_PENDING.swap(false, std::sync::atomic::Ordering::AcqRel) {
+        1
+    } else {
+        0
+    }
+}
+
+fn rodin_back_finish_handled(event: *const core::ffi::c_void, original_handled: i32) -> i32 {
+    if event.is_null() || !RODIN_BACK_INTERCEPT.load(std::sync::atomic::Ordering::Acquire) {
+        return original_handled;
+    }
+
+    const AINPUT_EVENT_TYPE_KEY: i32 = 1;
+    const AKEYCODE_BACK: i32 = 4;
+    const AKEY_EVENT_ACTION_UP: i32 = 1;
+
+    let event_type = unsafe { rodin_input_event_get_type(event as *const AInputEvent) };
+    if event_type != AINPUT_EVENT_TYPE_KEY {
+        return original_handled;
+    }
+
+    let key_code = unsafe { rodin_key_event_get_key_code(event as *const AInputEvent) };
+    if key_code != AKEYCODE_BACK {
+        return original_handled;
+    }
+
+    let action = unsafe { rodin_key_event_get_action(event as *const AInputEvent) };
+    if action == AKEY_EVENT_ACTION_UP {
+        RODIN_BACK_PENDING.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    // Consume DOWN + UP only while Rodin has an internal page to go back to.
+    1
+}
 
 include!("flutter_layout.rs");
 
@@ -243,12 +1443,14 @@ unsafe extern "C" {
         format: i32,
     ) -> i32;
 
+    #[allow(dead_code)]
     fn ANativeWindow_lock(
         window: *mut ANativeWindow,
         out_buffer: *mut ANativeWindowBuffer,
         in_out_dirty_bounds: *mut ARect,
     ) -> i32;
 
+    #[allow(dead_code)]
     fn ANativeWindow_unlockAndPost(window: *mut ANativeWindow) -> i32;
 
     fn AAssetManager_open(
@@ -820,7 +2022,11 @@ fn input_worker_main(
                     0
                 };
 
-                AInputQueue_finishEvent(queue, event, handled);
+                AInputQueue_finishEvent(
+                    queue,
+                    event,
+                    rodin_back_finish_handled((event) as *const core::ffi::c_void, handled),
+                );
             }
         }
 
@@ -974,6 +2180,47 @@ fn pixel_ratio(activity: *mut ANativeActivity) -> f64 {
             1.0
         }
     }
+}
+
+fn pixel_ratio_for_window(width: usize, _height: usize, activity: *mut ANativeActivity) -> f64 {
+    if let Ok(output) = std::process::Command::new("/system/bin/wm")
+        .arg("density")
+        .output()
+    {
+        let text = String::from_utf8_lossy(&output.stdout);
+        let parse_density = |line: &str| {
+            line.split_once(':')
+                .and_then(|(_, value)| value.trim().parse::<f64>().ok())
+                .filter(|value| (120.0..=800.0).contains(value))
+        };
+        let mut physical_density = None;
+        let mut override_density = None;
+
+        for line in text.lines() {
+            if line.contains("Override density:") {
+                override_density = parse_density(line);
+            } else if line.contains("Physical density:") {
+                physical_density = parse_density(line);
+            }
+        }
+
+        if let Some(density) = override_density {
+            return density / 160.0;
+        }
+
+        if let Some(density) = physical_density {
+            if width > 0 && width != 1220 {
+                return (density * (width as f64) / 1220.0) / 160.0;
+            }
+            return density / 160.0;
+        }
+    }
+
+    if width > 0 {
+        return (width as f64) / 375.3846;
+    }
+
+    pixel_ratio(activity)
 }
 
 unsafe fn symbol(handle: *mut c_void, name: &'static [u8]) -> Result<*const u8, String> {
@@ -1512,7 +2759,7 @@ unsafe fn send_metrics(activity: *mut ANativeActivity, state: *mut HostState) {
         return;
     }
 
-    let ratio = pixel_ratio(activity);
+    let ratio = pixel_ratio_for_window(width, height, activity);
 
     let mut metrics = vec![0u8; FLUTTER_WINDOW_METRICS_SIZE];
     put_usize(
@@ -1703,7 +2950,7 @@ unsafe fn start_flutter(
     put_usize(
         &mut project,
         OFF_PROJECT_LOG_CALLBACK,
-        flutter_log_callback as usize,
+        flutter_log_callback as *const () as usize,
     );
 
     static DART_LOG_TAG: &[u8] = b"RodinDart\0";
@@ -1721,8 +2968,8 @@ unsafe fn start_flutter(
         flutter_vsync_callback as *const () as usize,
     );
 
-    // Phase 7A proves the real EGL/OpenGL GPU path first. Keep Impeller
-    // disabled for this one gate; Phase 7B enables Impeller on the proven GPU path.
+    // The production renderer uses the proven EGL/OpenGL/Skia path. Impeller
+    // remains disabled until its custom-embedder lifecycle is validated here.
     static EXECUTABLE_NAME: &[u8] = b"rodin_essential\0";
     static ENABLE_IMPELLER: &[u8] = b"--enable-impeller=false\0";
 
@@ -1789,7 +3036,10 @@ unsafe fn start_flutter(
 
     log_str("FLUTTER_ENGINE_RUN=PASS renderer=OpenGL");
 
-    unsafe { send_metrics(activity, state) };
+    unsafe {
+        send_metrics(activity, state);
+        send_flutter_settings(activity, state);
+    }
 
     let schedule = unsafe { FlutterEngineScheduleFrame(engine) };
     log_str(&format!("FlutterEngineScheduleFrame rc={schedule}"));
@@ -1797,6 +3047,157 @@ unsafe fn start_flutter(
     Ok(())
 }
 
+fn rodin_android_user_settings(activity: *mut ANativeActivity) -> (f64, bool, i32) {
+    let Some((vm, object_raw, _)) = rodin_photo_vm_and_object(activity) else {
+        return (1.0, false, 0);
+    };
+
+    let mut env = match vm.get_env() {
+        Ok(env) => env,
+        Err(_) => return (1.0, false, 0),
+    };
+
+    let result: jni::errors::Result<(f64, bool, i32)> = env.with_local_frame(16, |env| {
+        let activity_obj = unsafe { jni::objects::JObject::from_raw(object_raw) };
+
+        let resources = env
+            .call_method(
+                &activity_obj,
+                "getResources",
+                "()Landroid/content/res/Resources;",
+                &[],
+            )?
+            .l()?;
+
+        let configuration = env
+            .call_method(
+                &resources,
+                "getConfiguration",
+                "()Landroid/content/res/Configuration;",
+                &[],
+            )?
+            .l()?;
+
+        let font_scale = env.get_field(&configuration, "fontScale", "F")?.f()? as f64;
+
+        let ui_mode = env.get_field(&configuration, "uiMode", "I")?.i()?;
+
+        let date_format = env.find_class("android/text/format/DateFormat")?;
+
+        let use_24_hour = env
+            .call_static_method(
+                date_format,
+                "is24HourFormat",
+                "(Landroid/content/Context;)Z",
+                &[jni::objects::JValue::Object(&activity_obj)],
+            )?
+            .z()?;
+
+        Ok((
+            if font_scale.is_finite() && font_scale > 0.0 {
+                font_scale
+            } else {
+                1.0
+            },
+            use_24_hour,
+            ui_mode,
+        ))
+    });
+
+    match result {
+        Ok(value) => value,
+        Err(_) => {
+            let _ = env.exception_clear();
+            (1.0, false, 0)
+        }
+    }
+}
+
+unsafe fn send_flutter_settings(activity: *mut ANativeActivity, state: *mut HostState) -> bool {
+    if activity.is_null() || state.is_null() {
+        return false;
+    }
+
+    let engine = input_engine(state);
+
+    if engine == 0 {
+        return false;
+    }
+
+    static CHANNEL: &[u8] = b"flutter/settings\0";
+
+    let (text_scale, use_24_hour, ui_mode) = rodin_android_user_settings(activity);
+
+    const UI_MODE_NIGHT_MASK: i32 = 0x30;
+    const UI_MODE_NIGHT_YES: i32 = 0x20;
+
+    let brightness = if (ui_mode & UI_MODE_NIGHT_MASK) == UI_MODE_NIGHT_YES {
+        "dark"
+    } else {
+        "light"
+    };
+
+    let payload = format!(
+        "{{\"textScaleFactor\":{text_scale:.4},\
+\"alwaysUse24HourFormat\":{},\
+\"platformBrightness\":\"{brightness}\"}}",
+        if use_24_hour { "true" } else { "false" },
+    );
+
+    let bytes = payload.as_bytes();
+    let mut message = vec![0u8; FLUTTER_PLATFORM_MESSAGE_SIZE];
+
+    put_usize(
+        &mut message,
+        OFF_PLATFORM_MESSAGE_STRUCT_SIZE,
+        FLUTTER_PLATFORM_MESSAGE_SIZE,
+    );
+    put_usize(
+        &mut message,
+        OFF_PLATFORM_MESSAGE_CHANNEL,
+        CHANNEL.as_ptr() as usize,
+    );
+    put_usize(
+        &mut message,
+        OFF_PLATFORM_MESSAGE_MESSAGE,
+        bytes.as_ptr() as usize,
+    );
+    put_usize(&mut message, OFF_PLATFORM_MESSAGE_MESSAGE_SIZE, bytes.len());
+    put_usize(&mut message, OFF_PLATFORM_MESSAGE_RESPONSE_HANDLE, 0);
+
+    let rc =
+        unsafe { FlutterEngineSendPlatformMessage(engine as *mut c_void, message.as_ptr().cast()) };
+
+    log_str(&format!(
+        "FLUTTER_SETTINGS brightness={brightness} \
+text_scale={text_scale:.3} use24h={use_24_hour} ui_mode=0x{ui_mode:x} rc={rc}"
+    ));
+
+    rc == 0
+}
+
+unsafe extern "C" fn on_configuration_changed(activity: *mut ANativeActivity) {
+    log_str("onConfigurationChanged");
+
+    if activity.is_null() {
+        return;
+    }
+
+    let state = unsafe { (*activity).instance.cast::<HostState>() };
+
+    unsafe {
+        send_metrics(activity, state);
+        send_flutter_settings(activity, state);
+    }
+
+    let engine = input_engine(state);
+
+    if engine != 0 {
+        let rc = unsafe { FlutterEngineScheduleFrame(engine as *mut c_void) };
+
+        log_str(&format!("CONFIGURATION_FRAME_SCHEDULE rc={rc}"));
+    }
+}
 unsafe fn send_flutter_lifecycle(state: *mut HostState, lifecycle: &str) -> bool {
     if state.is_null() {
         return false;
@@ -1882,6 +3283,7 @@ unsafe extern "C" fn on_start(_: *mut ANativeActivity) {
 }
 
 unsafe extern "C" fn on_resume(activity: *mut ANativeActivity) {
+    rodin_photo_refresh_permission(activity);
     log_str("onResume");
 
     if activity.is_null() {
@@ -1890,8 +3292,13 @@ unsafe extern "C" fn on_resume(activity: *mut ANativeActivity) {
     let state = unsafe { (*activity).instance.cast::<HostState>() };
     // During a normal foreground recreation onResume arrives before the new
     // ANativeWindow. Resume Flutter only when an onscreen surface is ready.
+    let _ = rodin_apps_refresh_async();
+
     if has_egl_surface(state) {
-        unsafe { send_flutter_lifecycle(state, "resumed") };
+        unsafe {
+            send_flutter_settings(activity, state);
+            send_flutter_lifecycle(state, "resumed");
+        }
     }
 }
 
@@ -2043,6 +3450,8 @@ unsafe extern "C" fn on_low_memory(activity: *mut ANativeActivity) {
 unsafe extern "C" fn on_destroy(activity: *mut ANativeActivity) {
     log_str("onDestroy");
 
+    RODIN_APPS_ACTIVITY.store(0, std::sync::atomic::Ordering::Release);
+
     if activity.is_null() {
         return;
     }
@@ -2112,17 +3521,29 @@ unsafe extern "C" fn on_destroy(activity: *mut ANativeActivity) {
 }
 
 #[unsafe(no_mangle)]
+/// Creates the zero-DEX Android native activity and starts the Flutter host.
+///
+/// # Safety
+///
+/// Android must pass a valid `ANativeActivity` pointer whose callback table,
+/// VM, class reference, asset manager, and paths remain valid for the activity
+/// lifecycle. This function must only be invoked by the Android framework.
 pub unsafe extern "C" fn ANativeActivity_onCreate(
     activity: *mut ANativeActivity,
     _saved_state: *mut c_void,
     _saved_state_size: usize,
 ) {
-    log_str("ANativeActivity_onCreate");
+    log_str("ANativeActivity_onCreate entry");
 
     if activity.is_null() {
         log_str("activity pointer is null");
         return;
     }
+
+    rodin_photo_init(activity);
+    rodin_haptic_init(activity);
+    rodin_apps_init(activity);
+    log_str("ANativeActivity_onCreate");
 
     let callbacks = unsafe { (*activity).callbacks };
 
@@ -2169,6 +3590,7 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
         (*callbacks).on_native_window_destroyed = Some(on_window_destroyed);
         (*callbacks).on_input_queue_created = Some(on_input_queue_created);
         (*callbacks).on_input_queue_destroyed = Some(on_input_queue_destroyed);
+        (*callbacks).on_configuration_changed = Some(on_configuration_changed);
         (*callbacks).on_low_memory = Some(on_low_memory);
     }
 
