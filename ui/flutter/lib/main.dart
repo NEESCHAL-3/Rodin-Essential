@@ -35,7 +35,7 @@ extension RodinScreenName on RodinScreen {
   String get title {
     switch (this) {
       case RodinScreen.home:
-        return 'Rodin Essentials';
+        return 'Rodin Essential';
       case RodinScreen.hubs:
         return 'Control Hubs';
       case RodinScreen.support:
@@ -153,7 +153,7 @@ class RodinEssentialApp extends StatelessWidget {
       valueListenable: RodinThemeController.mode,
       builder: (BuildContext context, ThemeMode themeMode, Widget? child) {
         return MaterialApp(
-          title: 'Rodin Essentials',
+          title: 'Rodin Essential',
           debugShowCheckedModeBanner: false,
           themeMode: themeMode,
           theme: _theme(
