@@ -1069,6 +1069,73 @@ fn profile_uses_ged_boost(profile: i32) -> bool {
     matches!(profile, 1 | 3)
 }
 
+fn write_beast_gpu_constraints() {
+    let _ = fs::write("/sys/class/misc/mali0/device/power_policy", "always_on");
+    let _ = fs::write("/sys/kernel/ged/hal/gpu_boost_level", "2");
+    let _ = fs::write("/sys/module/ged/parameters/ged_boost_enable", "1");
+    let _ = fs::write("/sys/module/ged/parameters/boost_gpu_enable", "1");
+    let _ = fs::write("/sys/module/ged/parameters/ged_smart_boost", "1");
+    let _ = fs::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "0");
+    let _ = fs::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "0");
+    let _ = fs::write("/sys/module/ged/parameters/gpu_bottom_freq", "1300000");
+    let _ = fs::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "1300000");
+    let _ = fs::write(
+        "/sys/module/ged/parameters/gpu_cust_upbound_freq",
+        "1300000",
+    );
+    gpu_write_file(
+        "/sys/class/devfreq/13000000.mali/max_freq",
+        "/sys/class/misc/mali0/device/devfreq/13000000.mali/max_freq",
+        "1300000000",
+    );
+    gpu_write_file(
+        "/sys/class/devfreq/13000000.mali/min_freq",
+        "/sys/class/misc/mali0/device/devfreq/13000000.mali/min_freq",
+        "1300000000",
+    );
+    gpu_write_file(
+        "/sys/class/devfreq/13000000.mali/governor",
+        "/sys/class/misc/mali0/device/devfreq/13000000.mali/governor",
+        "performance",
+    );
+}
+
+// Beast must never disable DVFS while the GPU is still running a previous
+// OPP. This is especially important during boot: the MediaTek power service
+// can publish its stock OPP 40 target after sys.boot_completed, and freezing
+// DVFS at that point leaves the GPU stuck below 1300 MHz until the UI submits
+// another profile command. Keep DVFS enabled while arming OPP 0, and disable
+// it only after the live GED frequency confirms 1300 MHz.
+fn arm_or_lock_beast_gpu() -> bool {
+    write_beast_gpu_constraints();
+
+    if gpu_get_cur_freq_mhz() != 1300 {
+        let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
+        let _ = fs::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "0");
+        return false;
+    }
+
+    let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "0");
+    gpu_get_cur_freq_mhz() == 1300 && gpu_get_dvfs_enabled() == 0
+}
+
+fn settle_beast_gpu_lock(attempts: usize, delay: Duration) -> bool {
+    let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
+
+    for _ in 0..attempts {
+        if arm_or_lock_beast_gpu() {
+            return true;
+        }
+        std::thread::sleep(delay);
+    }
+
+    // Leaving DVFS enabled is intentional. The background guard will lock it
+    // as soon as the GPU becomes active and GED reports OPP 0; disabling it
+    // here would preserve whichever lower boot OPP happened to be current.
+    let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
+    false
+}
+
 pub fn enforce_performance_profile(profile: i32) -> bool {
     if matches!(profile, 1 | 3) {
         disable_gpu_thermal_limits();
@@ -1080,47 +1147,7 @@ pub fn enforce_performance_profile(profile: i32) -> bool {
         3 => {
             // Extreme Beast: fixed 1300 MHz OPP with the GPU cooling cap
             // explicitly disabled for this unrestricted profile.
-            let _ = fs::write("/sys/class/misc/mali0/device/power_policy", "always_on");
-            let _ = fs::write("/sys/kernel/ged/hal/gpu_boost_level", "2");
-            let _ = fs::write("/sys/module/ged/parameters/ged_boost_enable", "1");
-            let _ = fs::write("/sys/module/ged/parameters/boost_gpu_enable", "1");
-            let _ = fs::write("/sys/module/ged/parameters/ged_smart_boost", "1");
-            let _ = fs::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "0");
-            let _ = fs::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "0");
-            let _ = fs::write("/sys/module/ged/parameters/gpu_bottom_freq", "1300000");
-            let _ = fs::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "1300000");
-            let _ = fs::write(
-                "/sys/module/ged/parameters/gpu_cust_upbound_freq",
-                "1300000",
-            );
-            gpu_write_file(
-                "/sys/class/devfreq/13000000.mali/max_freq",
-                "/sys/class/misc/mali0/device/devfreq/13000000.mali/max_freq",
-                "1300000000",
-            );
-            gpu_write_file(
-                "/sys/class/devfreq/13000000.mali/min_freq",
-                "/sys/class/misc/mali0/device/devfreq/13000000.mali/min_freq",
-                "1300000000",
-            );
-            gpu_write_file(
-                "/sys/class/devfreq/13000000.mali/governor",
-                "/sys/class/misc/mali0/device/devfreq/13000000.mali/governor",
-                "performance",
-            );
-
-            // Let GED move the hardware to OPP 0 before disabling DVFS. If
-            // DVFS is stopped while the previous profile's OPP is still live,
-            // the GPU can briefly freeze at that old clock despite a 1300 MHz
-            // min/max range.
-            for _ in 0..60 {
-                if gpu_get_cur_freq_mhz() == 1300 {
-                    break;
-                }
-                let _ = fs::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "0");
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "0");
+            let _ = settle_beast_gpu_lock(60, Duration::from_millis(25));
 
             let _ = set_cpu_governor(0, "performance");
             let _ = set_cpu_governor(4, "performance");
@@ -3287,12 +3314,12 @@ fn reassert_persisted_governors() {
             let _ = set_gpu_power_policy(&state.gpu_power_policy);
         }
 
-        let desired_dvfs = if state.gpu_uncap == 1 { 0 } else { 1 };
-        if gpu_get_dvfs_enabled() != desired_dvfs {
-            let _ = fs::write(
-                "/sys/module/ged/parameters/gpu_dvfs_enable",
-                desired_dvfs.to_string(),
-            );
+        if state.gpu_uncap == 1 {
+            // Do not freeze a lower boot OPP. This step leaves DVFS enabled
+            // until the live frequency reaches 1300 MHz, then locks it.
+            let _ = arm_or_lock_beast_gpu();
+        } else if gpu_get_dvfs_enabled() != 1 {
+            let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
         }
     }
 
@@ -3367,6 +3394,10 @@ fn gaming_dynamic_guard() {
         let _ = fs::write("/sys/class/thermal/cooling_device3/cur_state", "0");
 
         if profile == 3 {
+            // MediaTek's power HAL can publish its stock OPP 40 target after
+            // boot completion. Reassert every Beast-owned node and lock DVFS
+            // only after GED confirms that OPP 0 is actually live.
+            let _ = arm_or_lock_beast_gpu();
             std::thread::sleep(Duration::from_millis(100));
             continue;
         }
@@ -3912,6 +3943,7 @@ fn gpu_get_dvfs_enabled() -> i32 {
 fn gpu_get_uncap_active() -> i32 {
     if gpu_get_min_freq_mhz() == 1300
         && gpu_get_max_freq_mhz() == 1300
+        && gpu_get_cur_freq_mhz() == 1300
         && gpu_get_governor() == "performance"
         && gpu_get_dvfs_enabled() == 0
         && gpu_get_power_policy() == "always_on"
@@ -3933,6 +3965,7 @@ fn gpu_profile_verified(profile: i32) -> bool {
         3 => {
             min == 1300
                 && max == 1300
+                && gpu_get_cur_freq_mhz() == 1300
                 && governor == "performance"
                 && gpu_boost_pipeline_matches(true)
                 && dvfs == 0
@@ -3973,7 +4006,9 @@ fn gpu_profile_configured(profile: i32) -> bool {
 
     match profile {
         3 => {
-            ((min == 1300 && max == 1300) || (thermal_limited && min <= max && max < 1300))
+            min == 1300
+                && max == 1300
+                && gpu_get_cur_freq_mhz() == 1300
                 && governor == "performance"
                 && gpu_boost_pipeline_matches(true)
                 && dvfs == 0
@@ -4083,37 +4118,11 @@ fn set_gpu_ged_boost(enable: bool) -> Result<(), String> {
 }
 
 fn set_gpu_uncap(enable: bool) -> Result<(), String> {
+    let mut beast_locked = true;
+
     if enable {
         disable_gpu_thermal_limits();
-        let _ = fs::write("/sys/class/misc/mali0/device/power_policy", "always_on");
-        let _ = fs::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "0");
-        let _ = fs::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "0");
-        let _ = fs::write("/sys/kernel/ged/hal/gpu_boost_level", "2");
-        gpu_write_file(
-            "/sys/class/devfreq/13000000.mali/governor",
-            "/sys/class/misc/mali0/device/devfreq/13000000.mali/governor",
-            "performance",
-        );
-        gpu_write_file(
-            "/sys/class/devfreq/13000000.mali/max_freq",
-            "/sys/class/misc/mali0/device/devfreq/13000000.mali/max_freq",
-            "1300000000",
-        );
-        gpu_write_file(
-            "/sys/class/devfreq/13000000.mali/min_freq",
-            "/sys/class/misc/mali0/device/devfreq/13000000.mali/min_freq",
-            "1300000000",
-        );
-        let _ = fs::write("/sys/module/ged/parameters/gpu_bottom_freq", "1300000");
-        let _ = fs::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "1300000");
-        let _ = fs::write(
-            "/sys/module/ged/parameters/gpu_cust_upbound_freq",
-            "1300000",
-        );
-        let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "0");
-        let _ = fs::write("/sys/module/ged/parameters/ged_boost_enable", "1");
-        let _ = fs::write("/sys/module/ged/parameters/boost_gpu_enable", "1");
-        let _ = fs::write("/sys/module/ged/parameters/ged_smart_boost", "1");
+        beast_locked = settle_beast_gpu_lock(60, Duration::from_millis(25));
     } else {
         restore_thermal_safety();
         let _ = fs::write("/sys/class/misc/mali0/device/power_policy", "coarse_demand");
@@ -4164,7 +4173,12 @@ fn set_gpu_uncap(enable: bool) -> Result<(), String> {
             state.gpu_governor = "simple_ondemand".to_string();
         }
     });
-    Ok(())
+
+    if enable && !beast_locked {
+        Err("Beast OPP 0 is armed and will lock when the GPU becomes active".into())
+    } else {
+        Ok(())
+    }
 }
 
 fn gpu_get_power_policy() -> String {
