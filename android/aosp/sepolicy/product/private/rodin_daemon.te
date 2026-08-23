@@ -1,0 +1,38 @@
+init_daemon_domain(rodin_daemon)
+
+type rodin_daemon_data_file, file_type, data_file_type, core_data_file_type;
+
+allow rodin_daemon self:capability {
+    dac_override
+    dac_read_search
+    sys_admin
+    sys_nice
+    sys_ptrace
+};
+allow rodin_daemon self:unix_stream_socket create_stream_socket_perms;
+
+allow rodin_daemon rodin_daemon_data_file:dir create_dir_perms;
+allow rodin_daemon rodin_daemon_data_file:file create_file_perms;
+
+# The UI is the only production client allowed to control the daemon.
+allow rodin_app rodin_daemon:unix_stream_socket connectto;
+
+# Keep the command-line health client available on development builds only.
+userdebug_or_eng(`
+    allow shell rodin_daemon:unix_stream_socket connectto;
+')
+
+binder_use(rodin_daemon)
+binder_call(rodin_daemon, system_server)
+allow rodin_daemon activity_service:service_manager find;
+allow rodin_daemon display_service:service_manager find;
+allow rodin_daemon package_service:service_manager find;
+allow rodin_daemon power_service:service_manager find;
+
+# The backend calls Android command-line clients for settings and diagnostics.
+allow rodin_daemon system_file:file rx_file_perms;
+allow rodin_daemon shell_exec:file rx_file_perms;
+
+# Performance profiles may start or stop vendor thermal control services.
+set_prop(rodin_daemon, ctl_start_prop)
+set_prop(rodin_daemon, ctl_stop_prop)

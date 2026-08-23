@@ -1,6 +1,0 @@
-===== RODIN ESSENTIAL PHASE 10B MATERIAL ICONS FIX =====
-uses_material_design=true
-material_icons_font=out/flutter-aot-phase10b/flutter_assets/fonts/MaterialIcons-Regular.otf
-material_icons_sha256=d9865b671a09d683d13a863089d8825e0f61a37696ce5d7d448bc8023aa62453
-font_manifest_bytes=82
-PHASE10B_MATERIAL_ICONS=PASS

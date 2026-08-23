@@ -1,0 +1,45 @@
+# Baseline policy for the Rodin vendor image. Verify the labels against the
+# exact vendor build used by the ROM before shipping; OEM ports can rename
+# individual types while exposing the same kernel nodes.
+
+# CPU, UFS, GPU, GED, thermal, charging, touch, and ZRAM controls.
+allow rodin_daemon sysfs_devices_system_cpu:dir search;
+allow rodin_daemon sysfs_devices_system_cpu:file rw_file_perms;
+allow rodin_daemon sysfs_devices_block:dir search;
+allow rodin_daemon sysfs_devices_block:file rw_file_perms;
+allow rodin_daemon sysfs_memory:dir search;
+allow rodin_daemon sysfs_memory:file rw_file_perms;
+allow rodin_daemon sysfs_ged:dir search;
+allow rodin_daemon sysfs_ged:file rw_file_perms;
+allow rodin_daemon sysfs_mali_power_policy:file rw_file_perms;
+allow rodin_daemon sysfs_therm:file rw_file_perms;
+allow rodin_daemon sysfs_usb_supply:file rw_file_perms;
+allow rodin_daemon sysfs_batteryinfo:file r_file_perms;
+allow rodin_daemon sysfs_zram:file rw_file_perms;
+allow rodin_daemon sysfs_fs_f2fs:file rw_file_perms;
+allow rodin_daemon proc_powerhal_cpu_ctrl:file rw_file_perms;
+allow rodin_daemon proc_touch_boost:file rw_file_perms;
+allow rodin_daemon proc_tp_file:file r_file_perms;
+allow rodin_daemon proc_swappiness:file rw_file_perms;
+allow rodin_daemon proc_drop_caches:file w_file_perms;
+allow rodin_daemon cgroup:file r_file_perms;
+allow rodin_daemon input_device:chr_file rw_file_perms;
+allow rodin_daemon swap_block_device:blk_file rw_file_perms;
+
+# Rodin's Mali devfreq and Goodix fallback nodes use the generic sysfs label in
+# the current vendor policy. Prefer a dedicated label if the target tree has one.
+allow rodin_daemon sysfs:dir r_dir_perms;
+allow rodin_daemon sysfs:file rw_file_perms;
+
+# Xiaomi display and touch AIDL services.
+binder_call(rodin_daemon, vendor_hal_displayfeature_xiaomi_default)
+binder_call(rodin_daemon, hal_touchfeature_xiaomi_default)
+allow rodin_daemon vendor_hal_displayfeature_xiaomi_service:service_manager find;
+allow rodin_daemon hal_touchfeature_xiaomi_service:service_manager find;
+
+# The verified 1000 Hz mode duplicates the touch service's event descriptor and
+# updates its Rodin timing block. These permissions are not needed by 240/480 Hz.
+allow rodin_daemon hal_touchfeature_xiaomi_default:process ptrace;
+allow rodin_daemon hal_touchfeature_xiaomi_default:fd use;
+allow rodin_daemon hal_touchfeature_xiaomi_default:dir r_dir_perms;
+allow rodin_daemon hal_touchfeature_xiaomi_default:file rw_file_perms;

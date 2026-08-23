@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:pivotX="54"
+        android:pivotY="54">
+        <!-- Clean Crisp Solid White "R" Monogram -->
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M33,78 L33,33 C33,31 35,30 37,30 L61,30 C74,30 74,54 61,54 L45,54 L62,76 C63,78 62,79 59,79 L48,79 L35,59 L35,78 Z M45,38 L59,38 C65,38 65,46 59,46 L45,46 Z" />
+    </group>
+</vector>

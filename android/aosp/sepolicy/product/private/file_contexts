@@ -1,0 +1,2 @@
+/product/bin/rodin_daemon                     u:object_r:rodin_daemon_exec:s0
+/data/system/rodin-essential(/.*)?            u:object_r:rodin_daemon_data_file:s0

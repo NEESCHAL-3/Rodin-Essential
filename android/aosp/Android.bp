@@ -1,0 +1,36 @@
+// Rodin Essential prebuilt integration for the product partition.
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+android_app_import {
+    name: "RodinEssential",
+    apk: "prebuilt/RodinEssential.apk",
+    certificate: "platform",
+    product_specific: true,
+    required: ["rodin_daemon"],
+}
+
+cc_prebuilt_binary {
+    name: "rodin_daemon",
+    srcs: ["prebuilt/rodin_daemon"],
+    compile_multilib: "64",
+    product_specific: true,
+    check_elf_files: false,
+    strip: {
+        none: true,
+    },
+    init_rc: ["rodin_daemon.rc"],
+}
+
+cc_prebuilt_binary {
+    name: "rodin_ctl",
+    srcs: ["prebuilt/rodin_ctl"],
+    compile_multilib: "64",
+    product_specific: true,
+    check_elf_files: false,
+    strip: {
+        none: true,
+    },
+}

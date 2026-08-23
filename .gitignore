@@ -14,6 +14,8 @@ out/
 dist/
 *.apk
 *.aab
+*.idsig
+android/aosp/prebuilt/
 
 # Native build
 *.o
@@ -39,10 +41,5 @@ perf-captures/
 # Development signing material
 *.jks
 *.keystore
-
-# Development signing material
-*.jks
-*.keystore
-
 # Locally built pinned Flutter runtime binaries
 runtime/flutter-engine/prebuilt/

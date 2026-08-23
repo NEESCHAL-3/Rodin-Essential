@@ -1,0 +1,6 @@
+id=nees_rodin_essential_backend
+name=Rodin Essential Backend
+version=v1.17.0
+versionCode=11700
+author=NEESCHAL-3
+description=KernelSU Next backend for Rodin Essential controls. The Android app stays unprivileged and communicates with this separate root daemon.

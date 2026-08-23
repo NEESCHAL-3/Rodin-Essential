@@ -1,7 +1,8 @@
 [package]
 name = "rodin-essential-host"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 publish = false
 
 [lib]
@@ -9,3 +10,4 @@ name = "rodin_essential_host"
 crate-type = ["cdylib"]
 
 [dependencies]
+jni = { version = "0.21.1", default-features = false }

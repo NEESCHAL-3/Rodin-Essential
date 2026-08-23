@@ -1,7 +1,7 @@
 name: rodin_essential_ui
 description: Rodin Essential zero-DEX Flutter AOT interface.
 publish_to: "none"
-version: 0.1.0+1
+version: 1.17.0+11700
 
 environment:
   sdk: ">=3.12.0 <4.0.0"
@@ -12,3 +12,5 @@ dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/app_icon.png

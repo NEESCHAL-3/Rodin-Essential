@@ -2,5 +2,16 @@
 resolver = "3"
 members = [
     "runtime/host-rust",
-    "runtime/core-rust",
+    "runtime/daemon-rust",
 ]
+
+[workspace.package]
+version = "1.17.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
