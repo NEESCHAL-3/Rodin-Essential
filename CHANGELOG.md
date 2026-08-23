@@ -24,6 +24,8 @@ All notable changes are documented here.
 - GED is profile-owned: enabled only for Gaming Dynamic and Extreme Beast.
 - Profile, touch, storage, CPU, and memory settings are reapplied after boot and
   guarded against vendor drift.
+- Persisted GPU profiles recover from late MediaTek power-service overrides;
+  fixed-frequency restoration verifies the live target OPP before locking DVFS.
 - Build output is zero-DEX, release-mode, ARM64-only, and verified for 16 KB APK
   and ELF alignment.
 
