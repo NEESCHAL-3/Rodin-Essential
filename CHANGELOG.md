@@ -14,7 +14,7 @@ All notable changes are documented here.
 - Goodix and FocalTech detection through the Rodin touch vendor stack.
 - UFS scheduler application and verification across detected logical units.
 - Motion-feel control and refined application transitions.
-- Backend-only KernelSU Next packaging.
+- Combined KernelSU Next and Magisk module with bundled unprivileged APK.
 - AOSP `/product` integration bundle, init service, and split SELinux policy.
 
 ### Changed

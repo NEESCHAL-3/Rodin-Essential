@@ -23,5 +23,6 @@ rm -f "$RODIN_ROOT/bin/rodin_daemon" "$RODIN_ROOT/bin/rodin_ctl"
 rmdir "$RODIN_ROOT/bin" 2>/dev/null
 rm -f "$RODIN_ROOT/backend.log" "$RODIN_ROOT/backend.log.1"
 
-# Keep state.conf so reinstalling the backend restores the user's selections.
+# Keep state.conf and the ordinary Android app so removing the root module does
+# not erase user data. The app can be uninstalled normally from Android.
 exit 0

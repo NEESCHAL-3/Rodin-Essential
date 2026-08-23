@@ -171,7 +171,7 @@ The UI process is not the owner of active settings. Force-closing the app,
 swiping it from recents, or restarting System UI does not stop the daemon.
 Regular OTA updates retain the state file because it lives on `/data`.
 
-Do not ship the KernelSU backend module in the same build. Two daemon
+Do not ship the KernelSU/Magisk module in the same build. Two daemon
 supervisors would compete for the same abstract socket and hardware state.
 
 ## 6. Why there is no privileged-permission XML
@@ -278,5 +278,5 @@ future reinstall or removed by an explicit migration step in the ROM updater.
 Direct writes to a running `/product` or `/system_ext` image are not an official
 installation method. Dynamic partitions, AVB, snapshots, SELinux labels, and OTA
 slot changes make that path unreliable. Use the AOSP source integration for a
-rootless ROM release or the backend-only KernelSU Next module for development on
-an existing ROM.
+rootless ROM release or the KernelSU Next/Magisk module for an existing rooted
+ROM.
