@@ -7,40 +7,56 @@ RODIN_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
 RODIN_STAMP="$(date +%Y%m%d-%H%M%S)"
 RODIN_BUILD_ROOT="$RODIN_PROJECT_ROOT/out/kernelsu-next/$RODIN_STAMP"
 RODIN_STAGE="$RODIN_BUILD_ROOT/module"
-RODIN_CARGO_TARGET="$RODIN_BUILD_ROOT/cargo"
+RODIN_APP_BUILD="$RODIN_BUILD_ROOT/application"
 
 RODIN_VERSION="$(sed -n 's/^version=//p' "$RODIN_MODULE_SOURCE/module.prop")"
-RODIN_ZIP_NAME="Rodin-Essential-KernelSU-Next-${RODIN_VERSION}.zip"
+RODIN_ZIP_NAME="Rodin-Essential-KernelSU-Next-Magisk-${RODIN_VERSION}.zip"
 RODIN_ZIP="$RODIN_BUILD_ROOT/$RODIN_ZIP_NAME"
-RODIN_STABLE_ZIP="$RODIN_PROJECT_ROOT/out/Rodin-Essential-KernelSU-Next.zip"
+RODIN_STABLE_ZIP="$RODIN_PROJECT_ROOT/out/Rodin-Essential-KernelSU-Next-Magisk.zip"
+
+[ -n "${RODIN_KEYSTORE:-}" ] || {
+    echo "RODIN_KEYSTORE is required for a distributable root module." >&2
+    echo "Use one persistent signing key for every module update." >&2
+    exit 1
+}
 
 RODIN_NDK_VERSION="$(find "$RODIN_SDK_ROOT/ndk" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -1)"
 RODIN_NDK="$RODIN_SDK_ROOT/ndk/$RODIN_NDK_VERSION"
 RODIN_TOOLCHAIN="$RODIN_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
-RODIN_LINKER="$RODIN_TOOLCHAIN/aarch64-linux-android31-clang"
 RODIN_STRIP="$RODIN_TOOLCHAIN/llvm-strip"
+RODIN_BUILD_TOOLS="$(find "$RODIN_SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -1)"
+RODIN_AAPT2="$RODIN_SDK_ROOT/build-tools/$RODIN_BUILD_TOOLS/aapt2"
+RODIN_APKSIGNER="$RODIN_SDK_ROOT/build-tools/$RODIN_BUILD_TOOLS/apksigner"
+RODIN_ZIPALIGN="$RODIN_SDK_ROOT/build-tools/$RODIN_BUILD_TOOLS/zipalign"
 
-[ -x "$RODIN_LINKER" ] || {
-    echo "Missing Android arm64 linker: $RODIN_LINKER" >&2
-    exit 1
-}
+for RODIN_TOOL in "$RODIN_STRIP" "$RODIN_AAPT2" "$RODIN_APKSIGNER" "$RODIN_ZIPALIGN"; do
+    [ -x "$RODIN_TOOL" ] || {
+        echo "Missing Android build tool: $RODIN_TOOL" >&2
+        exit 1
+    }
+done
 
-mkdir -p "$RODIN_STAGE/bin" "$RODIN_CARGO_TARGET"
+mkdir -p "$RODIN_STAGE/bin" "$RODIN_STAGE/app"
 
-echo "===== RODIN ESSENTIAL — KERNELSU NEXT MODULE ====="
+echo "===== RODIN ESSENTIAL — KERNELSU NEXT + MAGISK MODULE ====="
 echo "version=$RODIN_VERSION"
 echo "ndk=$RODIN_NDK_VERSION"
 echo "output=$RODIN_ZIP"
 
-export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$RODIN_LINKER"
-export CARGO_TARGET_DIR="$RODIN_CARGO_TARGET"
-export RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384"
+RODIN_BUILD_ONLY=1 \
+RODIN_OUTPUT_DIR="$RODIN_APP_BUILD" \
+    "$RODIN_PROJECT_ROOT/build-and-install.sh"
 
-cargo build \
-    --locked \
-    --release \
-    --target aarch64-linux-android \
-    --manifest-path "$RODIN_PROJECT_ROOT/runtime/daemon-rust/Cargo.toml"
+RODIN_APK="$RODIN_APP_BUILD/Rodin-Essential.apk"
+RODIN_DAEMON="$RODIN_APP_BUILD/host-cargo/aarch64-linux-android/release/rodin_daemon"
+RODIN_CTL="$RODIN_APP_BUILD/host-cargo/aarch64-linux-android/release/rodin_ctl"
+
+for RODIN_ARTIFACT in "$RODIN_APK" "$RODIN_DAEMON" "$RODIN_CTL"; do
+    [ -f "$RODIN_ARTIFACT" ] || {
+        echo "Missing release artifact: $RODIN_ARTIFACT" >&2
+        exit 1
+    }
+done
 
 install -m 0644 "$RODIN_MODULE_SOURCE/module.prop" "$RODIN_STAGE/module.prop"
 install -m 0755 "$RODIN_MODULE_SOURCE/customize.sh" "$RODIN_STAGE/customize.sh"
@@ -48,8 +64,9 @@ install -m 0755 "$RODIN_MODULE_SOURCE/service.sh" "$RODIN_STAGE/service.sh"
 install -m 0755 "$RODIN_MODULE_SOURCE/action.sh" "$RODIN_STAGE/action.sh"
 install -m 0755 "$RODIN_MODULE_SOURCE/uninstall.sh" "$RODIN_STAGE/uninstall.sh"
 install -m 0644 "$RODIN_MODULE_SOURCE/skip_mount" "$RODIN_STAGE/skip_mount"
-install -m 0755 "$RODIN_CARGO_TARGET/aarch64-linux-android/release/rodin_daemon" "$RODIN_STAGE/bin/rodin_daemon"
-install -m 0755 "$RODIN_CARGO_TARGET/aarch64-linux-android/release/rodin_ctl" "$RODIN_STAGE/bin/rodin_ctl"
+install -m 0644 "$RODIN_APK" "$RODIN_STAGE/app/RodinEssential.apk"
+install -m 0755 "$RODIN_DAEMON" "$RODIN_STAGE/bin/rodin_daemon"
+install -m 0755 "$RODIN_CTL" "$RODIN_STAGE/bin/rodin_ctl"
 
 "$RODIN_STRIP" --strip-unneeded "$RODIN_STAGE/bin/rodin_daemon"
 "$RODIN_STRIP" --strip-unneeded "$RODIN_STAGE/bin/rodin_ctl"
@@ -72,6 +89,32 @@ RODIN_VERSION_CODE="$(sed -n 's/^versionCode=//p' "$RODIN_STAGE/module.prop")"
     echo "Invalid KernelSU versionCode: $RODIN_VERSION_CODE" >&2
     exit 1
 }
+
+RODIN_APK_BADGING="$("$RODIN_AAPT2" dump badging "$RODIN_STAGE/app/RodinEssential.apk")"
+RODIN_APK_HEADER="$(printf '%s\n' "$RODIN_APK_BADGING" | sed -n '1p')"
+RODIN_APK_PACKAGE="$(printf '%s\n' "$RODIN_APK_HEADER" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
+RODIN_APK_VERSION_CODE="$(printf '%s\n' "$RODIN_APK_HEADER" | sed -n "s/^package: name='[^']*' versionCode='\([^']*\)'.*/\1/p")"
+RODIN_APK_VERSION_NAME="$(printf '%s\n' "$RODIN_APK_HEADER" | sed -n "s/^package: name='[^']*' versionCode='[^']*' versionName='\([^']*\)'.*/\1/p")"
+
+[ "$RODIN_APK_PACKAGE" = "io.github.neeschal.rodinessential" ] || {
+    echo "Unexpected APK package: $RODIN_APK_PACKAGE" >&2
+    exit 1
+}
+[ "$RODIN_APK_VERSION_CODE" = "$RODIN_VERSION_CODE" ] || {
+    echo "APK/module versionCode mismatch: $RODIN_APK_VERSION_CODE / $RODIN_VERSION_CODE" >&2
+    exit 1
+}
+[ "$RODIN_APK_VERSION_NAME" = "${RODIN_VERSION#v}" ] || {
+    echo "APK/module version mismatch: $RODIN_APK_VERSION_NAME / $RODIN_VERSION" >&2
+    exit 1
+}
+
+"$RODIN_APKSIGNER" verify --verbose "$RODIN_STAGE/app/RodinEssential.apk" >/dev/null
+"$RODIN_ZIPALIGN" -c -P 16 -v 4 "$RODIN_STAGE/app/RodinEssential.apk" >/dev/null
+if unzip -Z1 "$RODIN_STAGE/app/RodinEssential.apk" | grep -Eq '(^|/)classes([0-9]*)?\.dex$'; then
+    echo "DEX is not allowed in the Rodin Essential APK" >&2
+    exit 1
+fi
 
 file "$RODIN_STAGE/bin/rodin_daemon" | grep -q 'ARM aarch64'
 file "$RODIN_STAGE/bin/rodin_ctl" | grep -q 'ARM aarch64'
@@ -99,28 +142,38 @@ done
     cd "$RODIN_STAGE"
     zip -X -9 "$RODIN_ZIP" \
         module.prop customize.sh service.sh action.sh uninstall.sh skip_mount \
-        bin/rodin_daemon bin/rodin_ctl >/dev/null
+        app/RodinEssential.apk bin/rodin_daemon bin/rodin_ctl >/dev/null
 )
 
 unzip -tq "$RODIN_ZIP"
 RODIN_ENTRIES="$(unzip -Z1 "$RODIN_ZIP")"
 for RODIN_REQUIRED in \
     module.prop customize.sh service.sh action.sh uninstall.sh skip_mount \
-    bin/rodin_daemon bin/rodin_ctl; do
+    app/RodinEssential.apk bin/rodin_daemon bin/rodin_ctl; do
     echo "$RODIN_ENTRIES" | grep -Fxq "$RODIN_REQUIRED" || {
         echo "Missing module entry: $RODIN_REQUIRED" >&2
         exit 1
     }
 done
 
-if echo "$RODIN_ENTRIES" | grep -Eq '(^|/)(system/|.*\.apk$|.*\.dex$)'; then
-    echo "Unexpected APK, DEX, or system overlay in backend-only module" >&2
+if echo "$RODIN_ENTRIES" | grep -Eq '(^|/)system/'; then
+    echo "Unexpected system overlay in the root module" >&2
     exit 1
 fi
+
+RODIN_STAGE_APK_SHA="$(sha256sum "$RODIN_STAGE/app/RodinEssential.apk" | awk '{print $1}')"
+RODIN_ZIP_APK_SHA="$(unzip -p "$RODIN_ZIP" app/RodinEssential.apk | sha256sum | awk '{print $1}')"
+[ "$RODIN_STAGE_APK_SHA" = "$RODIN_ZIP_APK_SHA" ] || {
+    echo "APK payload checksum mismatch" >&2
+    exit 1
+}
 
 cp -f "$RODIN_ZIP" "$RODIN_STABLE_ZIP"
 sha256sum "$RODIN_ZIP" | tee "$RODIN_ZIP.sha256"
 
-echo "KERNELSU_NEXT_MODULE=PASS"
+echo "ROOT_MODULE=PASS"
+echo "MANAGERS=KernelSU Next, Magisk"
+echo "APK_PACKAGE=$RODIN_APK_PACKAGE"
+echo "APK_VERSION=$RODIN_APK_VERSION_NAME ($RODIN_APK_VERSION_CODE)"
 echo "ZIP=$RODIN_ZIP"
 echo "STABLE_ZIP=$RODIN_STABLE_ZIP"

@@ -1,7 +1,7 @@
 # Architecture
 
 Rodin Essential separates the visual application from all privileged hardware
-operations. The separation is identical in AOSP and KernelSU deployments; only
+operations. The separation is identical in AOSP and root-module deployments; only
 the daemon launcher and state directory change.
 
 ## Runtime components
@@ -67,7 +67,7 @@ allows only the dedicated `rodin_app` domain to connect in production. The
 The daemon selects its state directory from `RODIN_STATE_DIR`:
 
 - AOSP init service: `/data/system/rodin-essential`
-- KernelSU Next service: `/data/adb/rodin-essential`
+- KernelSU Next or Magisk service: `/data/adb/rodin-essential`
 - Development fallback: `/data/adb/rodin-essential`
 
 State is written atomically through `state.conf.tmp` and rename. The daemon

@@ -19,7 +19,7 @@ daemon and reached through a private abstract Unix socket.
 - Kernel userspace: 16 KB page-compatible native binaries
 - Vendor dependencies: Rodin touch and display AIDL services plus MediaTek GED
 
-This is device-specific software. Other devices are rejected by the KernelSU
+This is device-specific software. Other devices are rejected by the root-module
 installer and are not supported by the included AOSP policy.
 
 ## Main features
@@ -56,7 +56,7 @@ vendor services.
 | Method | APK privilege | Backend | Persistence |
 | --- | --- | --- | --- |
 | AOSP ROM integration | Normal app UID | Root init daemon | `/data/system/rodin-essential/state.conf` |
-| KernelSU Next | Normal app UID | Root module daemon | `/data/adb/rodin-essential/state.conf` |
+| KernelSU Next or Magisk | Normal app UID | Root module daemon | `/data/adb/rodin-essential/state.conf` |
 | Standalone APK | Normal app UID | None | Hardware controls unavailable |
 
 For a ROM release, use the AOSP integration. It installs the APK and daemon in
@@ -125,23 +125,33 @@ The helper creates `vendor/rodin-essential` and prints the product and
 BoardConfig include lines. It does not overwrite an existing integration or
 edit device-tree files automatically.
 
-## KernelSU Next backend
+## KernelSU Next and Magisk module
 
-For testing on an existing rooted ROM, build the backend-only module:
+For an existing rooted ROM, build the combined application and daemon module:
 
 ```bash
-./tools/build-kernelsu-next-module.sh
+RODIN_KEYSTORE=/absolute/path/release.jks \
+RODIN_KEY_ALIAS=release \
+RODIN_KEYSTORE_PASS='store-password' \
+RODIN_KEY_PASS='key-password' \
+  ./tools/build-kernelsu-next-module.sh
 ```
 
-The module does not contain or mount the APK. Install the APK normally and use
-KernelSU Next only to host the separate daemon.
+Install the ZIP from KernelSU Next Manager or the Magisk app while Android is
+running. The installer registers the bundled APK as an ordinary user app and
+the module runs only the separate hardware daemon as root. It deliberately uses
+`skip_mount`, so KernelSU does not require a system-overlay metamodule. Recovery
+installation is not supported.
+
+Keep the signing key for every future module update. Android rejects an APK
+update signed by a different certificate.
 
 ## Repository layout
 
 ```text
 android/
   aosp/                 AOSP prebuilt, init, and SELinux integration template
-  kernelsu-next/        Backend-only KernelSU Next module source
+  kernelsu-next/        KernelSU Next and Magisk module source
   package/              Zero-DEX manifest and Android resources
 docs/                   Architecture, build, and ROM maintainer documentation
 runtime/

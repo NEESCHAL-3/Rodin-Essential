@@ -1,6 +1,6 @@
 id=nees_rodin_essential_backend
-name=Rodin Essential Backend
+name=Rodin Essential
 version=v1.17.0
 versionCode=11700
 author=NEESCHAL-3
-description=KernelSU Next backend for Rodin Essential controls. The Android app stays unprivileged and communicates with this separate root daemon.
+description=KernelSU Next and Magisk package for Rodin Essential. Installs the unprivileged Android app and runs hardware controls through a separate root daemon.

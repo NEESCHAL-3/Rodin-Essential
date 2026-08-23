@@ -51,7 +51,7 @@ apk-files.txt
 ```
 
 Without `RODIN_BUILD_ONLY=1`, the script installs the APK on the connected
-device and updates the development KernelSU backend. ROM release automation
+device and updates the development root-module backend. ROM release automation
 should always use build-only mode or `tools/export-aosp-bundle.sh`.
 
 ## Signing
@@ -121,11 +121,27 @@ To build and stage the integration directly in an AOSP checkout:
 The helper does not modify existing device or product makefiles. It prints the
 two required include lines after staging succeeds.
 
-## KernelSU Next module
+## KernelSU Next and Magisk module
 
 ```bash
-./tools/build-kernelsu-next-module.sh
+RODIN_KEYSTORE=/absolute/path/release.jks \
+RODIN_KEY_ALIAS=release \
+RODIN_KEYSTORE_PASS='store-password' \
+RODIN_KEY_PASS='key-password' \
+  ./tools/build-kernelsu-next-module.sh
 ```
 
-This creates a backend-only ZIP and validates its module metadata, shell syntax,
-ARM64 binaries, Android dynamic linker, archive contents, and checksum.
+This builds the application and daemon together, then creates one ZIP for
+KernelSU Next Manager and the Magisk app. The build validates module metadata,
+shell syntax, the bundled APK package/version/signature/zero-DEX/16 KB alignment,
+ARM64 daemon binaries, Android dynamic linker, archive contents, and checksum.
+
+The module installs the bundled APK through Android's package manager as a
+normal user application. It does not mount an APK into a system partition, so
+KernelSU does not need a mounting metamodule. Installation from recovery is not
+supported.
+
+The builder requires a persistent `RODIN_KEYSTORE`; it never creates a
+disposable module signing identity. Reuse the same key for all published module
+versions so Android can update the bundled application without removing user
+data.
