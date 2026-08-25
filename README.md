@@ -13,6 +13,7 @@ daemon and reached through a private abstract Unix socket.
 
 - Device codename: `rodin`
 - SoC: MediaTek MT6899 / Dimensity 8400-Ultra
+- CPU: 8× Cortex-A725 (4+3+1 policies), up to 3.25 GHz
 - GPU: Mali-G720, 7 cores, up to 1300 MHz
 - ABI: ARM64
 - Android: API 31 or newer
@@ -26,7 +27,8 @@ installer and are not supported by the included AOSP policy.
 
 - Four persistent CPU/GPU performance profiles with live hardware readback.
 - Mali devfreq range, governor, GED boost, power-policy, and OPP controls.
-- CPU core mask, cluster governor, and per-cluster frequency controls.
+- CPU core mask, independent cluster governors, and validated per-cluster
+  minimum/maximum or exact-lock controls sourced from the live kernel OPP table.
 - UFS scheduler selection across every detected UFS logical unit.
 - Touch profiles for 240 Hz native timing, 480 Hz native timing, and a 1 ms
   Android output stream generated from the native 480 Hz source.

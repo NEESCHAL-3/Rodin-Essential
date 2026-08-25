@@ -2,6 +2,26 @@
 
 All notable changes are documented here.
 
+## 1.18.0
+
+### Added
+
+- CPU Performance hub with independent frequency control for the efficiency,
+  performance, and prime policies.
+- Dynamic minimum/maximum ranges and exact `min = max` locks at any frequency
+  exposed by the active kernel OPP table.
+- Separate saved-target and live-effective readback, per-policy drift status,
+  verified writes, and an OEM range reset.
+
+### Changed
+
+- CPU frequency requests are validated against the live driver table instead of
+  accepting arbitrary values that the kernel may silently round.
+- Frequency targets remain fully independent from CPU governors and GPU modes.
+- CPU topology labels now identify the Dimensity 8400's three all-Cortex-A725
+  groups instead of the previous generic A520/A720/X4 labels.
+- Native host/daemon protocol updated to 13.2 for CPU OPP-table telemetry.
+
 ## 1.17.1
 
 ### Fixed

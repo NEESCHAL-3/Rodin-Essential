@@ -11,7 +11,7 @@ const AF_UNIX: i32 = 1;
 const SOCK_STREAM: i32 = 1;
 const SOCK_CLOEXEC: i32 = 0x80000;
 const SOCKET_NAME: &str = "rodin_essentiald_v13";
-const EXTENDED_VALUE_COUNT: usize = 68;
+const EXTENDED_VALUE_COUNT: usize = 78;
 
 #[repr(C)]
 struct SockAddrUn {
@@ -65,6 +65,7 @@ struct Cache {
     cpu_gov0: AtomicI32,
     cpu_gov4: AtomicI32,
     cpu_gov7: AtomicI32,
+    cpu_available_mhz: [Mutex<Vec<i32>>; 3],
     gpu_gov: AtomicI32,
     io_scheduler: AtomicI32,
     touch_hal: AtomicI32,
@@ -102,6 +103,7 @@ impl Cache {
             cpu_gov0: AtomicI32::new(-1),
             cpu_gov4: AtomicI32::new(-1),
             cpu_gov7: AtomicI32::new(-1),
+            cpu_available_mhz: std::array::from_fn(|_| Mutex::new(Vec::new())),
             gpu_gov: AtomicI32::new(-1),
             io_scheduler: AtomicI32::new(-1),
             touch_hal: AtomicI32::new(0),
@@ -289,6 +291,16 @@ fn cpu_gov_code(value: &str) -> i32 {
         _ => -1,
     }
 }
+
+fn cpu_policy_slot(policy: i32) -> Option<usize> {
+    match policy {
+        0 => Some(0),
+        4 => Some(1),
+        7 => Some(2),
+        _ => None,
+    }
+}
+
 fn gpu_gov_code(value: &str) -> i32 {
     match value {
         "dummy" => 0,
@@ -316,7 +328,7 @@ fn refresh(cache: &Cache) -> Result<(), String> {
             map.insert(k.to_string(), v.to_string());
         }
     }
-    if map.get("protocol").map(String::as_str) != Some("13.1") {
+    if map.get("protocol").map(String::as_str) != Some("13.2") {
         return Err("protocol mismatch".into());
     }
 
@@ -478,6 +490,16 @@ fn refresh(cache: &Cache) -> Result<(), String> {
         ("touch_resampler_ready", 65),
         ("touch_measurement_active", 66),
         ("touch_source_rate_x10", 67),
+        ("cpu_live_min0", 68),
+        ("cpu_live_max0", 69),
+        ("cpu_live_min4", 70),
+        ("cpu_live_max4", 71),
+        ("cpu_live_min7", 72),
+        ("cpu_live_max7", 73),
+        ("cpu_freq_ack", 74),
+        ("cpu_freq_drift0", 75),
+        ("cpu_freq_drift4", 76),
+        ("cpu_freq_drift7", 77),
     ];
 
     for &(key, index) in extended_fields {
@@ -500,6 +522,22 @@ fn refresh(cache: &Cache) -> Result<(), String> {
         _ => 0,
     };
     cache.extended[49].store(gov_code, Ordering::Release);
+
+    for (slot, key) in [(0, "cpu_avail0"), (1, "cpu_avail4"), (2, "cpu_avail7")] {
+        let Some(raw) = map.get(key) else {
+            continue;
+        };
+        let mut frequencies = raw
+            .split(',')
+            .filter_map(|value| value.parse::<i32>().ok())
+            .filter(|value| *value > 0)
+            .collect::<Vec<_>>();
+        frequencies.sort_unstable();
+        frequencies.dedup();
+        if let Ok(mut cached) = cache.cpu_available_mhz[slot].lock() {
+            *cached = frequencies;
+        }
+    }
 
     if let Ok(mut profiles) = cache.perapp_profiles.lock() {
         profiles.clear();
@@ -757,6 +795,27 @@ fn perform(command: Command) -> Result<(), String> {
                     let cmd_str = format!("SET gpu.power_policy {pol}");
                     return request(&cmd_str).map(|_| ());
                 }
+                23 if matches!(a, 0 | 4 | 7) => {
+                    if let Some(r) = runtime() {
+                        match a {
+                            0 => {
+                                r.cache.extended[53].store(-1, Ordering::Release);
+                                r.cache.extended[54].store(-1, Ordering::Release);
+                            }
+                            4 => {
+                                r.cache.extended[55].store(-1, Ordering::Release);
+                                r.cache.extended[56].store(-1, Ordering::Release);
+                            }
+                            7 => {
+                                r.cache.extended[57].store(-1, Ordering::Release);
+                                r.cache.extended[58].store(-1, Ordering::Release);
+                            }
+                            _ => {}
+                        }
+                    }
+                    let cmd_str = format!("SET cpu.freq_reset {a}");
+                    return request(&cmd_str).map(|_| ());
+                }
                 _ => return Err("invalid extended command".into()),
             };
 
@@ -828,7 +887,7 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
                     match refresh(&cache) {
                         Ok(()) => {
                             if !logged_pass {
-                                app_log(b"RODIN_BACKEND_APP=PASS protocol=13.1\0");
+                                app_log(b"RODIN_BACKEND_APP=PASS protocol=13.2\0");
                                 logged_pass = true;
                             }
                             logged_fail = false;
@@ -908,7 +967,7 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
             match refresh(&cache) {
                 Ok(()) => {
                     if !logged_pass {
-                        app_log(b"RODIN_BACKEND_APP=PASS protocol=13.1\0");
+                        app_log(b"RODIN_BACKEND_APP=PASS protocol=13.2\0");
                         logged_pass = true;
                     }
                     logged_fail = false;
@@ -1061,6 +1120,31 @@ pub extern "C" fn rodin_backend_get_cpu_governor(policy: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn rodin_backend_set_cpu_governor(policy: i32, code: i32) -> i32 {
     send(Command::CpuGovernor(policy, code))
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_backend_get_cpu_available_count(policy: i32) -> i32 {
+    let Some(slot) = cpu_policy_slot(policy) else {
+        return 0;
+    };
+
+    runtime()
+        .and_then(|runtime| runtime.cache.cpu_available_mhz[slot].lock().ok())
+        .map(|frequencies| frequencies.len().min(i32::MAX as usize) as i32)
+        .unwrap_or(0)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_backend_get_cpu_available_freq(policy: i32, index: i32) -> i32 {
+    let Some(slot) = cpu_policy_slot(policy) else {
+        return -1;
+    };
+    if index < 0 {
+        return -1;
+    }
+
+    runtime()
+        .and_then(|runtime| runtime.cache.cpu_available_mhz[slot].lock().ok())
+        .and_then(|frequencies| frequencies.get(index as usize).copied())
+        .unwrap_or(-1)
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rodin_backend_get_gpu_governor() -> i32 {
