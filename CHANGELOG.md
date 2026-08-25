@@ -45,6 +45,12 @@ All notable changes are documented here.
 - Resolution telemetry refreshes after framework startup, distinguishes live
   adaptive refresh from the ROM-selected rate, and no longer reports a false
   hardcoded 60/120 Hz value.
+- Cold launches now present a plain application surface instead of exposing an
+  oversized launcher-icon transition, while appearance loading and daemon
+  startup no longer block the first application frame.
+- Extracted Flutter assets and ICU data now use a deterministic content stamp.
+  Unchanged runtime files are reused on later cold starts, while APK updates or
+  incomplete cache files force a verified refresh before Flutter starts.
 
 ## 1.17.1
 

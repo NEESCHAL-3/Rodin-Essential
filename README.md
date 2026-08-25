@@ -95,8 +95,9 @@ RODIN_BUILD_ONLY=1 ./build-and-install.sh
 
 Output is written under `out/release/<timestamp>/`. The build verifies
 Flutter analysis, ARM64 AOT output, zero DEX, APK signing, 16 KB ZIP alignment,
-and 16 KB ELF segment alignment. If no signing key is supplied, a development
-key is created inside that ignored output directory.
+16 KB ELF segment alignment, and a content stamp covering the packaged Flutter
+assets and ICU data. If no signing key is supplied, a development key is
+created inside that ignored output directory.
 
 For release signing, set:
 

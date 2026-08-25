@@ -1790,6 +1790,35 @@ fn read_asset(manager: *mut AAssetManager, name: &str) -> Result<Vec<u8>, String
     Ok(data)
 }
 
+fn asset_length(manager: *mut AAssetManager, name: &str) -> Result<u64, String> {
+    let c_name = CString::new(name).map_err(|_| format!("invalid asset name: {name}"))?;
+    let asset = unsafe { AAssetManager_open(manager, c_name.as_ptr(), AASSET_MODE_STREAMING) };
+
+    if asset.is_null() {
+        return Err(format!("asset not found: {name}"));
+    }
+
+    let length = unsafe { AAsset_getLength64(asset) };
+    unsafe { AAsset_close(asset) };
+
+    if length < 0 {
+        Err(format!("invalid asset length: {name}"))
+    } else {
+        Ok(length as u64)
+    }
+}
+
+fn cached_file_matches_asset(manager: *mut AAssetManager, name: &str, path: &Path) -> bool {
+    let Ok(expected_length) = asset_length(manager, name) else {
+        return false;
+    };
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+
+    metadata.is_file() && metadata.len() == expected_length
+}
+
 fn write_file(path: &Path, data: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
@@ -1818,37 +1847,58 @@ fn prepare_runtime_files(
     let base = PathBuf::from(c_string(internal)).join("rodin_flutter");
     let assets_dir = base.join("flutter_assets");
     let cache_dir = base.join("cache");
+    let icu_path = base.join("icudtl.dat");
+    let stamp_path = base.join(".assets_stamp");
 
     create_dir_all(&assets_dir).map_err(|e| format!("mkdir {}: {e}", assets_dir.display()))?;
     create_dir_all(&cache_dir).map_err(|e| format!("mkdir {}: {e}", cache_dir.display()))?;
 
-    let index_bytes = read_asset(manager, "flutter_assets.index")?;
-    let index =
-        String::from_utf8(index_bytes).map_err(|e| format!("flutter_assets.index UTF-8: {e}"))?;
+    let index = String::from_utf8(read_asset(manager, "flutter_assets.index")?)
+        .map_err(|e| format!("flutter_assets.index UTF-8: {e}"))?;
+    let packaged_stamp = read_asset(manager, "rodin_runtime.stamp")?;
+    let required_assets: Vec<&str> = index
+        .lines()
+        .map(str::trim)
+        .filter(|relative| !relative.is_empty())
+        .collect();
 
-    let mut copied = 0usize;
+    let stamp_matches = match std::fs::read(&stamp_path) {
+        Ok(existing_stamp) => existing_stamp == packaged_stamp,
+        Err(_) => false,
+    };
+    let files_complete = stamp_matches
+        && cached_file_matches_asset(manager, "icudtl.dat", &icu_path)
+        && required_assets.iter().all(|relative| {
+            let asset_name = format!("flutter_assets/{relative}");
+            cached_file_matches_asset(manager, &asset_name, &assets_dir.join(relative))
+        });
+    let needs_extract = !files_complete;
 
-    for raw in index.lines() {
-        let relative = raw.trim();
+    if needs_extract {
+        let mut copied = 0usize;
 
-        if relative.is_empty() {
-            continue;
+        for relative in &required_assets {
+            let asset_name = format!("flutter_assets/{relative}");
+            let data = read_asset(manager, &asset_name)?;
+            write_file(&assets_dir.join(relative), &data)?;
+            copied += 1;
         }
 
-        let asset_name = format!("flutter_assets/{relative}");
-        let data = read_asset(manager, &asset_name)?;
-        write_file(&assets_dir.join(relative), &data)?;
-        copied += 1;
+        let icu = read_asset(manager, "icudtl.dat")?;
+        write_file(&icu_path, &icu)?;
+        write_file(&stamp_path, &packaged_stamp)?;
+
+        log_str(&format!(
+            "runtime assets extracted: files={copied} icu={} bytes",
+            icu.len()
+        ));
+    } else {
+        log_str(&format!(
+            "runtime assets cache hit: files={} icu={}",
+            required_assets.len(),
+            std::fs::metadata(&icu_path).map_or(0, |metadata| metadata.len())
+        ));
     }
-
-    let icu = read_asset(manager, "icudtl.dat")?;
-    let icu_path = base.join("icudtl.dat");
-    write_file(&icu_path, &icu)?;
-
-    log_str(&format!(
-        "runtime assets extracted: files={copied} icu={} bytes",
-        icu.len()
-    ));
 
     let assets_c = CString::new(assets_dir.to_string_lossy().as_bytes())
         .map_err(|_| "assets path contains NUL".to_string())?;
