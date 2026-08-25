@@ -36,7 +36,7 @@ installer and are not supported by the included AOSP policy.
 - Xiaomi touch/display AIDL integration, DT2W, color modes, expert calibration,
   sunlight mode, HDR/video controls, resolution, and density controls.
 - ZRAM size, algorithm, swappiness, compaction, charging, and power telemetry.
-- Per-app profile switching and background reassertion after boot, screen wake,
+- Daemon-owned persistence and background reassertion after boot, screen wake,
   vendor resets, app force-close, or removal from recents.
 - Configurable in-app motion timing with native 120 Hz frame pacing.
 
