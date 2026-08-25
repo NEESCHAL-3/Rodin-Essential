@@ -7,7 +7,9 @@ RODIN_LOG="$RODIN_ROOT/backend.log"
 RODIN_LOG_OLD="$RODIN_ROOT/backend.log.1"
 RODIN_WATCHDOG_PID="$RODIN_ROOT/watchdog.pid"
 RODIN_WATCHDOG_LOCK="$RODIN_ROOT/watchdog.lock"
+RODIN_WATCHDOG_BOOT_ID="$RODIN_WATCHDOG_LOCK/boot_id"
 RODIN_SERVICE_PATH="$MODDIR/service.sh"
+RODIN_CURRENT_BOOT_ID="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
 
 export RODIN_STATE_DIR="$RODIN_ROOT"
 
@@ -15,7 +17,10 @@ umask 077
 mkdir -p "$RODIN_ROOT"
 chmod 0700 "$RODIN_ROOT" 2>/dev/null
 
-RODIN_LOG_BYTES="$(wc -c <"$RODIN_LOG" 2>/dev/null)"
+RODIN_LOG_BYTES=0
+if [ -f "$RODIN_LOG" ]; then
+    RODIN_LOG_BYTES="$(wc -c <"$RODIN_LOG" 2>/dev/null)"
+fi
 case "$RODIN_LOG_BYTES" in
     ''|*[!0-9]*) ;;
     *)
@@ -28,21 +33,26 @@ esac
 # mkdir is an atomic early-boot lock and prevents duplicate watchdog loops.
 if ! mkdir "$RODIN_WATCHDOG_LOCK" 2>/dev/null; then
     RODIN_EXISTING_PID="$(cat "$RODIN_WATCHDOG_LOCK/pid" 2>/dev/null)"
+    RODIN_EXISTING_BOOT_ID="$(cat "$RODIN_WATCHDOG_BOOT_ID" 2>/dev/null)"
     RODIN_EXISTING_CMDLINE=""
-    if [ -n "$RODIN_EXISTING_PID" ] && kill -0 "$RODIN_EXISTING_PID" 2>/dev/null; then
+    if [ -n "$RODIN_CURRENT_BOOT_ID" ] \
+        && [ "$RODIN_EXISTING_BOOT_ID" = "$RODIN_CURRENT_BOOT_ID" ] \
+        && [ "$RODIN_EXISTING_PID" != "$$" ] \
+        && kill -0 "$RODIN_EXISTING_PID" 2>/dev/null; then
         RODIN_EXISTING_CMDLINE="$(tr '\000' ' ' <"/proc/$RODIN_EXISTING_PID/cmdline" 2>/dev/null)"
     fi
     case "$RODIN_EXISTING_CMDLINE" in
-        *"/nees_rodin_essential_backend/service.sh"*) exit 0 ;;
+        *"$RODIN_SERVICE_PATH"*) exit 0 ;;
     esac
 
-    rm -f "$RODIN_WATCHDOG_LOCK/pid"
+    rm -f "$RODIN_WATCHDOG_LOCK/pid" "$RODIN_WATCHDOG_BOOT_ID"
     rmdir "$RODIN_WATCHDOG_LOCK" 2>/dev/null || exit 0
     mkdir "$RODIN_WATCHDOG_LOCK" 2>/dev/null || exit 0
 fi
 
-echo $$ >"$RODIN_WATCHDOG_PID"
-echo $$ >"$RODIN_WATCHDOG_LOCK/pid"
+printf '%s\n' "$$" >"$RODIN_WATCHDOG_PID"
+printf '%s\n' "$$" >"$RODIN_WATCHDOG_LOCK/pid"
+printf '%s\n' "$RODIN_CURRENT_BOOT_ID" >"$RODIN_WATCHDOG_BOOT_ID"
 
 # Remove watchdogs left by older development packages of this same module.
 for RODIN_PROC in /proc/[0-9]*; do
@@ -50,7 +60,7 @@ for RODIN_PROC in /proc/[0-9]*; do
     [ "$RODIN_PID" = "$$" ] && continue
     RODIN_CMDLINE="$(tr '\000' ' ' <"$RODIN_PROC/cmdline" 2>/dev/null)"
     case "$RODIN_CMDLINE" in
-        *"/nees_rodin_essential_backend/service.sh"*)
+        *"$RODIN_SERVICE_PATH"*)
             kill -9 "$RODIN_PID" 2>/dev/null
             ;;
     esac
@@ -68,7 +78,7 @@ done
 rodin_cleanup() {
     RODIN_OWNER="$(cat "$RODIN_WATCHDOG_LOCK/pid" 2>/dev/null)"
     if [ "$RODIN_OWNER" = "$$" ]; then
-        rm -f "$RODIN_WATCHDOG_PID" "$RODIN_WATCHDOG_LOCK/pid"
+        rm -f "$RODIN_WATCHDOG_PID" "$RODIN_WATCHDOG_LOCK/pid" "$RODIN_WATCHDOG_BOOT_ID"
         rmdir "$RODIN_WATCHDOG_LOCK" 2>/dev/null
     fi
 }

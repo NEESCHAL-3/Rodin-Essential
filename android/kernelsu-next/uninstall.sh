@@ -17,7 +17,7 @@ for RODIN_PID in $(pidof rodin_daemon 2>/dev/null); do
     kill -9 "$RODIN_PID" 2>/dev/null
 done
 
-rm -f "$RODIN_ROOT/watchdog.pid" "$RODIN_WATCHDOG_LOCK/pid"
+rm -f "$RODIN_ROOT/watchdog.pid" "$RODIN_WATCHDOG_LOCK/pid" "$RODIN_WATCHDOG_LOCK/boot_id"
 rmdir "$RODIN_WATCHDOG_LOCK" 2>/dev/null
 rm -f "$RODIN_ROOT/bin/rodin_daemon" "$RODIN_ROOT/bin/rodin_ctl"
 rmdir "$RODIN_ROOT/bin" 2>/dev/null
