@@ -76,6 +76,13 @@ rodin_cleanup() {
 trap rodin_cleanup EXIT
 trap 'exit 0' HUP INT TERM
 
+# KernelSU/Magisk late-start scripts may run while framework/vendor services
+# are still publishing their boot defaults. Start the backend only after the
+# completed Android boot so every persisted Rodin setting wins that race.
+while [ "$(getprop sys.boot_completed 2>/dev/null)" != "1" ]; do
+    sleep 1
+done
+
 while true; do
     if [ -x "$RODIN_DAEMON" ] && ! pidof rodin_daemon >/dev/null 2>&1; then
         echo "RODIN_MODULE_DAEMON_START path=$RODIN_DAEMON" >>"$RODIN_LOG"

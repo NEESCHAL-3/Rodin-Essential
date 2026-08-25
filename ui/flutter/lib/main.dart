@@ -23,7 +23,7 @@ enum RodinScreen {
   touchBoost,
   displayStudio,
   perAppProfiles,
-  cpuPerformance,
+  cpuControl,
   advancedConfiguration,
   resolution,
   diagnostics,
@@ -50,8 +50,8 @@ extension RodinScreenName on RodinScreen {
         return 'Display Studio';
       case RodinScreen.perAppProfiles:
         return 'Per-app Profiles';
-      case RodinScreen.cpuPerformance:
-        return 'CPU Performance';
+      case RodinScreen.cpuControl:
+        return 'CPU Core & Frequency';
       case RodinScreen.advancedConfiguration:
         return 'Advanced Configuration';
       case RodinScreen.resolution:
@@ -640,8 +640,8 @@ class _RodinShellState extends State<RodinShell> {
         return DisplayStudioScreen(onBack: _back);
       case RodinScreen.perAppProfiles:
         return PerAppProfilesScreen(onBack: _back);
-      case RodinScreen.cpuPerformance:
-        return CpuPerformanceScreen(onBack: _back);
+      case RodinScreen.cpuControl:
+        return CpuControlScreen(onBack: _back);
       case RodinScreen.advancedConfiguration:
         return AdvancedConfigurationScreen(onBack: _back);
       case RodinScreen.resolution:
@@ -2850,7 +2850,7 @@ class _LiveOverviewGrid extends StatelessWidget {
                     subtitle: coreSubtitle,
                     icon: Icons.memory_rounded,
                     accent: const Color(0xFF67C2FF),
-                    onTap: () => onOpen(RodinScreen.cpuPerformance),
+                    onTap: () => onOpen(RodinScreen.cpuControl),
                   ),
                 ),
               ],
@@ -3226,9 +3226,9 @@ class HubsScreen extends StatelessWidget {
       Color(0xFF67C2FF),
     ),
     _HubSpec(
-      RodinScreen.cpuPerformance,
-      'CPU Performance',
-      'Clock ranges, locks & core control',
+      RodinScreen.cpuControl,
+      'CPU Core & Frequency',
+      'Clock ranges, exact locks & core power control',
       Icons.memory_rounded,
       Color(0xFF67C2FF),
     ),
@@ -3333,7 +3333,7 @@ class HubsScreen extends StatelessWidget {
                     title: 'CPU',
                     subtitle: cores,
                     accent: const Color(0xFF67C2FF),
-                    onTap: () => onOpen(RodinScreen.cpuPerformance),
+                    onTap: () => onOpen(RodinScreen.cpuControl),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -5702,15 +5702,15 @@ class _AppProfileRow extends StatelessWidget {
   }
 }
 
-class CpuPerformanceScreen extends StatefulWidget {
-  const CpuPerformanceScreen({required this.onBack, super.key});
+class CpuControlScreen extends StatefulWidget {
+  const CpuControlScreen({required this.onBack, super.key});
   final VoidCallback onBack;
 
   @override
-  State<CpuPerformanceScreen> createState() => _CpuPerformanceScreenState();
+  State<CpuControlScreen> createState() => _CpuControlScreenState();
 }
 
-class _CpuPerformanceScreenState extends State<CpuPerformanceScreen> {
+class _CpuControlScreenState extends State<CpuControlScreen> {
   Timer? _toastTimer;
   bool _toastVisible = false;
   String _toastTag = '';
@@ -5820,7 +5820,10 @@ class _CpuPerformanceScreenState extends State<CpuPerformanceScreen> {
           children: <Widget>[
             RodinScrollPage(
               children: <Widget>[
-                DetailHeader(title: 'CPU Performance', onBack: widget.onBack),
+                DetailHeader(
+                  title: 'CPU Core & Frequency',
+                  onBack: widget.onBack,
+                ),
                 const SizedBox(height: 4),
                 Text(
                   'Per-cluster frequency ranges, exact locks, and processor core control',
@@ -5875,12 +5878,16 @@ class _CpuPerformanceScreenState extends State<CpuPerformanceScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: <Widget>[
-                                  Text(
-                                    'Dimensity 8400-Ultra CPU',
-                                    style: TextStyle(
-                                      fontSize: 14.5,
-                                      fontWeight: FontWeight.w800,
-                                      color: colors.onSurface,
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      'Dimensity 8400-Ultra CPU',
+                                      style: TextStyle(
+                                        fontSize: 14.5,
+                                        fontWeight: FontWeight.w800,
+                                        color: colors.onSurface,
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(height: 2),
@@ -6031,9 +6038,9 @@ class _CpuPerformanceScreenState extends State<CpuPerformanceScreen> {
                 const SizedBox(height: 10),
                 const SurfaceCard(
                   child: _InfoBlock(
-                    title: 'Independent frequency targets',
+                    title: 'How to use CPU frequency control',
                     text:
-                        'Minimum, maximum, and exact-lock targets persist across reboot without changing the selected CPU governor. Live effective limits are reported separately from the saved target.',
+                        'Choose Dynamic Range to set the minimum and maximum, or Exact Lock to make both limits the same. Drag to a supported clock and tap Apply. Live Limits always shows the range currently enforced by the kernel. Each card shows the current governor live; governor selection remains in Advanced Configuration. OEM Reset clears the saved target and returns that cluster to ROM-managed limits.',
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -6435,16 +6442,18 @@ class _CpuPerformanceScreenState extends State<CpuPerformanceScreen> {
                 ),
                 const SizedBox(width: 4),
                 Expanded(
-                  child: Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800,
-                      color: accent,
-                      letterSpacing: 0.4,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        color: accent,
+                        letterSpacing: 0.4,
+                      ),
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
@@ -6805,7 +6814,7 @@ class _CpuFrequencyCardState extends State<_CpuFrequencyCard> {
         ? 'Target verified'
         : widget.writeAck == 0
         ? 'Write not verified'
-        : 'Target reapplying';
+        : 'Saved target · live limit differs';
 
     return SurfaceCard(
       padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
@@ -6892,7 +6901,7 @@ class _CpuFrequencyCardState extends State<_CpuFrequencyCard> {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  'Governor: ${_governorLabel()} · unchanged',
+                  'Live governor: ${_governorLabel()}',
                   style: TextStyle(
                     fontSize: 10.8,
                     fontWeight: FontWeight.w600,
@@ -6971,16 +6980,24 @@ class _CpuFrequencyCardState extends State<_CpuFrequencyCard> {
                         divisions: maxIndex > 0 ? maxIndex : null,
                         label: _frequencyLabel(_maximumMhz),
                         activeColor: widget.accent,
+                        onChangeStart: widget.enabled
+                            ? (_) => RodinHaptics.segment()
+                            : null,
                         onChanged: widget.enabled
                             ? (double value) {
                                 final int target =
                                     widget.availableMhz[value.round()];
+                                if (target == _maximumMhz) return;
                                 setState(() {
                                   _minimumMhz = target;
                                   _maximumMhz = target;
                                   _dirty = true;
                                 });
+                                RodinHaptics.frequentSegment();
                               }
+                            : null,
+                        onChangeEnd: widget.enabled
+                            ? (_) => RodinHaptics.confirm()
                             : null,
                       ),
                     ],
@@ -7008,16 +7025,29 @@ class _CpuFrequencyCardState extends State<_CpuFrequencyCard> {
                           _frequencyLabel(_maximumMhz),
                         ),
                         activeColor: widget.accent,
+                        onChangeStart: widget.enabled
+                            ? (_) => RodinHaptics.segment()
+                            : null,
                         onChanged: widget.enabled
                             ? (RangeValues values) {
+                                final int minimum =
+                                    widget.availableMhz[values.start.round()];
+                                final int maximum =
+                                    widget.availableMhz[values.end.round()];
+                                if (minimum == _minimumMhz &&
+                                    maximum == _maximumMhz) {
+                                  return;
+                                }
                                 setState(() {
-                                  _minimumMhz =
-                                      widget.availableMhz[values.start.round()];
-                                  _maximumMhz =
-                                      widget.availableMhz[values.end.round()];
+                                  _minimumMhz = minimum;
+                                  _maximumMhz = maximum;
                                   _dirty = true;
                                 });
+                                RodinHaptics.frequentSegment();
                               }
+                            : null,
+                        onChangeEnd: widget.enabled
+                            ? (_) => RodinHaptics.confirm()
                             : null,
                       ),
                     ],
@@ -7046,7 +7076,7 @@ class _CpuFrequencyCardState extends State<_CpuFrequencyCard> {
               TextButton.icon(
                 onPressed: widget.enabled ? _reset : null,
                 icon: const Icon(Icons.restart_alt_rounded, size: 17),
-                label: const Text('OEM'),
+                label: const Text('OEM Reset'),
               ),
               const SizedBox(width: 3),
               FilledButton.tonalIcon(
@@ -7397,6 +7427,10 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
   int _customDensity = 460;
   bool _lockAspectRatio = true;
   bool _applying = false;
+  bool _customDefaultsLoaded = false;
+
+  int _densityForWidth(int nativeDensity, int width) =>
+      ((nativeDensity * width + 610) ~/ 1220);
 
   @override
   void initState() {
@@ -7474,9 +7508,15 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
         final int activeWidth = backend.extendedValue(22);
         final int activeHeight = backend.extendedValue(23);
         final int hzX10 = backend.extendedValue(24);
-        final int activeDensity = backend.extendedValue(38) > 0
-            ? backend.extendedValue(38)
+        final int selectedHzX10 = backend.extendedValue(25);
+        final int detectedNativeDensity = backend.extendedValue(78);
+        final int nativeDensity = detectedNativeDensity > 0
+            ? detectedNativeDensity
             : 520;
+        final int detectedActiveDensity = backend.extendedValue(38);
+        final int activeDensity = detectedActiveDensity > 0
+            ? detectedActiveDensity
+            : nativeDensity;
 
         final bool isNative =
             activeWidth <= 0 || (activeWidth == 1220 && activeHeight == 2712);
@@ -7484,13 +7524,32 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
         final bool isHd = activeWidth == 720 && activeHeight == 1600;
         final bool isQhd = activeWidth == 1440 && activeHeight == 3200;
 
+        if (!_customDefaultsLoaded && detectedNativeDensity > 0) {
+          _customDefaultsLoaded = true;
+          if (!isNative && activeWidth > 0 && activeHeight > 0) {
+            _customWidth = activeWidth;
+            _customHeight = activeHeight;
+            _customDensity = activeDensity;
+          } else {
+            _customDensity = _densityForWidth(nativeDensity, _customWidth);
+          }
+        }
+
         String hz(int value) {
-          if (value <= 0) return '120 Hz';
+          if (value <= 0) return '—';
           final double rate = value / 10.0;
           return value % 10 == 0
               ? '${rate.toStringAsFixed(0)} Hz'
               : '${rate.toStringAsFixed(1)} Hz';
         }
+
+        final String refreshValue =
+            hzX10 > 0 && selectedHzX10 > 0 && hzX10 != selectedHzX10
+            ? '${hz(hzX10).replaceAll(' Hz', '')} / ${hz(selectedHzX10)}'
+            : hz(hzX10 > 0 ? hzX10 : selectedHzX10);
+        final int densityMax = nativeDensity * 2 > 800
+            ? nativeDensity * 2
+            : 800;
 
         final List<_ResolutionPreset> presets = <_ResolutionPreset>[
           _ResolutionPreset(
@@ -7499,7 +7558,7 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
             resolutionText: '1220 × 2712',
             width: 1220,
             height: 2712,
-            density: 520,
+            density: nativeDensity,
             aspectRatio: '20:9',
             description:
                 'Rodin physical hardware panel resolution. Maximum sharpness and true 1:1 pixel rendering with zero scaling.',
@@ -7513,7 +7572,7 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
             resolutionText: '1080 × 2400',
             width: 1080,
             height: 2400,
-            density: 460,
+            density: _densityForWidth(nativeDensity, 1080),
             aspectRatio: '20:9',
             description:
                 'Reduces GPU rasterization load by ~22%. Boosts sustained 120 FPS frame stability in heavy 3D games.',
@@ -7527,7 +7586,7 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
             resolutionText: '720 × 1600',
             width: 720,
             height: 1600,
-            density: 307,
+            density: _densityForWidth(nativeDensity, 720),
             aspectRatio: '20:9',
             description:
                 'Lowest GPU workload and power consumption. Drastically extends battery life in emergency situations.',
@@ -7541,7 +7600,7 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
             resolutionText: '1440 × 3200',
             width: 1440,
             height: 3200,
-            density: 614,
+            density: _densityForWidth(nativeDensity, 1440),
             aspectRatio: '20:9',
             description:
                 'Downscaled 2K virtual canvas for maximum screen real estate and ultra-compact multitasking view.',
@@ -7556,7 +7615,7 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
             DetailHeader(title: 'Resolution', onBack: widget.onBack),
             const SizedBox(height: 4),
             Text(
-              'Hardware-mapped resolution switching and canvas scaling for Rodin (1220×2712 1.5K AMOLED)',
+              'ROM-aware resolution and logical-density scaling for Rodin (1220×2712 1.5K AMOLED)',
               style: TextStyle(fontSize: 13.5, color: colors.onSurfaceVariant),
             ),
             const SizedBox(height: 12),
@@ -7663,8 +7722,13 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
                       const SizedBox(width: 8),
                       _ResolutionMetricPill(
                         icon: Icons.speed_rounded,
-                        label: 'Refresh',
-                        value: hz(hzX10),
+                        label:
+                            hzX10 > 0 &&
+                                selectedHzX10 > 0 &&
+                                hzX10 != selectedHzX10
+                            ? 'Live / Selected'
+                            : 'Refresh',
+                        value: refreshValue,
                       ),
                       const SizedBox(width: 8),
                       _ResolutionMetricPill(
@@ -7704,7 +7768,7 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
                             : () => _applyResolution(
                                 1220,
                                 2712,
-                                520,
+                                nativeDensity,
                                 '1.5K Native',
                               ),
                       ),
@@ -7783,7 +7847,7 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              'Direct wm size & density hardware scaling',
+                              'Uses this ROM\'s native density as the scaling baseline',
                               style: TextStyle(
                                 fontSize: 11.5,
                                 color: colors.onSurfaceVariant,
@@ -7864,7 +7928,7 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
                         _customWidth = w;
                         if (_lockAspectRatio) {
                           _customHeight = (w * 2712 ~/ 1220);
-                          _customDensity = (520 * w ~/ 1220);
+                          _customDensity = _densityForWidth(nativeDensity, w);
                         }
                       });
                       RodinHaptics.frequentSegment();
@@ -7935,10 +7999,13 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
                     ],
                   ),
                   Slider(
-                    value: _customDensity.toDouble().clamp(280, 640),
-                    min: 280,
-                    max: 640,
-                    divisions: 72,
+                    value: _customDensity
+                        .toDouble()
+                        .clamp(160.0, densityMax.toDouble())
+                        .toDouble(),
+                    min: 160,
+                    max: densityMax.toDouble(),
+                    divisions: (densityMax - 160) ~/ 5,
                     activeColor: accent,
                     onChangeStart: (_) => RodinHaptics.segment(),
                     onChanged: (double val) {
@@ -8006,15 +8073,18 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
                   ),
                   const Divider(height: 14),
                   _DiagnosticRow(
-                    label: 'Hardware Pixel Density',
+                    label: 'ROM Native Logical Density',
                     good: true,
-                    detail: '520 PPI (Sub-pixel RGB)',
+                    detail: '$nativeDensity DPI (detected automatically)',
                   ),
                   const Divider(height: 14),
-                  const _DiagnosticRow(
-                    label: 'Display Refresh Rate',
+                  _DiagnosticRow(
+                    label: 'Refresh Rate',
                     good: true,
-                    detail: 'System Managed (Display Settings)',
+                    detail:
+                        hzX10 > 0 && selectedHzX10 > 0 && hzX10 != selectedHzX10
+                        ? '${hz(hzX10)} live · ${hz(selectedHzX10)} selected'
+                        : '${hz(hzX10 > 0 ? hzX10 : selectedHzX10)} system managed',
                   ),
                   const Divider(height: 14),
                   _DiagnosticRow(

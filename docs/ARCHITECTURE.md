@@ -11,7 +11,7 @@ Flutter AOT interface
         │ Dart FFI
         ▼
 Rust NativeActivity host
-        │ abstract Unix socket, protocol 13.2
+        │ abstract Unix socket, protocol 13.3
         ▼
 Rust rodin_daemon
         ├── sysfs / procfs / cgroup / block controls
