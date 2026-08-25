@@ -28,13 +28,18 @@ All notable changes are documented here.
 
 ### Fixed
 
-- CPU range application now updates Rodin's selected per-policy Xiaomi thermal
-  ceiling and MediaTek PowerHAL request before cpufreq. Exact locks reach the
-  full 2100/3000/3250 MHz policy maxima without changing another policy or its
-  governor, and requests fail instead of being saved when live verification
-  does not match.
-- A dedicated low-overhead CPU drift guard restores only saved ranges when a
-  late vendor thermal update replaces them, including after daemon restart.
+- CPU range application now selects Rodin's OEM `thermal-nolimits` policy before
+  updating the per-policy Xiaomi thermal ceiling, MediaTek PowerHAL request, and
+  cpufreq limits. Exact locks remain at the full 2100/3000/3250 MHz policy
+  maxima without changing a governor, and requests fail instead of being saved
+  when live verification does not match.
+- The previous Xiaomi thermal configuration is saved before the first custom
+  CPU range and restored when the last range is reset. `mi_thermald`, AOSP
+  `thermald`, and the MediaTek thermal HAL remain running throughout; the boot
+  restore and drift guard also verify the live OEM configuration.
+- Xiaomi's fresh-boot `sconfig=-1` sentinel is treated as the normal thermal
+  configuration, allowing persisted exact CPU locks to restore before any
+  explicit vendor mode has been published.
 - Frequency cards show the live governor selected elsewhere in the app, provide
   clearer apply/reset guidance, and emit discrete haptic ticks while sliding.
 - KernelSU Next and Magisk startup now waits for Android boot completion, then

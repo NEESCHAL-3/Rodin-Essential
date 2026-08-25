@@ -112,6 +112,17 @@ the three-field `powerhal_cpu_ctrl/perfserv_freq` request before writing
 cpufreq. A request is accepted only when the final live range matches. The
 interface reports saved targets separately from effective live limits.
 
+Rodin's normal Xiaomi thermal configuration periodically republishes CPU QoS
+ceilings, so a reapply timer alone cannot provide a sustained exact lock. Before
+the first custom CPU range, the daemon records `thermal_message/sconfig` and
+selects the vendor-defined mode `6` (`thermal-nolimits.conf`). This removes the
+competing Xiaomi CPU policy while leaving `mi_thermald`, AOSP `thermald`, and the
+MediaTek thermal HAL running. The saved mode is restored after the last custom
+range is reset. Startup restoration establishes this ownership before applying
+cpufreq, and the guard verifies both the mode and each saved range. The kernel's
+fresh-boot `sconfig=-1` sentinel is normalized to the default normal mode `0`
+before ownership is recorded.
+
 Vendor CPU and platform thermal services remain running in every GPU mode.
 Gaming Dynamic and Extreme Beast retain ownership of the Mali cooling constraint
 required by their requested GPU policy without stopping those global services.
