@@ -28,10 +28,13 @@ All notable changes are documented here.
 
 ### Fixed
 
-- CPU range application now uses bounded direct cpufreq readback and no longer
-  rewrites MediaTek's global perfserv table, preventing delayed false failures
-  and cross-policy limit changes on the prime cluster. Valid targets remain
-  saved when a stricter external QoS cap makes the live range differ.
+- CPU range application now updates Rodin's selected per-policy Xiaomi thermal
+  ceiling and MediaTek PowerHAL request before cpufreq. Exact locks reach the
+  full 2100/3000/3250 MHz policy maxima without changing another policy or its
+  governor, and requests fail instead of being saved when live verification
+  does not match.
+- A dedicated low-overhead CPU drift guard restores only saved ranges when a
+  late vendor thermal update replaces them, including after daemon restart.
 - Frequency cards show the live governor selected elsewhere in the app, provide
   clearer apply/reset guidance, and emit discrete haptic ticks while sliding.
 - KernelSU Next and Magisk startup now waits for Android boot completion, then
