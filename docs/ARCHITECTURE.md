@@ -11,7 +11,7 @@ Flutter AOT interface
         │ Dart FFI
         ▼
 Rust NativeActivity host
-        │ abstract Unix socket, protocol 13.1
+        │ abstract Unix socket, protocol 13.2
         ▼
 Rust rodin_daemon
         ├── sysfs / procfs / cgroup / block controls
@@ -101,6 +101,13 @@ power policy, and the Mali cooling constraint are applied together. CPU
 governors, CPU frequency ranges, and CPU core state are controlled independently.
 A background guard compares persisted intent with live readback and reapplies
 only drifted values owned by each subsystem.
+
+CPU frequency choices come from each policy's live
+`scaling_available_frequencies` table, with `stats/time_in_state` as the kernel
+compatibility fallback. Range and exact-lock requests are applied atomically,
+verified against `scaling_min_freq` and `scaling_max_freq`, and persisted without
+changing the policy governor. The interface reports saved targets separately
+from effective live limits.
 
 Vendor CPU and platform thermal services remain running in every GPU mode.
 Gaming Dynamic and Extreme Beast retain ownership of the Mali cooling constraint

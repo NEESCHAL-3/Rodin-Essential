@@ -221,7 +221,7 @@ Expected properties:
 - Daemon domain: `u:r:rodin_daemon:s0`
 - Daemon user: `root`
 - App user: an ordinary `_app` UID, not `root` or `system`
-- Ping: `OK PONG 13.1`
+- Ping: `OK PONG 13.2`
 - State directory type: `rodin_daemon_data_file`
 
 Verify the installed APK remains zero-DEX:

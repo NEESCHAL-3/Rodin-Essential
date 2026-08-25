@@ -125,6 +125,7 @@ final class RodinBackend {
 
   final StreamController<RodinBackendSnapshot> _controller =
       StreamController<RodinBackendSnapshot>.broadcast(sync: true);
+  final Map<int, List<int>> _cpuFrequencyTables = <int, List<int>>{};
 
   late _I32Dart _startNative;
   late _I32Dart _refreshNative;
@@ -145,6 +146,8 @@ final class RodinBackend {
   late _U32ToI64Dart _cpuFreqNative;
   late _I32ToI32Dart _cpuGovernorNative;
   late _SetTwoI32Dart _setCpuGovernorNative;
+  late _I32ToI32Dart _cpuAvailableCountNative;
+  late _SetTwoI32Dart _cpuAvailableFreqNative;
   late _I32Dart _gpuGovernorNative;
   late _SetI32Dart _setGpuGovernorNative;
   late _I32Dart _ufsSchedulerNative;
@@ -283,6 +286,14 @@ final class RodinBackend {
       _setCpuGovernorNative = lib
           .lookupFunction<_SetTwoI32Native, _SetTwoI32Dart>(
             'rodin_backend_set_cpu_governor',
+          );
+      _cpuAvailableCountNative = lib
+          .lookupFunction<_I32ToI32Native, _I32ToI32Dart>(
+            'rodin_backend_get_cpu_available_count',
+          );
+      _cpuAvailableFreqNative = lib
+          .lookupFunction<_SetTwoI32Native, _SetTwoI32Dart>(
+            'rodin_backend_get_cpu_available_freq',
           );
       _gpuGovernorNative = lib.lookupFunction<_I32Native, _I32Dart>(
         'rodin_backend_get_gpu_governor',
@@ -630,6 +641,62 @@ final class RodinBackend {
   bool setCpuClusterFreqRange(int policy, int minMhz, int maxMhz) {
     return setExtendedOperation(21, policy, (minMhz << 16) | (maxMhz & 0xFFFF));
   }
+
+  bool resetCpuClusterFreqRange(int policy) => setExtendedOperation(23, policy);
+
+  List<int> cpuAvailableFrequencies(int policy) {
+    if (!_started || _lib == null || !const <int>{0, 4, 7}.contains(policy)) {
+      return const <int>[];
+    }
+
+    final List<int>? cached = _cpuFrequencyTables[policy];
+    if (cached != null && cached.isNotEmpty) return cached;
+
+    final int count = _cpuAvailableCountNative(policy).clamp(0, 128).toInt();
+    final List<int> frequencies = <int>[];
+    for (int index = 0; index < count; index++) {
+      final int mhz = _cpuAvailableFreqNative(policy, index);
+      if (mhz > 0) frequencies.add(mhz);
+    }
+    final List<int> immutable = List<int>.unmodifiable(frequencies);
+    if (immutable.isNotEmpty) _cpuFrequencyTables[policy] = immutable;
+    return immutable;
+  }
+
+  int cpuTargetMinFrequency(int policy) => switch (policy) {
+    0 => extendedValue(53),
+    4 => extendedValue(55),
+    7 => extendedValue(57),
+    _ => -1,
+  };
+
+  int cpuTargetMaxFrequency(int policy) => switch (policy) {
+    0 => extendedValue(54),
+    4 => extendedValue(56),
+    7 => extendedValue(58),
+    _ => -1,
+  };
+
+  int cpuLiveMinFrequency(int policy) => switch (policy) {
+    0 => extendedValue(68),
+    4 => extendedValue(70),
+    7 => extendedValue(72),
+    _ => -1,
+  };
+
+  int cpuLiveMaxFrequency(int policy) => switch (policy) {
+    0 => extendedValue(69),
+    4 => extendedValue(71),
+    7 => extendedValue(73),
+    _ => -1,
+  };
+
+  int cpuFrequencyDrift(int policy) => switch (policy) {
+    0 => extendedValue(75),
+    4 => extendedValue(76),
+    7 => extendedValue(77),
+    _ => -1,
+  };
 
   bool setGpuPowerPolicy(int policyCode) =>
       setExtendedOperation(22, policyCode);

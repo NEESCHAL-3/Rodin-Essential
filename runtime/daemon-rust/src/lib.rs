@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 mod touch_resampler;
 
 pub const SOCKET_NAME: &str = "rodin_essentiald_v13";
-pub const PROTOCOL_VERSION: &str = "13.1";
+pub const PROTOCOL_VERSION: &str = "13.2";
 
 const AF_UNIX: i32 = 1;
 const SOCK_STREAM: i32 = 1;
@@ -749,223 +749,307 @@ fn set_cpu_governor(policy: i32, governor: &str) -> Result<(), String> {
     }
 }
 
-fn get_cpu_cluster_min_freq(policy: i32) -> i32 {
-    let state_min = persisted_state().lock().ok().and_then(|s| match policy {
-        0 => {
-            if s.cpu_min_freq0 > 0 {
-                Some(s.cpu_min_freq0)
-            } else {
-                None
-            }
-        }
-        4 => {
-            if s.cpu_min_freq4 > 0 {
-                Some(s.cpu_min_freq4)
-            } else {
-                None
-            }
-        }
-        7 => {
-            if s.cpu_min_freq7 > 0 {
-                Some(s.cpu_min_freq7)
-            } else {
-                None
-            }
-        }
+fn cpu_policy_default_range(policy: i32) -> Option<(i32, i32)> {
+    match policy {
+        0 => Some((300, 2100)),
+        4 => Some((400, 3000)),
+        7 => Some((1000, 3250)),
         _ => None,
-    });
-    if let Some(v) = state_min {
-        return v;
     }
-    let path = format!("/sys/devices/system/cpu/cpufreq/policy{policy}/scaling_min_freq");
-    read_trimmed(&path)
-        .ok()
-        .and_then(|s| s.parse::<i64>().ok())
-        .map(|khz| (khz / 1_000) as i32)
-        .unwrap_or(match policy {
-            0 => 300,
-            4 => 400,
-            7 => 1000,
-            _ => 0,
-        })
 }
 
-fn get_cpu_cluster_max_freq(policy: i32) -> i32 {
-    let state_max = persisted_state().lock().ok().and_then(|s| match policy {
-        0 => {
-            if s.cpu_max_freq0 > 0 {
-                Some(s.cpu_max_freq0)
-            } else {
-                None
-            }
-        }
-        4 => {
-            if s.cpu_max_freq4 > 0 {
-                Some(s.cpu_max_freq4)
-            } else {
-                None
-            }
-        }
-        7 => {
-            if s.cpu_max_freq7 > 0 {
-                Some(s.cpu_max_freq7)
-            } else {
-                None
-            }
-        }
-        _ => None,
-    });
-    if let Some(v) = state_max {
-        return v;
-    }
-    let path = format!("/sys/devices/system/cpu/cpufreq/policy{policy}/scaling_max_freq");
-    read_trimmed(&path)
-        .ok()
-        .and_then(|s| s.parse::<i64>().ok())
+fn parse_cpu_frequency_table(raw: &str) -> Vec<i32> {
+    let mut frequencies = raw
+        .split_whitespace()
+        .filter_map(|value| value.parse::<i64>().ok())
+        .filter(|khz| *khz > 0 && *khz % 1_000 == 0)
         .map(|khz| (khz / 1_000) as i32)
-        .unwrap_or(match policy {
-            0 => 2100,
-            4 => 3000,
-            7 => 3250,
-            _ => 0,
-        })
+        .collect::<Vec<_>>();
+    frequencies.sort_unstable();
+    frequencies.dedup();
+    frequencies
 }
 
-fn apply_cluster_freq_sysfs(policy: i32, min_mhz: i32, max_mhz: i32) {
-    if !matches!(policy, 0 | 4 | 7) || min_mhz <= 0 || max_mhz <= 0 {
-        return;
+fn parse_cpu_time_in_state(raw: &str) -> Vec<i32> {
+    let mut frequencies = raw
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .filter_map(|value| value.parse::<i64>().ok())
+        .filter(|khz| *khz > 0 && *khz % 1_000 == 0)
+        .map(|khz| (khz / 1_000) as i32)
+        .collect::<Vec<_>>();
+    frequencies.sort_unstable();
+    frequencies.dedup();
+    frequencies
+}
+
+fn cpu_available_frequencies(policy: i32) -> Vec<i32> {
+    if !matches!(policy, 0 | 4 | 7) {
+        return Vec::new();
     }
-    let (min, max) = if min_mhz <= max_mhz {
-        (min_mhz, max_mhz)
-    } else {
-        (max_mhz, min_mhz)
+
+    let available = read_trimmed(format!(
+        "/sys/devices/system/cpu/cpufreq/policy{policy}/scaling_available_frequencies"
+    ))
+    .map(|raw| parse_cpu_frequency_table(&raw))
+    .unwrap_or_default();
+    if !available.is_empty() {
+        return available;
+    }
+
+    read_trimmed(format!(
+        "/sys/devices/system/cpu/cpufreq/policy{policy}/stats/time_in_state"
+    ))
+    .map(|raw| parse_cpu_time_in_state(&raw))
+    .unwrap_or_default()
+}
+
+fn cpu_frequency_table_csv(policy: i32) -> String {
+    cpu_available_frequencies(policy)
+        .iter()
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn read_cpu_cluster_limit(policy: i32, node: &str) -> Result<i32, String> {
+    read_trimmed(format!(
+        "/sys/devices/system/cpu/cpufreq/policy{policy}/{node}"
+    ))
+    .map_err(|error| format!("policy{policy} {node} read: {error}"))?
+    .parse::<i64>()
+    .map_err(|error| format!("policy{policy} {node} parse: {error}"))
+    .and_then(|khz| {
+        let mhz = (khz / 1_000) as i32;
+        if mhz > 0 {
+            Ok(mhz)
+        } else {
+            Err(format!("policy{policy} {node} reported {khz} kHz"))
+        }
+    })
+}
+
+fn get_cpu_cluster_live_limit(policy: i32, node: &str, fallback: i32) -> i32 {
+    read_cpu_cluster_limit(policy, node).unwrap_or(fallback)
+}
+
+fn get_cpu_cluster_live_min_freq(policy: i32) -> i32 {
+    let fallback = cpu_policy_default_range(policy)
+        .map(|range| range.0)
+        .unwrap_or(0);
+    get_cpu_cluster_live_limit(policy, "scaling_min_freq", fallback)
+}
+
+fn get_cpu_cluster_live_max_freq(policy: i32) -> i32 {
+    let fallback = cpu_policy_default_range(policy)
+        .map(|range| range.1)
+        .unwrap_or(0);
+    get_cpu_cluster_live_limit(policy, "scaling_max_freq", fallback)
+}
+
+fn persisted_cpu_range(state: &PersistedState, policy: i32) -> Option<(i32, i32)> {
+    let range = match policy {
+        0 => (state.cpu_min_freq0, state.cpu_max_freq0),
+        4 => (state.cpu_min_freq4, state.cpu_max_freq4),
+        7 => (state.cpu_min_freq7, state.cpu_max_freq7),
+        _ => return None,
     };
-    let min_khz = (min as i64) * 1_000;
-    let max_khz = (max as i64) * 1_000;
 
+    (range.0 > 0 && range.1 > 0).then_some(range)
+}
+
+fn effective_cpu_target_range(state: &PersistedState, policy: i32) -> (i32, i32) {
+    persisted_cpu_range(state, policy).unwrap_or_else(|| {
+        let defaults = cpu_policy_default_range(policy).unwrap_or((0, 0));
+        (
+            get_cpu_cluster_live_limit(policy, "scaling_min_freq", defaults.0),
+            get_cpu_cluster_live_limit(policy, "scaling_max_freq", defaults.1),
+        )
+    })
+}
+
+fn validate_cpu_frequency_range_against(
+    policy: i32,
+    min_mhz: i32,
+    max_mhz: i32,
+    available: &[i32],
+) -> Result<(), String> {
+    if !matches!(policy, 0 | 4 | 7) || min_mhz <= 0 || max_mhz <= 0 {
+        return Err("invalid cpu frequency range".into());
+    }
+    if min_mhz > max_mhz {
+        return Err("cpu minimum frequency exceeds maximum".into());
+    }
+
+    if available.is_empty() {
+        return Err(format!("policy{policy} frequency table unavailable"));
+    }
+    if !available.contains(&min_mhz) {
+        return Err(format!(
+            "{min_mhz} MHz is not a supported policy{policy} frequency"
+        ));
+    }
+    if !available.contains(&max_mhz) {
+        return Err(format!(
+            "{max_mhz} MHz is not a supported policy{policy} frequency"
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_cpu_frequency_range(policy: i32, min_mhz: i32, max_mhz: i32) -> Result<(), String> {
+    let available = cpu_available_frequencies(policy);
+    validate_cpu_frequency_range_against(policy, min_mhz, max_mhz, &available)
+}
+
+fn sync_mtk_perfserv_range(policy: i32, min_mhz: i32, max_mhz: i32) {
+    let state = persisted_state()
+        .lock()
+        .ok()
+        .map(|state| state.clone())
+        .unwrap_or_default();
+
+    let mut p0 = effective_cpu_target_range(&state, 0);
+    let mut p4 = effective_cpu_target_range(&state, 4);
+    let mut p7 = effective_cpu_target_range(&state, 7);
+
+    match policy {
+        0 => p0 = (min_mhz, max_mhz),
+        4 => p4 = (min_mhz, max_mhz),
+        7 => p7 = (min_mhz, max_mhz),
+        _ => return,
+    }
+
+    let (p0_min_k, p0_max_k) = (p0.0 as i64 * 1_000, p0.1 as i64 * 1_000);
+    let (p4_min_k, p4_max_k) = (p4.0 as i64 * 1_000, p4.1 as i64 * 1_000);
+    let (p7_min_k, p7_max_k) = (p7.0 as i64 * 1_000, p7.1 as i64 * 1_000);
+
+    let perfserv = format!(
+        "{p0_min_k} {p0_max_k} {p0_min_k} {p0_max_k} {p0_min_k} {p0_max_k} {p0_min_k} {p0_max_k} {p4_min_k} {p4_max_k} {p4_min_k} {p4_max_k} {p4_min_k} {p4_max_k} {p7_min_k} {p7_max_k}\n"
+    );
+    let _ = fs::write("/proc/powerhal_cpu_ctrl/perfserv_freq", perfserv);
+}
+
+fn apply_cluster_freq_sysfs(policy: i32, min_mhz: i32, max_mhz: i32) -> Result<(), String> {
+    validate_cpu_frequency_range(policy, min_mhz, max_mhz)?;
+
+    let min_khz = min_mhz as i64 * 1_000;
+    let max_khz = max_mhz as i64 * 1_000;
     let path_min = format!("/sys/devices/system/cpu/cpufreq/policy{policy}/scaling_min_freq");
     let path_max = format!("/sys/devices/system/cpu/cpufreq/policy{policy}/scaling_max_freq");
 
-    let _ = ProcessCommand::new("/system/bin/chmod")
-        .args(["0666", &path_min, &path_max])
-        .output();
-
-    // Frequency requests must never stop Android thermal services or disable
-    // the kernel cooling path. Emergency thermal limits remain authoritative.
-
-    // Two-pass interleaved write prevents kernel rejection when adjusting bounds
-    let _ = fs::write(&path_max, format!("{max_khz}\n"));
-    let _ = fs::write(&path_min, format!("{min_khz}\n"));
-    let _ = fs::write(&path_max, format!("{max_khz}\n"));
-    let _ = fs::write(&path_min, format!("{min_khz}\n"));
-
-    // Also synchronize MediaTek hardware perfserv table for all cores
-    let p0_min_k = if policy == 0 {
-        min_khz
-    } else {
-        (get_cpu_cluster_min_freq(0).max(300) as i64) * 1000
+    let current_min = get_cpu_cluster_live_min_freq(policy);
+    let current_max = get_cpu_cluster_live_max_freq(policy);
+    let write_min = || {
+        fs::write(&path_min, format!("{min_khz}\n"))
+            .map_err(|error| format!("policy{policy} minimum write: {error}"))
     };
-    let p0_max_k = if policy == 0 {
-        max_khz
-    } else {
-        (get_cpu_cluster_max_freq(0).max(2100) as i64) * 1000
-    };
-    let p4_min_k = if policy == 4 {
-        min_khz
-    } else {
-        (get_cpu_cluster_min_freq(4).max(400) as i64) * 1000
-    };
-    let p4_max_k = if policy == 4 {
-        max_khz
-    } else {
-        (get_cpu_cluster_max_freq(4).max(3000) as i64) * 1000
-    };
-    let p7_min_k = if policy == 7 {
-        min_khz
-    } else {
-        (get_cpu_cluster_min_freq(7).max(1000) as i64) * 1000
-    };
-    let p7_max_k = if policy == 7 {
-        max_khz
-    } else {
-        (get_cpu_cluster_max_freq(7).max(3250) as i64) * 1000
+    let write_max = || {
+        fs::write(&path_max, format!("{max_khz}\n"))
+            .map_err(|error| format!("policy{policy} maximum write: {error}"))
     };
 
-    let perfserv_str = format!(
-        "{p0_min_k} {p0_max_k} {p0_min_k} {p0_max_k} {p0_min_k} {p0_max_k} {p0_min_k} {p0_max_k} {p4_min_k} {p4_max_k} {p4_min_k} {p4_max_k} {p4_min_k} {p4_max_k} {p7_min_k} {p7_max_k}\n"
-    );
-    let _ = fs::write("/proc/powerhal_cpu_ctrl/perfserv_freq", perfserv_str);
+    // Choose the write order that keeps the intermediate range valid.
+    if min_mhz > current_max {
+        write_max()?;
+        write_min()?;
+    } else if max_mhz < current_min {
+        write_min()?;
+        write_max()?;
+    } else {
+        write_max()?;
+        write_min()?;
+    }
+
+    sync_mtk_perfserv_range(policy, min_mhz, max_mhz);
+
+    let actual_min = read_cpu_cluster_limit(policy, "scaling_min_freq")?;
+    let actual_max = read_cpu_cluster_limit(policy, "scaling_max_freq")?;
+    if actual_min != min_mhz || actual_max != max_mhz {
+        return Err(format!(
+            "policy{policy} verify expected={min_mhz}-{max_mhz} actual={actual_min}-{actual_max} MHz"
+        ));
+    }
+
+    Ok(())
 }
 
 fn set_cpu_cluster_min_freq(policy: i32, mhz: i32) -> Result<(), String> {
-    if !matches!(policy, 0 | 4 | 7) || mhz <= 0 {
-        return Err("invalid cpu min freq parameter".into());
-    }
-    let current_max = get_cpu_cluster_max_freq(policy);
-    let max_to_use = if current_max > 0 {
-        current_max.max(mhz)
-    } else {
-        mhz
-    };
-    apply_cluster_freq_sysfs(policy, mhz, max_to_use);
-
-    mutate_persisted_state(|state| match policy {
-        0 => state.cpu_min_freq0 = mhz,
-        4 => state.cpu_min_freq4 = mhz,
-        7 => state.cpu_min_freq7 = mhz,
-        _ => {}
-    });
-    Ok(())
+    let state = persisted_state()
+        .lock()
+        .ok()
+        .map(|state| state.clone())
+        .unwrap_or_default();
+    let (_, current_max) = effective_cpu_target_range(&state, policy);
+    set_cpu_cluster_freq_range(policy, mhz, current_max.max(mhz))
 }
 
 fn set_cpu_cluster_max_freq(policy: i32, mhz: i32) -> Result<(), String> {
-    if !matches!(policy, 0 | 4 | 7) || mhz <= 0 {
-        return Err("invalid cpu max freq parameter".into());
-    }
-    let current_min = get_cpu_cluster_min_freq(policy);
-    let min_to_use = if current_min > 0 {
-        current_min.min(mhz)
-    } else {
-        mhz
-    };
-    apply_cluster_freq_sysfs(policy, min_to_use, mhz);
-
-    mutate_persisted_state(|state| match policy {
-        0 => state.cpu_max_freq0 = mhz,
-        4 => state.cpu_max_freq4 = mhz,
-        7 => state.cpu_max_freq7 = mhz,
-        _ => {}
-    });
-    Ok(())
+    let state = persisted_state()
+        .lock()
+        .ok()
+        .map(|state| state.clone())
+        .unwrap_or_default();
+    let (current_min, _) = effective_cpu_target_range(&state, policy);
+    set_cpu_cluster_freq_range(policy, current_min.min(mhz), mhz)
 }
 
 fn set_cpu_cluster_freq_range(policy: i32, min_mhz: i32, max_mhz: i32) -> Result<(), String> {
-    if !matches!(policy, 0 | 4 | 7) || min_mhz <= 0 || max_mhz <= 0 {
-        return Err("invalid cpu freq range parameter".into());
-    }
-    let (min, max) = if min_mhz <= max_mhz {
-        (min_mhz, max_mhz)
-    } else {
-        (max_mhz, min_mhz)
-    };
-    apply_cluster_freq_sysfs(policy, min, max);
+    CPU_FREQ_WRITE_ACK.store(-1, Ordering::Release);
+    let result = apply_cluster_freq_sysfs(policy, min_mhz, max_mhz);
 
-    mutate_persisted_state(|state| match policy {
-        0 => {
-            state.cpu_min_freq0 = min;
-            state.cpu_max_freq0 = max;
-        }
-        4 => {
-            state.cpu_min_freq4 = min;
-            state.cpu_max_freq4 = max;
-        }
-        7 => {
-            state.cpu_min_freq7 = min;
-            state.cpu_max_freq7 = max;
-        }
-        _ => {}
-    });
-    Ok(())
+    if result.is_ok() {
+        mutate_persisted_state(|state| match policy {
+            0 => {
+                state.cpu_min_freq0 = min_mhz;
+                state.cpu_max_freq0 = max_mhz;
+            }
+            4 => {
+                state.cpu_min_freq4 = min_mhz;
+                state.cpu_max_freq4 = max_mhz;
+            }
+            7 => {
+                state.cpu_min_freq7 = min_mhz;
+                state.cpu_max_freq7 = max_mhz;
+            }
+            _ => {}
+        });
+    }
+
+    CPU_FREQ_WRITE_ACK.store(if result.is_ok() { 1 } else { 0 }, Ordering::Release);
+    result
+}
+
+fn reset_cpu_cluster_freq_range(policy: i32) -> Result<(), String> {
+    CPU_FREQ_WRITE_ACK.store(-1, Ordering::Release);
+    let available = cpu_available_frequencies(policy);
+    let Some((&min_mhz, &max_mhz)) = available.first().zip(available.last()) else {
+        CPU_FREQ_WRITE_ACK.store(0, Ordering::Release);
+        return Err(format!("policy{policy} frequency table unavailable"));
+    };
+
+    let result = apply_cluster_freq_sysfs(policy, min_mhz, max_mhz);
+    if result.is_ok() {
+        mutate_persisted_state(|state| match policy {
+            0 => {
+                state.cpu_min_freq0 = -1;
+                state.cpu_max_freq0 = -1;
+            }
+            4 => {
+                state.cpu_min_freq4 = -1;
+                state.cpu_max_freq4 = -1;
+            }
+            7 => {
+                state.cpu_min_freq7 = -1;
+                state.cpu_max_freq7 = -1;
+            }
+            _ => {}
+        });
+    }
+
+    CPU_FREQ_WRITE_ACK.store(if result.is_ok() { 1 } else { 0 }, Ordering::Release);
+    result
 }
 
 fn set_gpu_governor(governor: &str) -> Result<(), String> {
@@ -1786,6 +1870,7 @@ static LAST_PER_APP_PROFILE: AtomicI32 = AtomicI32::new(-1);
 static KEEPALIVE_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
 static KEEPALIVE_APPLY_COUNT: AtomicI32 = AtomicI32::new(0);
 static CPU_WRITE_ACK: AtomicI32 = AtomicI32::new(-1);
+static CPU_FREQ_WRITE_ACK: AtomicI32 = AtomicI32::new(-1);
 static CORE_CTL_NODE_COUNT: AtomicI32 = AtomicI32::new(0);
 static GPU_PROFILE_APPLY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -1950,9 +2035,9 @@ fn restore_vendor_cpu_defaults() {
             let _ = set_cpu_governor(policy, "schedutil");
         }
     }
-    apply_cluster_freq_sysfs(0, 300, 2100);
-    apply_cluster_freq_sysfs(4, 400, 3000);
-    apply_cluster_freq_sysfs(7, 1000, 3250);
+    let _ = apply_cluster_freq_sysfs(0, 300, 2100);
+    let _ = apply_cluster_freq_sysfs(4, 400, 3000);
+    let _ = apply_cluster_freq_sysfs(7, 1000, 3250);
 }
 
 static PERSISTED_STATE: OnceLock<Mutex<PersistedState>> = OnceLock::new();
@@ -2619,20 +2704,13 @@ fn record_successful_command(cmd: &str) {
     }
 
     if let Some(rest) = cmd.strip_prefix("SET cpu.freq_range ") {
-        let mut parts = rest.split_whitespace();
-        let policy = parts
-            .next()
-            .and_then(|v| v.parse::<i32>().ok())
-            .unwrap_or(-1);
-        let min_mhz = parts
-            .next()
-            .and_then(|v| v.parse::<i32>().ok())
-            .unwrap_or(0);
-        let max_mhz = parts
-            .next()
-            .and_then(|v| v.parse::<i32>().ok())
-            .unwrap_or(0);
-        let _ = set_cpu_cluster_freq_range(policy, min_mhz, max_mhz);
+        // The verified range setter persists both limits atomically. Do not
+        // execute the hardware transaction a second time from this recorder.
+        let _ = rest;
+        return;
+    }
+
+    if cmd.starts_with("SET cpu.freq_reset ") {
         return;
     }
 
@@ -2652,6 +2730,21 @@ fn drift_status(desired: &str, actual: &str) -> i32 {
     if desired.is_empty() {
         -1
     } else if desired == actual {
+        0
+    } else {
+        1
+    }
+}
+
+fn cpu_frequency_drift_status(
+    target_min: i32,
+    target_max: i32,
+    live_min: i32,
+    live_max: i32,
+) -> i32 {
+    if target_min <= 0 || target_max <= 0 {
+        -1
+    } else if target_min == live_min && target_max == live_max {
         0
     } else {
         1
@@ -3229,7 +3322,7 @@ fn restore_persisted_state() {
         } else {
             2100
         };
-        apply_cluster_freq_sysfs(0, min, max);
+        let _ = apply_cluster_freq_sysfs(0, min, max);
     }
     if state.cpu_min_freq4 > 0 || state.cpu_max_freq4 > 0 {
         let min = if state.cpu_min_freq4 > 0 {
@@ -3242,7 +3335,7 @@ fn restore_persisted_state() {
         } else {
             3000
         };
-        apply_cluster_freq_sysfs(4, min, max);
+        let _ = apply_cluster_freq_sysfs(4, min, max);
     }
     if state.cpu_min_freq7 > 0 || state.cpu_max_freq7 > 0 {
         let min = if state.cpu_min_freq7 > 0 {
@@ -3255,7 +3348,7 @@ fn restore_persisted_state() {
         } else {
             3250
         };
-        apply_cluster_freq_sysfs(7, min, max);
+        let _ = apply_cluster_freq_sysfs(7, min, max);
     }
 
     if state.gpu_uncap == 1 {
@@ -3324,15 +3417,15 @@ fn reassert_persisted_governors() {
     }
 
     if state.cpu_min_freq0 > 0 && state.cpu_max_freq0 > 0 {
-        apply_cluster_freq_sysfs(0, state.cpu_min_freq0, state.cpu_max_freq0);
+        let _ = apply_cluster_freq_sysfs(0, state.cpu_min_freq0, state.cpu_max_freq0);
     }
 
     if state.cpu_min_freq4 > 0 && state.cpu_max_freq4 > 0 {
-        apply_cluster_freq_sysfs(4, state.cpu_min_freq4, state.cpu_max_freq4);
+        let _ = apply_cluster_freq_sysfs(4, state.cpu_min_freq4, state.cpu_max_freq4);
     }
 
     if state.cpu_min_freq7 > 0 && state.cpu_max_freq7 > 0 {
-        apply_cluster_freq_sysfs(7, state.cpu_min_freq7, state.cpu_max_freq7);
+        let _ = apply_cluster_freq_sysfs(7, state.cpu_min_freq7, state.cpu_max_freq7);
     }
 
     // Stock mode is owned by MediaTek's power HAL. Tuned profiles use the
@@ -4288,6 +4381,30 @@ fn snapshot_persistence_fields() -> Vec<String> {
     };
     let gpu_drift = drift_status(desired_gpu_governor, &gpu_governor());
     let io_drift = drift_status(&state.io, &io_scheduler());
+    let cpu_live_min0 = get_cpu_cluster_live_min_freq(0);
+    let cpu_live_max0 = get_cpu_cluster_live_max_freq(0);
+    let cpu_live_min4 = get_cpu_cluster_live_min_freq(4);
+    let cpu_live_max4 = get_cpu_cluster_live_max_freq(4);
+    let cpu_live_min7 = get_cpu_cluster_live_min_freq(7);
+    let cpu_live_max7 = get_cpu_cluster_live_max_freq(7);
+    let cpu_freq_drift0 = cpu_frequency_drift_status(
+        state.cpu_min_freq0,
+        state.cpu_max_freq0,
+        cpu_live_min0,
+        cpu_live_max0,
+    );
+    let cpu_freq_drift4 = cpu_frequency_drift_status(
+        state.cpu_min_freq4,
+        state.cpu_max_freq4,
+        cpu_live_min4,
+        cpu_live_max4,
+    );
+    let cpu_freq_drift7 = cpu_frequency_drift_status(
+        state.cpu_min_freq7,
+        state.cpu_max_freq7,
+        cpu_live_min7,
+        cpu_live_max7,
+    );
 
     let zram_stat = zram_get_mm_stat();
     let zram_disk_mb = zram_get_disksize_mb();
@@ -4415,12 +4532,28 @@ fn snapshot_persistence_fields() -> Vec<String> {
             }
         ),
         format!("gpu_power_policy_str={}", gpu_get_power_policy()),
-        format!("cpu_min0={}", get_cpu_cluster_min_freq(0)),
-        format!("cpu_max0={}", get_cpu_cluster_max_freq(0)),
-        format!("cpu_min4={}", get_cpu_cluster_min_freq(4)),
-        format!("cpu_max4={}", get_cpu_cluster_max_freq(4)),
-        format!("cpu_min7={}", get_cpu_cluster_min_freq(7)),
-        format!("cpu_max7={}", get_cpu_cluster_max_freq(7)),
+        format!("cpu_min0={}", state.cpu_min_freq0),
+        format!("cpu_max0={}", state.cpu_max_freq0),
+        format!("cpu_min4={}", state.cpu_min_freq4),
+        format!("cpu_max4={}", state.cpu_max_freq4),
+        format!("cpu_min7={}", state.cpu_min_freq7),
+        format!("cpu_max7={}", state.cpu_max_freq7),
+        format!("cpu_live_min0={cpu_live_min0}"),
+        format!("cpu_live_max0={cpu_live_max0}"),
+        format!("cpu_live_min4={cpu_live_min4}"),
+        format!("cpu_live_max4={cpu_live_max4}"),
+        format!("cpu_live_min7={cpu_live_min7}"),
+        format!("cpu_live_max7={cpu_live_max7}"),
+        format!(
+            "cpu_freq_ack={}",
+            CPU_FREQ_WRITE_ACK.load(Ordering::Acquire)
+        ),
+        format!("cpu_freq_drift0={cpu_freq_drift0}"),
+        format!("cpu_freq_drift4={cpu_freq_drift4}"),
+        format!("cpu_freq_drift7={cpu_freq_drift7}"),
+        format!("cpu_avail0={}", cpu_frequency_table_csv(0)),
+        format!("cpu_avail4={}", cpu_frequency_table_csv(4)),
+        format!("cpu_avail7={}", cpu_frequency_table_csv(7)),
         format!(
             "touch_sustained_rate={}",
             TOUCH_SUSTAINED_RATE.load(Ordering::Acquire)
@@ -4714,6 +4847,9 @@ pub fn handle_command(line: &str) -> String {
             .and_then(|v| v.parse::<i32>().ok())
             .unwrap_or(0);
         set_cpu_cluster_freq_range(policy, min_mhz, max_mhz)
+    } else if let Some(arg) = cmd.strip_prefix("SET cpu.freq_reset ") {
+        let policy = arg.trim().parse::<i32>().unwrap_or(-1);
+        reset_cpu_cluster_freq_range(policy)
     } else if let Some(arg) = cmd.strip_prefix("SET gpu.gov ") {
         set_gpu_governor(arg.trim())
     } else if let Some(arg) = cmd.strip_prefix("SET io.scheduler ") {
@@ -4833,13 +4969,47 @@ pub fn serve_client(mut stream: UnixStream) {
 #[cfg(test)]
 mod tests {
     use super::{
-        PersistedState, classify_touch_panel_version, find_touch_thp_config_offset,
-        gaming_dynamic_target_opp, migrate_legacy_gpu_profile_cpu_state,
+        PersistedState, classify_touch_panel_version, cpu_frequency_drift_status,
+        find_touch_thp_config_offset, gaming_dynamic_target_opp,
+        migrate_legacy_gpu_profile_cpu_state, parse_cpu_frequency_table, parse_cpu_time_in_state,
         parse_ged_current_frequency_mhz, profile_uses_ged_boost,
+        validate_cpu_frequency_range_against,
     };
 
     fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
         bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
+    #[test]
+    fn parses_cpu_frequency_table_as_sorted_unique_mhz_opps() {
+        assert_eq!(
+            parse_cpu_frequency_table("2100000 2000000 1000000 2000000 bad 3250500"),
+            vec![1000, 2000, 2100]
+        );
+    }
+
+    #[test]
+    fn parses_only_the_frequency_column_from_time_in_state() {
+        assert_eq!(
+            parse_cpu_time_in_state("2100000 298\n2000000 15718\n2100000 12\ninvalid\n"),
+            vec![2000, 2100]
+        );
+    }
+
+    #[test]
+    fn accepts_only_ordered_frequencies_exposed_by_the_policy() {
+        let available = [300, 400, 500, 600, 2100];
+        assert!(validate_cpu_frequency_range_against(0, 400, 2100, &available).is_ok());
+        assert!(validate_cpu_frequency_range_against(0, 400, 400, &available).is_ok());
+        assert!(validate_cpu_frequency_range_against(0, 350, 2100, &available).is_err());
+        assert!(validate_cpu_frequency_range_against(0, 2100, 400, &available).is_err());
+    }
+
+    #[test]
+    fn distinguishes_saved_targets_from_live_frequency_drift() {
+        assert_eq!(cpu_frequency_drift_status(-1, -1, 300, 2100), -1);
+        assert_eq!(cpu_frequency_drift_status(1200, 1800, 1200, 1800), 0);
+        assert_eq!(cpu_frequency_drift_status(1800, 1800, 1200, 1800), 1);
     }
 
     #[test]

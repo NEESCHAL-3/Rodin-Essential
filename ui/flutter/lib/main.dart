@@ -23,7 +23,7 @@ enum RodinScreen {
   touchBoost,
   displayStudio,
   perAppProfiles,
-  cpuCoreControl,
+  cpuPerformance,
   advancedConfiguration,
   resolution,
   diagnostics,
@@ -50,8 +50,8 @@ extension RodinScreenName on RodinScreen {
         return 'Display Studio';
       case RodinScreen.perAppProfiles:
         return 'Per-app Profiles';
-      case RodinScreen.cpuCoreControl:
-        return 'CPU Core Control';
+      case RodinScreen.cpuPerformance:
+        return 'CPU Performance';
       case RodinScreen.advancedConfiguration:
         return 'Advanced Configuration';
       case RodinScreen.resolution:
@@ -640,8 +640,8 @@ class _RodinShellState extends State<RodinShell> {
         return DisplayStudioScreen(onBack: _back);
       case RodinScreen.perAppProfiles:
         return PerAppProfilesScreen(onBack: _back);
-      case RodinScreen.cpuCoreControl:
-        return CpuCoreControlScreen(onBack: _back);
+      case RodinScreen.cpuPerformance:
+        return CpuPerformanceScreen(onBack: _back);
       case RodinScreen.advancedConfiguration:
         return AdvancedConfigurationScreen(onBack: _back);
       case RodinScreen.resolution:
@@ -2758,7 +2758,7 @@ class _DisclaimerCard extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'Rodin Essential provides direct kernel hardware tuning, MediaTek Mali GPU frequency locks, independent CPU topology control, and AIDL display calibrations via native ROM system interfaces. GPU modes never change CPU settings. Gaming Dynamic and Extreme Beast intentionally override only the vendor GPU cooling cap; sustained high clocks can cause severe heat, battery drain, instability, or hardware damage.',
+            'Rodin Essential provides direct kernel hardware tuning, MediaTek Mali GPU frequency locks, independent CPU frequency and topology control, and AIDL display calibrations via native ROM system interfaces. GPU modes never change CPU settings. Gaming Dynamic and Extreme Beast intentionally override only the vendor GPU cooling cap; sustained high clocks can cause severe heat, battery drain, instability, or hardware damage.',
             style: TextStyle(
               fontSize: 11.2,
               height: 1.45,
@@ -2850,7 +2850,7 @@ class _LiveOverviewGrid extends StatelessWidget {
                     subtitle: coreSubtitle,
                     icon: Icons.memory_rounded,
                     accent: const Color(0xFF67C2FF),
-                    onTap: () => onOpen(RodinScreen.cpuCoreControl),
+                    onTap: () => onOpen(RodinScreen.cpuPerformance),
                   ),
                 ),
               ],
@@ -3226,9 +3226,9 @@ class HubsScreen extends StatelessWidget {
       Color(0xFF67C2FF),
     ),
     _HubSpec(
-      RodinScreen.cpuCoreControl,
-      'CPU Core Control',
-      'Manual processor core control',
+      RodinScreen.cpuPerformance,
+      'CPU Performance',
+      'Clock ranges, locks & core control',
       Icons.memory_rounded,
       Color(0xFF67C2FF),
     ),
@@ -3333,7 +3333,7 @@ class HubsScreen extends StatelessWidget {
                     title: 'CPU',
                     subtitle: cores,
                     accent: const Color(0xFF67C2FF),
-                    onTap: () => onOpen(RodinScreen.cpuCoreControl),
+                    onTap: () => onOpen(RodinScreen.cpuPerformance),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -3462,7 +3462,7 @@ class SupportScreen extends StatelessWidget {
                           runSpacing: 4,
                           children: <Widget>[
                             StatusPill(
-                              label: 'v1.17.1',
+                              label: 'v1.18.0',
                               accent: colors.primary,
                             ),
                             StatusPill(
@@ -5702,15 +5702,15 @@ class _AppProfileRow extends StatelessWidget {
   }
 }
 
-class CpuCoreControlScreen extends StatefulWidget {
-  const CpuCoreControlScreen({required this.onBack, super.key});
+class CpuPerformanceScreen extends StatefulWidget {
+  const CpuPerformanceScreen({required this.onBack, super.key});
   final VoidCallback onBack;
 
   @override
-  State<CpuCoreControlScreen> createState() => _CpuCoreControlScreenState();
+  State<CpuPerformanceScreen> createState() => _CpuPerformanceScreenState();
 }
 
-class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
+class _CpuPerformanceScreenState extends State<CpuPerformanceScreen> {
   Timer? _toastTimer;
   bool _toastVisible = false;
   String _toastTag = '';
@@ -5790,27 +5790,40 @@ class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
         final int writeAck = backend.extendedValue(35);
         final int savedMask = backend.extendedValue(36);
         final int coreCtlNodes = backend.extendedValue(37);
+        final int frequencyWriteAck = backend.extendedValue(74);
         final bool canWrite = s.ready && !s.busy;
 
-        int silverOnline = 0;
-        for (int c = 0; c <= 3; c++) {
-          if (s.cpuOnline(c)) silverOnline++;
+        int clusterCurrentMhz(Iterable<int> cores) {
+          int current = -1;
+          for (final int cpu in cores) {
+            if (s.cpuOnline(cpu) && s.cpuFreqKhz[cpu] > 0) {
+              final int mhz = s.cpuFreqKhz[cpu] ~/ 1000;
+              if (mhz > current) current = mhz;
+            }
+          }
+          return current;
         }
-        int goldOnline = 0;
+
+        int efficiencyOnline = 0;
+        for (int c = 0; c <= 3; c++) {
+          if (s.cpuOnline(c)) efficiencyOnline++;
+        }
+        int performanceOnline = 0;
         for (int c = 4; c <= 6; c++) {
-          if (s.cpuOnline(c)) goldOnline++;
+          if (s.cpuOnline(c)) performanceOnline++;
         }
         int primeOnline = s.cpuOnline(7) ? 1 : 0;
-        final int totalOnline = silverOnline + goldOnline + primeOnline;
+        final int totalOnline =
+            efficiencyOnline + performanceOnline + primeOnline;
 
         return Stack(
           children: <Widget>[
             RodinScrollPage(
               children: <Widget>[
-                DetailHeader(title: 'CPU Core Control', onBack: widget.onBack),
+                DetailHeader(title: 'CPU Performance', onBack: widget.onBack),
                 const SizedBox(height: 4),
                 Text(
-                  'Manual core power management and architecture hotplug control',
+                  'Per-cluster frequency ranges, exact locks, and processor core control',
                   style: TextStyle(
                     fontSize: 13.5,
                     color: colors.onSurfaceVariant,
@@ -5872,7 +5885,7 @@ class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    '$totalOnline / 8 Cores Online · Core Hotplug Control',
+                                    '$totalOnline / 8 Cores Online · Live Cluster Control',
                                     style: TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.w500,
@@ -5925,29 +5938,102 @@ class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
                         Row(
                           children: <Widget>[
                             _buildHeroStat(
-                              label: 'SILVER (4C)',
-                              val: '$silverOnline / 4 Online',
+                              label: 'EFFICIENCY (4C)',
+                              val: '$efficiencyOnline / 4 Online',
                               accent: const Color(0xFF4EA8DE),
-                              sub: '4× Cortex-A520',
+                              sub: '4× Cortex-A725',
                             ),
                             const SizedBox(width: 8),
                             _buildHeroStat(
-                              label: 'GOLD (3C)',
-                              val: '$goldOnline / 3 Online',
+                              label: 'PERFORMANCE (3C)',
+                              val: '$performanceOnline / 3 Online',
                               accent: const Color(0xFFA066FF),
-                              sub: '3× Cortex-A720',
+                              sub: '3× Cortex-A725',
                             ),
                             const SizedBox(width: 8),
                             _buildHeroStat(
                               label: 'PRIME (1C)',
                               val: '$primeOnline / 1 Online',
                               accent: const Color(0xFFFF8E3C),
-                              sub: '1× Cortex-X4',
+                              sub: '1× Cortex-A725',
                             ),
                           ],
                         ),
                       ],
                     ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                Text(
+                  'CPU FREQUENCY CONTROL',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.6,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 9),
+                _CpuFrequencyCard(
+                  policy: 0,
+                  title: 'Efficiency Cluster',
+                  subtitle: '4× Cortex-A725 · Cores 0–3 · 256KB L2',
+                  accent: const Color(0xFF4EA8DE),
+                  currentMhz: clusterCurrentMhz(const <int>[0, 1, 2, 3]),
+                  targetMinMhz: backend.cpuTargetMinFrequency(0),
+                  targetMaxMhz: backend.cpuTargetMaxFrequency(0),
+                  liveMinMhz: backend.cpuLiveMinFrequency(0),
+                  liveMaxMhz: backend.cpuLiveMaxFrequency(0),
+                  availableMhz: backend.cpuAvailableFrequencies(0),
+                  governorCode: s.cpuGovernor0,
+                  writeAck: frequencyWriteAck,
+                  drift: backend.cpuFrequencyDrift(0),
+                  enabled: canWrite,
+                  onFeedback: _showGlassToast,
+                ),
+                const SizedBox(height: 9),
+                _CpuFrequencyCard(
+                  policy: 4,
+                  title: 'Performance Cluster',
+                  subtitle: '3× Cortex-A725 · Cores 4–6 · 512KB L2',
+                  accent: const Color(0xFFA066FF),
+                  currentMhz: clusterCurrentMhz(const <int>[4, 5, 6]),
+                  targetMinMhz: backend.cpuTargetMinFrequency(4),
+                  targetMaxMhz: backend.cpuTargetMaxFrequency(4),
+                  liveMinMhz: backend.cpuLiveMinFrequency(4),
+                  liveMaxMhz: backend.cpuLiveMaxFrequency(4),
+                  availableMhz: backend.cpuAvailableFrequencies(4),
+                  governorCode: s.cpuGovernor4,
+                  writeAck: frequencyWriteAck,
+                  drift: backend.cpuFrequencyDrift(4),
+                  enabled: canWrite,
+                  onFeedback: _showGlassToast,
+                ),
+                const SizedBox(height: 9),
+                _CpuFrequencyCard(
+                  policy: 7,
+                  title: 'Prime Core',
+                  subtitle: '1× Cortex-A725 · Core 7 · 1MB L2',
+                  accent: const Color(0xFFFF8E3C),
+                  currentMhz: clusterCurrentMhz(const <int>[7]),
+                  targetMinMhz: backend.cpuTargetMinFrequency(7),
+                  targetMaxMhz: backend.cpuTargetMaxFrequency(7),
+                  liveMinMhz: backend.cpuLiveMinFrequency(7),
+                  liveMaxMhz: backend.cpuLiveMaxFrequency(7),
+                  availableMhz: backend.cpuAvailableFrequencies(7),
+                  governorCode: s.cpuGovernor7,
+                  writeAck: frequencyWriteAck,
+                  drift: backend.cpuFrequencyDrift(7),
+                  enabled: canWrite,
+                  onFeedback: _showGlassToast,
+                ),
+                const SizedBox(height: 10),
+                const SurfaceCard(
+                  child: _InfoBlock(
+                    title: 'Independent frequency targets',
+                    text:
+                        'Minimum, maximum, and exact-lock targets persist across reboot without changing the selected CPU governor. Live effective limits are reported separately from the saved target.',
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -6007,11 +6093,11 @@ class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
                             isDark: isDark,
                             colors: colors,
                             title: 'Balanced',
-                            subtitle: 'Cores 0–6 (X4 Off)',
+                            subtitle: '7/8 · Prime Core Off',
                             icon: Icons.balance_rounded,
                             accent: const Color(0xFF4EA8DE),
                             onTap: () => _applyCorePreset(
-                              'Balanced 6-Core Mode',
+                              'Balanced 7-Core Mode',
                               <int>[0, 1, 2, 3, 4, 5, 6],
                               const Color(0xFF4EA8DE),
                             ),
@@ -6023,7 +6109,7 @@ class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
                             isDark: isDark,
                             colors: colors,
                             title: 'Power Saver',
-                            subtitle: 'Silver Cores 0–3',
+                            subtitle: 'Efficiency Cores 0–3',
                             icon: Icons.eco_rounded,
                             accent: const Color(0xFF35C997),
                             onTap: () => _applyCorePreset(
@@ -6068,7 +6154,7 @@ class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
                                   ),
                                 ),
                                 Text(
-                                  '4× Cortex-A520 · Cores 0–3 · $silverOnline/4 Online',
+                                  '4× Cortex-A725 · Cores 0–3 · $efficiencyOnline/4 Online',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: colors.onSurfaceVariant,
@@ -6090,7 +6176,7 @@ class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
                               ? _freq(s.cpuFreqKhz[cpu])
                               : 'Off',
                           accent: const Color(0xFF4EA8DE),
-                          clusterTag: cpu == 0 ? 'MASTER' : 'SILVER',
+                          clusterTag: cpu == 0 ? 'MASTER' : 'EFFICIENCY',
                           toggleEnabled: cpu != 0 && manual == 1 && canWrite,
                           onChanged: cpu == 0
                               ? null
@@ -6135,7 +6221,7 @@ class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
                                   ),
                                 ),
                                 Text(
-                                  '3× Cortex-A720 · Cores 4–6 · $goldOnline/3 Online',
+                                  '3× Cortex-A725 · Cores 4–6 · $performanceOnline/3 Online',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: colors.onSurfaceVariant,
@@ -6157,7 +6243,7 @@ class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
                               ? _freq(s.cpuFreqKhz[cpu])
                               : 'Off',
                           accent: const Color(0xFFA066FF),
-                          clusterTag: 'GOLD',
+                          clusterTag: 'PERFORMANCE',
                           toggleEnabled: manual == 1 && canWrite,
                           onChanged: (bool online) {
                             RodinHaptics.toggle(online);
@@ -6192,7 +6278,7 @@ class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: <Widget>[
                                 Text(
-                                  'Prime Supercore',
+                                  'Prime Core',
                                   style: TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w800,
@@ -6200,7 +6286,7 @@ class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
                                   ),
                                 ),
                                 Text(
-                                  '1× Cortex-X4 · Core 7 · $primeOnline/1 Online',
+                                  '1× Cortex-A725 · Core 7 · $primeOnline/1 Online',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: colors.onSurfaceVariant,
@@ -6243,6 +6329,16 @@ class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
                         detail: manual == 1
                             ? 'Manual hotplug control'
                             : 'Automatic balance',
+                      ),
+                      const Divider(height: 14),
+                      _DiagnosticRow(
+                        label: 'Frequency Target',
+                        good: frequencyWriteAck != 0,
+                        detail: frequencyWriteAck == 1
+                            ? 'Last request verified'
+                            : frequencyWriteAck == 0
+                            ? 'Last request failed'
+                            : 'No request yet',
                       ),
                       const Divider(height: 14),
                       _DiagnosticRow(
@@ -6486,6 +6582,658 @@ class _CpuCoreControlScreenState extends State<CpuCoreControlScreen> {
   }
 }
 
+class _CpuFrequencyCard extends StatefulWidget {
+  const _CpuFrequencyCard({
+    required this.policy,
+    required this.title,
+    required this.subtitle,
+    required this.accent,
+    required this.currentMhz,
+    required this.targetMinMhz,
+    required this.targetMaxMhz,
+    required this.liveMinMhz,
+    required this.liveMaxMhz,
+    required this.availableMhz,
+    required this.governorCode,
+    required this.writeAck,
+    required this.drift,
+    required this.enabled,
+    required this.onFeedback,
+  });
+
+  final int policy;
+  final String title;
+  final String subtitle;
+  final Color accent;
+  final int currentMhz;
+  final int targetMinMhz;
+  final int targetMaxMhz;
+  final int liveMinMhz;
+  final int liveMaxMhz;
+  final List<int> availableMhz;
+  final int governorCode;
+  final int writeAck;
+  final int drift;
+  final bool enabled;
+  final void Function(String, String, IconData, Color) onFeedback;
+
+  @override
+  State<_CpuFrequencyCard> createState() => _CpuFrequencyCardState();
+}
+
+class _CpuFrequencyCardState extends State<_CpuFrequencyCard> {
+  int _minimumMhz = -1;
+  int _maximumMhz = -1;
+  bool _exactLock = false;
+  bool _dirty = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncFromBackend(force: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant _CpuFrequencyCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncFromBackend();
+  }
+
+  int _nearestAvailable(int requested) {
+    final List<int> available = widget.availableMhz;
+    if (available.isEmpty) return -1;
+    if (requested <= 0) return available.first;
+
+    int nearest = available.first;
+    int distance = (nearest - requested).abs();
+    for (final int frequency in available.skip(1)) {
+      final int nextDistance = (frequency - requested).abs();
+      if (nextDistance < distance) {
+        nearest = frequency;
+        distance = nextDistance;
+      }
+    }
+    return nearest;
+  }
+
+  void _syncFromBackend({bool force = false}) {
+    if (widget.availableMhz.isEmpty || (_dirty && !force)) return;
+
+    final bool custom = widget.targetMinMhz > 0 && widget.targetMaxMhz > 0;
+    final int requestedMin = custom ? widget.targetMinMhz : widget.liveMinMhz;
+    final int requestedMax = custom ? widget.targetMaxMhz : widget.liveMaxMhz;
+    _minimumMhz = _nearestAvailable(requestedMin);
+    _maximumMhz = _nearestAvailable(requestedMax);
+
+    if (_minimumMhz > _maximumMhz) {
+      final int swap = _minimumMhz;
+      _minimumMhz = _maximumMhz;
+      _maximumMhz = swap;
+    }
+    _exactLock = custom && _minimumMhz == _maximumMhz;
+  }
+
+  int _frequencyIndex(int frequency) {
+    final int exact = widget.availableMhz.indexOf(frequency);
+    if (exact >= 0) return exact;
+    return widget.availableMhz.indexOf(_nearestAvailable(frequency));
+  }
+
+  String _frequencyLabel(int mhz) {
+    if (mhz <= 0) return '—';
+    if (mhz >= 1000) {
+      final int hundredths = (mhz * 100) ~/ 1000;
+      final String value = (hundredths / 100).toStringAsFixed(
+        hundredths % 10 == 0 ? 1 : 2,
+      );
+      return '$value GHz';
+    }
+    return '$mhz MHz';
+  }
+
+  String _governorLabel() => switch (widget.governorCode) {
+    0 => 'sugov_ext',
+    1 => 'conservative',
+    2 => 'powersave',
+    3 => 'performance',
+    4 => 'schedutil',
+    _ => 'Detecting',
+  };
+
+  void _setExactLock(bool lock) {
+    if (_exactLock == lock || widget.availableMhz.isEmpty) return;
+    RodinHaptics.segment();
+    setState(() {
+      _exactLock = lock;
+      if (lock) {
+        final int target = _maximumMhz > 0
+            ? _maximumMhz
+            : widget.availableMhz.last;
+        _minimumMhz = target;
+        _maximumMhz = target;
+      } else if (_minimumMhz == _maximumMhz) {
+        _minimumMhz = widget.availableMhz.first;
+      }
+      _dirty = true;
+    });
+  }
+
+  void _apply() {
+    if (!widget.enabled ||
+        widget.availableMhz.isEmpty ||
+        _minimumMhz <= 0 ||
+        _maximumMhz <= 0) {
+      RodinHaptics.reject();
+      return;
+    }
+
+    final bool accepted = RodinBackend.instance.setCpuClusterFreqRange(
+      widget.policy,
+      _minimumMhz,
+      _maximumMhz,
+    );
+    if (!accepted) {
+      RodinHaptics.reject();
+      return;
+    }
+
+    RodinHaptics.confirm();
+    setState(() => _dirty = false);
+    widget.onFeedback(
+      _exactLock ? 'EXACT LOCK REQUESTED' : 'FREQUENCY RANGE REQUESTED',
+      _exactLock
+          ? '${widget.title} · ${_frequencyLabel(_maximumMhz)}'
+          : '${widget.title} · ${_frequencyLabel(_minimumMhz)} – ${_frequencyLabel(_maximumMhz)}',
+      _exactLock ? Icons.lock_rounded : Icons.tune_rounded,
+      widget.accent,
+    );
+  }
+
+  void _reset() {
+    if (!widget.enabled) {
+      RodinHaptics.reject();
+      return;
+    }
+
+    final bool accepted = RodinBackend.instance.resetCpuClusterFreqRange(
+      widget.policy,
+    );
+    if (!accepted) {
+      RodinHaptics.reject();
+      return;
+    }
+
+    RodinHaptics.confirm();
+    setState(() {
+      _dirty = false;
+      _exactLock = false;
+      if (widget.availableMhz.isNotEmpty) {
+        _minimumMhz = widget.availableMhz.first;
+        _maximumMhz = widget.availableMhz.last;
+      }
+    });
+    widget.onFeedback(
+      'OEM RANGE REQUESTED',
+      '${widget.title} returned to OEM-managed limits',
+      Icons.restart_alt_rounded,
+      widget.accent,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final bool custom = widget.targetMinMhz > 0 && widget.targetMaxMhz > 0;
+    final bool tableReady = widget.availableMhz.isNotEmpty;
+    final int maxIndex = tableReady ? widget.availableMhz.length - 1 : 0;
+    final int minIndex = tableReady
+        ? _frequencyIndex(_minimumMhz).clamp(0, maxIndex)
+        : 0;
+    final int selectedMaxIndex = tableReady
+        ? _frequencyIndex(_maximumMhz).clamp(0, maxIndex)
+        : 0;
+    final String stateLabel = _dirty
+        ? 'EDITING'
+        : !custom
+        ? 'OEM'
+        : widget.targetMinMhz == widget.targetMaxMhz
+        ? 'LOCKED'
+        : 'RANGE';
+    final String verification = !custom
+        ? 'OEM managed'
+        : widget.drift == 0
+        ? 'Target verified'
+        : widget.writeAck == 0
+        ? 'Write not verified'
+        : 'Target reapplying';
+
+    return SurfaceCard(
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Container(
+                width: 9,
+                height: 9,
+                decoration: BoxDecoration(
+                  color: widget.accent,
+                  shape: BoxShape.circle,
+                  boxShadow: <BoxShadow>[
+                    BoxShadow(
+                      color: widget.accent.withValues(alpha: 0.45),
+                      blurRadius: 8,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      widget.title,
+                      style: const TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      widget.subtitle,
+                      style: TextStyle(
+                        fontSize: 10.8,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              StatusPill(label: stateLabel, accent: widget.accent),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: widget.accent.withValues(alpha: 0.075),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: widget.accent.withValues(alpha: 0.22)),
+            ),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: _CpuFrequencyMetric(
+                    label: 'CURRENT',
+                    value: _frequencyLabel(widget.currentMhz),
+                    accent: widget.accent,
+                  ),
+                ),
+                Container(
+                  width: 1,
+                  height: 35,
+                  color: colors.outline.withValues(alpha: 0.28),
+                ),
+                Expanded(
+                  child: _CpuFrequencyMetric(
+                    label: 'LIVE LIMITS',
+                    value:
+                        '${_frequencyLabel(widget.liveMinMhz)} – ${_frequencyLabel(widget.liveMaxMhz)}',
+                    accent: widget.accent,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 11),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  'Governor: ${_governorLabel()} · unchanged',
+                  style: TextStyle(
+                    fontSize: 10.8,
+                    fontWeight: FontWeight.w600,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              Text(
+                tableReady
+                    ? '${widget.availableMhz.length} supported clocks'
+                    : 'Reading clock table',
+                style: TextStyle(
+                  fontSize: 10.2,
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: _CpuModeButton(
+                  label: 'Dynamic Range',
+                  icon: Icons.swap_horiz_rounded,
+                  selected: !_exactLock,
+                  accent: widget.accent,
+                  enabled: widget.enabled && tableReady,
+                  onTap: () => _setExactLock(false),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _CpuModeButton(
+                  label: 'Exact Lock',
+                  icon: Icons.lock_rounded,
+                  selected: _exactLock,
+                  accent: widget.accent,
+                  enabled: widget.enabled && tableReady,
+                  onTap: () => _setExactLock(true),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: !tableReady
+                ? SizedBox(
+                    key: const ValueKey<String>('loading'),
+                    height: 54,
+                    child: Center(
+                      child: Text(
+                        'Waiting for the kernel frequency table…',
+                        style: TextStyle(color: colors.onSurfaceVariant),
+                      ),
+                    ),
+                  )
+                : _exactLock
+                ? Column(
+                    key: const ValueKey<String>('lock'),
+                    children: <Widget>[
+                      _CpuRangeLabels(
+                        leftLabel: 'LOCK TARGET',
+                        leftValue: _frequencyLabel(_maximumMhz),
+                        rightLabel: 'MIN = MAX',
+                        rightValue: '${_maximumMhz} MHz',
+                        accent: widget.accent,
+                      ),
+                      Slider(
+                        value: selectedMaxIndex.toDouble(),
+                        min: 0,
+                        max: maxIndex.toDouble(),
+                        divisions: maxIndex > 0 ? maxIndex : null,
+                        label: _frequencyLabel(_maximumMhz),
+                        activeColor: widget.accent,
+                        onChanged: widget.enabled
+                            ? (double value) {
+                                final int target =
+                                    widget.availableMhz[value.round()];
+                                setState(() {
+                                  _minimumMhz = target;
+                                  _maximumMhz = target;
+                                  _dirty = true;
+                                });
+                              }
+                            : null,
+                      ),
+                    ],
+                  )
+                : Column(
+                    key: const ValueKey<String>('range'),
+                    children: <Widget>[
+                      _CpuRangeLabels(
+                        leftLabel: 'MINIMUM',
+                        leftValue: _frequencyLabel(_minimumMhz),
+                        rightLabel: 'MAXIMUM',
+                        rightValue: _frequencyLabel(_maximumMhz),
+                        accent: widget.accent,
+                      ),
+                      RangeSlider(
+                        values: RangeValues(
+                          minIndex.toDouble(),
+                          selectedMaxIndex.toDouble(),
+                        ),
+                        min: 0,
+                        max: maxIndex.toDouble(),
+                        divisions: maxIndex > 0 ? maxIndex : null,
+                        labels: RangeLabels(
+                          _frequencyLabel(_minimumMhz),
+                          _frequencyLabel(_maximumMhz),
+                        ),
+                        activeColor: widget.accent,
+                        onChanged: widget.enabled
+                            ? (RangeValues values) {
+                                setState(() {
+                                  _minimumMhz =
+                                      widget.availableMhz[values.start.round()];
+                                  _maximumMhz =
+                                      widget.availableMhz[values.end.round()];
+                                  _dirty = true;
+                                });
+                              }
+                            : null,
+                      ),
+                    ],
+                  ),
+          ),
+          Row(
+            children: <Widget>[
+              Icon(
+                widget.drift == 1 ? Icons.sync_rounded : Icons.verified_rounded,
+                size: 14,
+                color: widget.drift == 1
+                    ? colors.onSurfaceVariant
+                    : widget.accent,
+              ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  verification,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: widget.enabled ? _reset : null,
+                icon: const Icon(Icons.restart_alt_rounded, size: 17),
+                label: const Text('OEM'),
+              ),
+              const SizedBox(width: 3),
+              FilledButton.tonalIcon(
+                onPressed: widget.enabled && tableReady && _dirty
+                    ? _apply
+                    : null,
+                icon: Icon(
+                  _exactLock ? Icons.lock_rounded : Icons.check_rounded,
+                  size: 17,
+                ),
+                label: const Text('Apply'),
+                style: FilledButton.styleFrom(
+                  foregroundColor: widget.accent,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 9,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CpuFrequencyMetric extends StatelessWidget {
+  const _CpuFrequencyMetric({
+    required this.label,
+    required this.value,
+    required this.accent,
+  });
+
+  final String label;
+  final String value;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: <Widget>[
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.5,
+            color: accent,
+          ),
+        ),
+        const SizedBox(height: 3),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            value,
+            maxLines: 1,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CpuModeButton extends StatelessWidget {
+  const _CpuModeButton({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.accent,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final Color accent;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(11),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          decoration: BoxDecoration(
+            color: selected
+                ? accent.withValues(alpha: 0.13)
+                : colors.surfaceContainer.withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(
+              color: selected
+                  ? accent.withValues(alpha: 0.52)
+                  : colors.outline.withValues(alpha: 0.42),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              Icon(
+                icon,
+                size: 16,
+                color: selected ? accent : colors.onSurfaceVariant,
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: selected ? accent : colors.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CpuRangeLabels extends StatelessWidget {
+  const _CpuRangeLabels({
+    required this.leftLabel,
+    required this.leftValue,
+    required this.rightLabel,
+    required this.rightValue,
+    required this.accent,
+  });
+
+  final String leftLabel;
+  final String leftValue;
+  final String rightLabel;
+  final String rightValue;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget item(String label, String value, CrossAxisAlignment alignment) {
+      return Column(
+        crossAxisAlignment: alignment,
+        children: <Widget>[
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 9.3,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.45,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w800,
+              color: accent,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      children: <Widget>[
+        item(leftLabel, leftValue, CrossAxisAlignment.start),
+        const Spacer(),
+        item(rightLabel, rightValue, CrossAxisAlignment.end),
+      ],
+    );
+  }
+}
+
 class AdvancedConfigurationScreen extends StatefulWidget {
   const AdvancedConfigurationScreen({required this.onBack, super.key});
 
@@ -6578,7 +7326,7 @@ class _AdvancedConfigurationScreenState
             const SizedBox(height: 9),
             _ChoiceCard(
               title: 'Prime cluster',
-              subtitle: 'Prime supercore (Core 7)',
+              subtitle: 'Prime core (Core 7)',
               icon: Icons.memory_rounded,
               accent: const Color(0xFFFF9F68),
               selectedCode: snapshot.cpuGovernor7,
