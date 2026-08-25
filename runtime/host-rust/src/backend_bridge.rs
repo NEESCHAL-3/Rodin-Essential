@@ -11,7 +11,7 @@ const AF_UNIX: i32 = 1;
 const SOCK_STREAM: i32 = 1;
 const SOCK_CLOEXEC: i32 = 0x80000;
 const SOCKET_NAME: &str = "rodin_essentiald_v13";
-const EXTENDED_VALUE_COUNT: usize = 78;
+const EXTENDED_VALUE_COUNT: usize = 81;
 
 #[repr(C)]
 struct SockAddrUn {
@@ -328,7 +328,7 @@ fn refresh(cache: &Cache) -> Result<(), String> {
             map.insert(k.to_string(), v.to_string());
         }
     }
-    if map.get("protocol").map(String::as_str) != Some("13.2") {
+    if map.get("protocol").map(String::as_str) != Some("13.3") {
         return Err("protocol mismatch".into());
     }
 
@@ -500,6 +500,9 @@ fn refresh(cache: &Cache) -> Result<(), String> {
         ("cpu_freq_drift0", 75),
         ("cpu_freq_drift4", 76),
         ("cpu_freq_drift7", 77),
+        ("display_native_density", 78),
+        ("touch_resampler_path", 79),
+        ("touch_resampler_error", 80),
     ];
 
     for &(key, index) in extended_fields {
@@ -887,7 +890,7 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
                     match refresh(&cache) {
                         Ok(()) => {
                             if !logged_pass {
-                                app_log(b"RODIN_BACKEND_APP=PASS protocol=13.2\0");
+                                app_log(b"RODIN_BACKEND_APP=PASS protocol=13.3\0");
                                 logged_pass = true;
                             }
                             logged_fail = false;
@@ -967,7 +970,7 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
             match refresh(&cache) {
                 Ok(()) => {
                     if !logged_pass {
-                        app_log(b"RODIN_BACKEND_APP=PASS protocol=13.2\0");
+                        app_log(b"RODIN_BACKEND_APP=PASS protocol=13.3\0");
                         logged_pass = true;
                     }
                     logged_fail = false;

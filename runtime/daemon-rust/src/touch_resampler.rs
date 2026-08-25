@@ -8,6 +8,7 @@ static LAST_ERROR: AtomicI32 = AtomicI32::new(0);
 static MEASURED_HZ_X10: AtomicI32 = AtomicI32::new(0);
 static SOURCE_MEASURED_HZ_X10: AtomicI32 = AtomicI32::new(0);
 static MEASUREMENT_ACTIVE: AtomicI32 = AtomicI32::new(0);
+static ATTACHMENT_PATH: AtomicI32 = AtomicI32::new(0);
 static PHYSICAL_FRAMES: AtomicU64 = AtomicU64::new(0);
 static INJECTED_FRAMES: AtomicU64 = AtomicU64::new(0);
 static START: Once = Once::new();
@@ -63,6 +64,14 @@ pub fn measurement_active() -> i32 {
     MEASUREMENT_ACTIVE.load(Ordering::Acquire)
 }
 
+pub fn attachment_path() -> i32 {
+    ATTACHMENT_PATH.load(Ordering::Acquire)
+}
+
+pub fn last_error() -> i32 {
+    LAST_ERROR.load(Ordering::Acquire)
+}
+
 pub fn physical_frames() -> u64 {
     PHYSICAL_FRAMES.load(Ordering::Acquire)
 }
@@ -76,6 +85,7 @@ fn worker() {
         let target = TARGET_HZ.load(Ordering::Acquire);
         if target == 0 {
             READY_HZ.store(0, Ordering::Release);
+            ATTACHMENT_PATH.store(0, Ordering::Release);
             std::thread::sleep(Duration::from_millis(25));
             continue;
         }
@@ -95,14 +105,16 @@ fn worker() {
 
 #[cfg(target_os = "android")]
 mod android {
-    use super::{INJECTED_FRAMES, LAST_ERROR, PHYSICAL_FRAMES, READY_HZ, TARGET_HZ};
+    use super::{
+        ATTACHMENT_PATH, INJECTED_FRAMES, LAST_ERROR, PHYSICAL_FRAMES, READY_HZ, TARGET_HZ,
+    };
     use std::fs::{self, File, OpenOptions};
     use std::io::{Read, Write};
     use std::mem::size_of;
     use std::os::fd::{AsRawFd, FromRawFd, RawFd};
     use std::os::raw::{c_int, c_long};
     use std::os::unix::fs::OpenOptionsExt;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::Ordering;
 
     const O_NONBLOCK: i32 = 0x800;
@@ -118,6 +130,8 @@ mod android {
     const EV_ABS: u16 = 3;
     const SYN_REPORT: u16 = 0;
     const ABS_MT_SLOT: u16 = 0x2f;
+    const ABS_MT_TOUCH_MAJOR: u16 = 0x30;
+    const ABS_MT_WIDTH_MAJOR: u16 = 0x32;
     const ABS_MT_WIDTH_MINOR: u16 = 0x33;
     const ABS_MT_POSITION_X: u16 = 0x35;
     const ABS_MT_POSITION_Y: u16 = 0x36;
@@ -165,7 +179,7 @@ mod android {
         y: i32,
         previous_x: i32,
         previous_y: i32,
-        width_minor: i32,
+        marker_value: i32,
         point_time_ns: i64,
         previous_time_ns: i64,
     }
@@ -179,7 +193,7 @@ mod android {
                 y: 0,
                 previous_x: 0,
                 previous_y: 0,
-                width_minor: 0,
+                marker_value: 0,
                 point_time_ns: 0,
                 previous_time_ns: 0,
             }
@@ -248,38 +262,6 @@ mod android {
         None
     }
 
-    fn output_event(pid: u32) -> Result<(i32, PathBuf), i32> {
-        let entries = fs::read_dir(format!("/proc/{pid}/fd")).map_err(|_| -1)?;
-        for entry in entries.flatten() {
-            let Ok(fd_number) = entry.file_name().to_string_lossy().parse::<i32>() else {
-                continue;
-            };
-            let Ok(path) = fs::read_link(entry.path()) else {
-                continue;
-            };
-            if path.to_string_lossy().starts_with("/dev/input/event") {
-                return Ok((fd_number, path));
-            }
-        }
-        Err(-2)
-    }
-
-    fn output_handle(pid: u32) -> Result<(File, PathBuf), i32> {
-        let (target_fd, path) = output_event(pid)?;
-        let pidfd = unsafe { syscall(SYS_PIDFD_OPEN, pid as c_int, 0 as c_int) } as i32;
-        if pidfd < 0 {
-            return Err(-3);
-        }
-        let duplicate = unsafe { syscall(SYS_PIDFD_GETFD, pidfd, target_fd, 0 as c_int) } as i32;
-        unsafe {
-            libc_close(pidfd);
-        }
-        if duplicate < 0 {
-            return Err(-4);
-        }
-        Ok((unsafe { File::from_raw_fd(duplicate) }, path))
-    }
-
     unsafe fn libc_close(fd: RawFd) {
         unsafe extern "C" {
             fn close(fd: c_int) -> c_int;
@@ -297,6 +279,104 @@ mod android {
             | (0x40u32 + code as u32)) as c_long
     }
 
+    fn has_axis(fd: RawFd, code: u16) -> bool {
+        let mut info = InputAbsInfo::default();
+        unsafe { ioctl(fd, ev_iocgabs(code), &mut info) == 0 && info.maximum > info.minimum }
+    }
+
+    fn is_multitouch_device(fd: RawFd) -> bool {
+        has_axis(fd, ABS_MT_POSITION_X)
+            && has_axis(fd, ABS_MT_POSITION_Y)
+            && marker_axis(fd).is_some()
+    }
+
+    fn marker_axis(fd: RawFd) -> Option<u16> {
+        [ABS_MT_WIDTH_MINOR, ABS_MT_WIDTH_MAJOR, ABS_MT_TOUCH_MAJOR]
+            .into_iter()
+            .find(|code| has_axis(fd, *code))
+    }
+
+    fn service_output_handle(pid: u32) -> Result<(File, PathBuf), i32> {
+        let entries = fs::read_dir(format!("/proc/{pid}/fd")).map_err(|_| -1)?;
+        let mut candidates = Vec::new();
+        for entry in entries.flatten() {
+            let Ok(fd_number) = entry.file_name().to_string_lossy().parse::<i32>() else {
+                continue;
+            };
+            let Ok(path) = fs::read_link(entry.path()) else {
+                continue;
+            };
+            if path.to_string_lossy().starts_with("/dev/input/event") {
+                candidates.push((fd_number, path));
+            }
+        }
+        candidates.sort_by(|left, right| left.1.cmp(&right.1));
+
+        let pidfd = unsafe { syscall(SYS_PIDFD_OPEN, pid as c_int, 0 as c_int) } as i32;
+        if pidfd < 0 {
+            return Err(-3);
+        }
+
+        for (target_fd, path) in candidates {
+            let duplicate =
+                unsafe { syscall(SYS_PIDFD_GETFD, pidfd, target_fd, 0 as c_int) } as i32;
+            if duplicate < 0 {
+                continue;
+            }
+            let file = unsafe { File::from_raw_fd(duplicate) };
+            if is_multitouch_device(file.as_raw_fd()) {
+                unsafe {
+                    libc_close(pidfd);
+                }
+                return Ok((file, path));
+            }
+        }
+
+        unsafe {
+            libc_close(pidfd);
+        }
+        Err(-4)
+    }
+
+    fn direct_output_handle() -> Result<(File, PathBuf), i32> {
+        let mut paths = fs::read_dir("/dev/input")
+            .map_err(|_| -10)?
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("event"))
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+
+        for path in paths {
+            let Ok(file) = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(O_NONBLOCK | O_CLOEXEC)
+                .open(&path)
+            else {
+                continue;
+            };
+            if is_multitouch_device(file.as_raw_fd()) {
+                return Ok((file, path));
+            }
+        }
+        Err(-11)
+    }
+
+    fn output_handle() -> Result<(File, PathBuf, i32, Option<u32>), i32> {
+        if let Some(pid) = touch_service_pid()
+            && let Ok((file, path)) = service_output_handle(pid)
+        {
+            return Ok((file, path, 1, Some(pid)));
+        }
+
+        direct_output_handle().map(|(file, path)| (file, path, 2, None))
+    }
+
     fn axis_range(fd: RawFd, code: u16) -> (i32, i32) {
         let mut info = InputAbsInfo::default();
         let result = unsafe { ioctl(fd, ev_iocgabs(code), &mut info) };
@@ -309,7 +389,7 @@ mod android {
         }
     }
 
-    fn frame_is_injected(events: &[InputEvent]) -> bool {
+    fn frame_is_injected(events: &[InputEvent], marker_code: u16) -> bool {
         // Rodin-generated frames finish with a temporary width change followed
         // by its original value. Both values occur before SYN_REPORT, so
         // Android only observes the restored valid pointer state. The pair
@@ -325,9 +405,9 @@ mod android {
             return false;
         };
         last.event_type == EV_ABS
-            && last.code == ABS_MT_WIDTH_MINOR
+            && last.code == marker_code
             && previous.event_type == EV_ABS
-            && previous.code == ABS_MT_WIDTH_MINOR
+            && previous.code == marker_code
             && last.value != previous.value
     }
 
@@ -343,6 +423,8 @@ mod android {
         now_ns: i64,
         x_range: (i32, i32),
         y_range: (i32, i32),
+        marker_code: u16,
+        marker_range: (i32, i32),
     ) -> bool {
         let Some(first_active_slot) = slots.iter().position(|slot| slot.active) else {
             return false;
@@ -384,14 +466,16 @@ mod android {
             final_slot = slot;
         }
         push(EV_ABS, ABS_MT_SLOT, final_slot as i32);
-        let original_width = slots[final_slot].width_minor.clamp(0, 100);
-        let marker_width = if original_width < 100 {
-            original_width + 1
+        let original_marker = slots[final_slot]
+            .marker_value
+            .clamp(marker_range.0, marker_range.1);
+        let temporary_marker = if original_marker < marker_range.1 {
+            original_marker + 1
         } else {
-            original_width - 1
+            original_marker - 1
         };
-        push(EV_ABS, ABS_MT_WIDTH_MINOR, marker_width);
-        push(EV_ABS, ABS_MT_WIDTH_MINOR, original_width);
+        push(EV_ABS, marker_code, temporary_marker);
+        push(EV_ABS, marker_code, original_marker);
         push(EV_SYN, SYN_REPORT, 0);
 
         changed && output.write_all(events_as_bytes(&events)).is_ok()
@@ -404,16 +488,17 @@ mod android {
     }
 
     pub(super) fn run(initial_target: i32) -> Result<(), i32> {
-        let pid = touch_service_pid().ok_or(-5)?;
-        let (mut output, path) = output_handle(pid)?;
+        let (mut output, path, attachment_path, service_pid) = output_handle()?;
         let mut input = OpenOptions::new()
             .read(true)
             .custom_flags(O_NONBLOCK | O_CLOEXEC)
-            .open(path)
+            .open(&path)
             .map_err(|_| -6)?;
         use_monotonic_event_clock(input.as_raw_fd());
         let x_range = axis_range(input.as_raw_fd(), ABS_MT_POSITION_X);
         let y_range = axis_range(input.as_raw_fd(), ABS_MT_POSITION_Y);
+        let marker_code = marker_axis(input.as_raw_fd()).ok_or(-13)?;
+        let marker_range = axis_range(input.as_raw_fd(), marker_code);
         unsafe {
             setpriority(PRIO_PROCESS, 0, -10);
         }
@@ -431,6 +516,7 @@ mod android {
         let mut read_buffer = [0u8; size_of::<InputEvent>() * 64];
 
         LAST_ERROR.store(0, Ordering::Release);
+        ATTACHMENT_PATH.store(attachment_path, Ordering::Release);
         READY_HZ.store(initial_target, Ordering::Release);
 
         loop {
@@ -454,7 +540,7 @@ mod android {
                         continue;
                     }
 
-                    if !frame_is_injected(&frame) {
+                    if !frame_is_injected(&frame, marker_code) {
                         let frame_ns = monotonic_ns();
                         last_source_frame = frame_ns;
                         let was_active = slots.iter().any(|slot| slot.active);
@@ -482,8 +568,8 @@ mod android {
                                     slots[parsed_slot].y = item.value;
                                     position_changed[parsed_slot] = true;
                                 }
-                                ABS_MT_WIDTH_MINOR => {
-                                    slots[parsed_slot].width_minor = item.value.clamp(0, 100);
+                                code if code == marker_code => {
+                                    slots[parsed_slot].marker_value = item.value;
                                 }
                                 _ => {}
                             }
@@ -525,7 +611,15 @@ mod android {
             }
             while session && now >= next_tick {
                 if actual_count < ideal_count
-                    && emit_interpolated(&mut output, &slots, next_tick, x_range, y_range)
+                    && emit_interpolated(
+                        &mut output,
+                        &slots,
+                        next_tick,
+                        x_range,
+                        y_range,
+                        marker_code,
+                        marker_range,
+                    )
                 {
                     actual_count += 1;
                     INJECTED_FRAMES.fetch_add(1, Ordering::AcqRel);
@@ -536,8 +630,13 @@ mod android {
             }
 
             if now >= service_check {
-                if touch_service_pid() != Some(pid) {
+                if let Some(pid) = service_pid
+                    && touch_service_pid() != Some(pid)
+                {
                     return Err(-9);
+                }
+                if !Path::new(&path).exists() {
+                    return Err(-12);
                 }
                 service_check = now + 500_000_000;
             }

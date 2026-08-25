@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 mod touch_resampler;
 
 pub const SOCKET_NAME: &str = "rodin_essentiald_v13";
-pub const PROTOCOL_VERSION: &str = "13.2";
+pub const PROTOCOL_VERSION: &str = "13.3";
 
 const AF_UNIX: i32 = 1;
 const SOCK_STREAM: i32 = 1;
@@ -903,34 +903,6 @@ fn validate_cpu_frequency_range(policy: i32, min_mhz: i32, max_mhz: i32) -> Resu
     validate_cpu_frequency_range_against(policy, min_mhz, max_mhz, &available)
 }
 
-fn sync_mtk_perfserv_range(policy: i32, min_mhz: i32, max_mhz: i32) {
-    let state = persisted_state()
-        .lock()
-        .ok()
-        .map(|state| state.clone())
-        .unwrap_or_default();
-
-    let mut p0 = effective_cpu_target_range(&state, 0);
-    let mut p4 = effective_cpu_target_range(&state, 4);
-    let mut p7 = effective_cpu_target_range(&state, 7);
-
-    match policy {
-        0 => p0 = (min_mhz, max_mhz),
-        4 => p4 = (min_mhz, max_mhz),
-        7 => p7 = (min_mhz, max_mhz),
-        _ => return,
-    }
-
-    let (p0_min_k, p0_max_k) = (p0.0 as i64 * 1_000, p0.1 as i64 * 1_000);
-    let (p4_min_k, p4_max_k) = (p4.0 as i64 * 1_000, p4.1 as i64 * 1_000);
-    let (p7_min_k, p7_max_k) = (p7.0 as i64 * 1_000, p7.1 as i64 * 1_000);
-
-    let perfserv = format!(
-        "{p0_min_k} {p0_max_k} {p0_min_k} {p0_max_k} {p0_min_k} {p0_max_k} {p0_min_k} {p0_max_k} {p4_min_k} {p4_max_k} {p4_min_k} {p4_max_k} {p4_min_k} {p4_max_k} {p7_min_k} {p7_max_k}\n"
-    );
-    let _ = fs::write("/proc/powerhal_cpu_ctrl/perfserv_freq", perfserv);
-}
-
 fn apply_cluster_freq_sysfs(policy: i32, min_mhz: i32, max_mhz: i32) -> Result<(), String> {
     validate_cpu_frequency_range(policy, min_mhz, max_mhz)?;
 
@@ -939,8 +911,6 @@ fn apply_cluster_freq_sysfs(policy: i32, min_mhz: i32, max_mhz: i32) -> Result<(
     let path_min = format!("/sys/devices/system/cpu/cpufreq/policy{policy}/scaling_min_freq");
     let path_max = format!("/sys/devices/system/cpu/cpufreq/policy{policy}/scaling_max_freq");
 
-    let current_min = get_cpu_cluster_live_min_freq(policy);
-    let current_max = get_cpu_cluster_live_max_freq(policy);
     let write_min = || {
         fs::write(&path_min, format!("{min_khz}\n"))
             .map_err(|error| format!("policy{policy} minimum write: {error}"))
@@ -950,28 +920,37 @@ fn apply_cluster_freq_sysfs(policy: i32, min_mhz: i32, max_mhz: i32) -> Result<(
             .map_err(|error| format!("policy{policy} maximum write: {error}"))
     };
 
-    // Choose the write order that keeps the intermediate range valid.
-    if min_mhz > current_max {
-        write_max()?;
-        write_min()?;
-    } else if max_mhz < current_min {
-        write_min()?;
-        write_max()?;
-    } else {
-        write_max()?;
-        write_min()?;
+    let mut actual_min = get_cpu_cluster_live_min_freq(policy);
+    let mut actual_max = get_cpu_cluster_live_max_freq(policy);
+    for attempt in 0..3 {
+        if actual_min == min_mhz && actual_max == max_mhz {
+            return Ok(());
+        }
+
+        // Choose the write order that keeps every intermediate range valid.
+        if min_mhz > actual_max {
+            write_max()?;
+            write_min()?;
+        } else if max_mhz < actual_min {
+            write_min()?;
+            write_max()?;
+        } else {
+            write_max()?;
+            write_min()?;
+        }
+
+        // cpufreq writes are synchronous on Rodin, but a short bounded retry
+        // also handles vendor policy activity occurring in the same instant.
+        std::thread::sleep(Duration::from_millis(if attempt == 0 { 5 } else { 20 }));
+        actual_min = read_cpu_cluster_limit(policy, "scaling_min_freq")?;
+        actual_max = read_cpu_cluster_limit(policy, "scaling_max_freq")?;
     }
 
-    sync_mtk_perfserv_range(policy, min_mhz, max_mhz);
-
-    let actual_min = read_cpu_cluster_limit(policy, "scaling_min_freq")?;
-    let actual_max = read_cpu_cluster_limit(policy, "scaling_max_freq")?;
-    if actual_min != min_mhz || actual_max != max_mhz {
-        return Err(format!(
-            "policy{policy} verify expected={min_mhz}-{max_mhz} actual={actual_min}-{actual_max} MHz"
-        ));
-    }
-
+    // Do not write /proc/powerhal_cpu_ctrl/perfserv_freq here. That node owns
+    // MediaTek's global per-core table and can replace limits on policies that
+    // the user did not select. A remaining readback difference is an external
+    // freq_qos cap, not a failed sysfs write. Persist the requested target and
+    // report the effective range separately through the drift telemetry.
     Ok(())
 }
 
@@ -1629,6 +1608,30 @@ fn touch_profile_rates(profile: i32) -> (i32, i32) {
     }
 }
 
+fn touch_profile_is_live(profile: i32) -> bool {
+    let Some(expected_rate) = touch_profile_locked_rate(profile) else {
+        return false;
+    };
+    let native_matches = if vendor_binder::touch_available() {
+        locate_touch_thp_layout()
+            .and_then(|layout| read_touch_thp_rate(layout, layout.current_rate_addr))
+            .map(|rate| rate == expected_rate)
+            .unwrap_or(false)
+    } else if touch_panel_code() == 1 {
+        fs::read_to_string("/sys/devices/platform/goodix_ts.0/switch_report_rate")
+            .map(|raw| raw.trim() == if expected_rate == 240 { "0" } else { "1" })
+            .unwrap_or(false)
+    } else {
+        false
+    };
+    let resampler_matches = if profile == 3 {
+        touch_resampler::ready_hz() == 1000
+    } else {
+        touch_resampler::ready_hz() == 0
+    };
+    native_matches && resampler_matches
+}
+
 fn apply_touch_hal_profile(profile: i32) -> Result<(), String> {
     // These are Xiaomi TouchFeature HAL modes, not calls into the HyperOS
     // Game Turbo application. The HAL lives in Rodin's vendor/ODM stack and
@@ -1877,6 +1880,7 @@ static GPU_PROFILE_APPLY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static DISPLAY_WIDTH: AtomicI32 = AtomicI32::new(-1);
 static DISPLAY_HEIGHT: AtomicI32 = AtomicI32::new(-1);
 static DISPLAY_DENSITY: AtomicI32 = AtomicI32::new(-1);
+static DISPLAY_NATIVE_DENSITY: AtomicI32 = AtomicI32::new(-1);
 static DISPLAY_HZ_X10: AtomicI32 = AtomicI32::new(-1);
 static DISPLAY_MAX_HZ_X10: AtomicI32 = AtomicI32::new(-1);
 
@@ -1891,6 +1895,9 @@ struct PersistedState {
     dt2w: i32,
     display_color: i32,
     display_temp: i32,
+    display_width: i32,
+    display_height: i32,
+    display_density: i32,
     sunlight: i32,
     silky: i32,
     video: i32,
@@ -1934,6 +1941,9 @@ impl Default for PersistedState {
             dt2w: 1,
             display_color: 1,
             display_temp: 2,
+            display_width: -1,
+            display_height: -1,
+            display_density: -1,
             sunlight: 1,
             silky: 0,
             video: 0,
@@ -2109,6 +2119,21 @@ fn load_persisted_state() -> PersistedState {
             "display_temp" => {
                 if let Some(v) = int_value() {
                     state.display_temp = v;
+                }
+            }
+            "display_width" => {
+                if let Some(v) = int_value() {
+                    state.display_width = v;
+                }
+            }
+            "display_height" => {
+                if let Some(v) = int_value() {
+                    state.display_height = v;
+                }
+            }
+            "display_density" => {
+                if let Some(v) = int_value() {
+                    state.display_density = v;
                 }
             }
             "sunlight" => {
@@ -2330,6 +2355,9 @@ fn save_persisted_state(state: &PersistedState) -> Result<(), String> {
     out.push_str(&format!("dt2w={}\n", state.dt2w));
     out.push_str(&format!("display_color={}\n", state.display_color));
     out.push_str(&format!("display_temp={}\n", state.display_temp));
+    out.push_str(&format!("display_width={}\n", state.display_width));
+    out.push_str(&format!("display_height={}\n", state.display_height));
+    out.push_str(&format!("display_density={}\n", state.display_density));
     out.push_str(&format!("sunlight={}\n", state.sunlight));
     out.push_str(&format!("silky={}\n", state.silky));
     out.push_str(&format!("video={}\n", state.video));
@@ -2764,10 +2792,15 @@ fn parse_number_after(line: &str, key: &str) -> Option<f64> {
     token.parse::<f64>().ok()
 }
 
+fn scaled_display_density(native_density: i32, width: i32) -> i32 {
+    (native_density * width + 610) / 1220
+}
+
 fn refresh_display_info() {
     let mut width = -1;
     let mut height = -1;
     let mut density = -1;
+    let mut native_density = -1;
     let mut current_x10 = -1;
     let mut max_x10 = -1;
 
@@ -2807,13 +2840,40 @@ fn refresh_display_info() {
                     .nth(1)
                     .and_then(|raw| raw.trim().parse::<i32>().ok())
                     .unwrap_or(-1);
-            } else if line.contains("Physical density:") && density <= 0 {
-                density = line
+            } else if line.contains("Physical density:") {
+                native_density = line
                     .split(':')
                     .nth(1)
                     .and_then(|raw| raw.trim().parse::<i32>().ok())
                     .unwrap_or(-1);
             }
+        }
+    }
+
+    if native_density <= 0
+        && let Ok(output) = ProcessCommand::new("/system/bin/getprop")
+            .arg("ro.sf.lcd_density")
+            .output()
+    {
+        native_density = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<i32>()
+            .unwrap_or(-1);
+    }
+    if density <= 0 {
+        density = native_density;
+    }
+
+    for path in [
+        "/sys/devices/virtual/mi_display/disp_feature/disp-DSI-0/dynamic_fps",
+        "/sys/class/mi_display/disp-DSI-0/dynamic_fps",
+    ] {
+        if let Ok(raw) = fs::read_to_string(path)
+            && let Ok(rate) = raw.trim().parse::<f64>()
+            && (1.0..=1000.0).contains(&rate)
+        {
+            current_x10 = (rate * 10.0).round() as i32;
+            break;
         }
     }
 
@@ -2845,7 +2905,7 @@ fn refresh_display_info() {
                         let id_a = format!("id={id}");
                         let id_b = format!("modeId={id}");
 
-                        if line.contains(&id_a) || line.contains(&id_b) {
+                        if (line.contains(&id_a) || line.contains(&id_b)) && current_x10 <= 0 {
                             current_x10 = x10;
                         }
                     }
@@ -2854,11 +2914,120 @@ fn refresh_display_info() {
         }
     }
 
+    // Prefer the ROM's configured peak over the panel capability. This keeps
+    // the UI truthful when adaptive refresh is currently idling below the
+    // user's selected 90/120 Hz setting.
+    for (namespace, key) in [
+        ("system", "peak_refresh_rate"),
+        ("secure", "user_refresh_rate"),
+        ("system", "user_refresh_rate"),
+    ] {
+        if let Ok(output) = ProcessCommand::new("/system/bin/settings")
+            .args(["get", namespace, key])
+            .output()
+            && let Ok(rate) = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .parse::<f64>()
+            && (1.0..=1000.0).contains(&rate)
+        {
+            max_x10 = (rate * 10.0).round() as i32;
+            break;
+        }
+    }
+
     DISPLAY_WIDTH.store(width, Ordering::Release);
     DISPLAY_HEIGHT.store(height, Ordering::Release);
     DISPLAY_DENSITY.store(density, Ordering::Release);
+    DISPLAY_NATIVE_DENSITY.store(native_density, Ordering::Release);
     DISPLAY_HZ_X10.store(current_x10, Ordering::Release);
     DISPLAY_MAX_HZ_X10.store(max_x10, Ordering::Release);
+}
+
+fn apply_display_resolution(
+    width: i32,
+    height: i32,
+    density: i32,
+    persist: bool,
+) -> Result<(), String> {
+    let native = width <= 0 || height <= 0 || (width == 1220 && height == 2712);
+    let detected_density = DISPLAY_NATIVE_DENSITY.load(Ordering::Acquire);
+    let native_density = if detected_density > 0 {
+        detected_density
+    } else {
+        520
+    };
+    let target_density = if native {
+        native_density
+    } else if density > 0 {
+        density
+    } else {
+        scaled_display_density(native_density, width)
+    };
+
+    let run_wm = |args: &[&str]| -> Result<(), String> {
+        let output = ProcessCommand::new("/system/bin/wm")
+            .args(args)
+            .output()
+            .map_err(|error| format!("wm {}: {error}", args.join(" ")))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "wm {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))
+        }
+    };
+
+    if native {
+        run_wm(&["size", "reset"])?;
+        run_wm(&["density", "reset"])?;
+    } else {
+        let size = format!("{width}x{height}");
+        let density = target_density.to_string();
+        run_wm(&["size", &size])?;
+        run_wm(&["density", &density])?;
+    }
+
+    let expected_width = if native { 1220 } else { width };
+    let expected_height = if native { 2712 } else { height };
+    let mut verified = false;
+    for _ in 0..4 {
+        std::thread::sleep(Duration::from_millis(35));
+        refresh_display_info();
+        verified = DISPLAY_WIDTH.load(Ordering::Acquire) == expected_width
+            && DISPLAY_HEIGHT.load(Ordering::Acquire) == expected_height
+            && DISPLAY_DENSITY.load(Ordering::Acquire) == target_density;
+        if verified {
+            break;
+        }
+    }
+    if !verified {
+        return Err(format!(
+            "display resolution verify failed: requested {expected_width}x{expected_height} {target_density}dpi, live {}x{} {}dpi",
+            DISPLAY_WIDTH.load(Ordering::Acquire),
+            DISPLAY_HEIGHT.load(Ordering::Acquire),
+            DISPLAY_DENSITY.load(Ordering::Acquire),
+        ));
+    }
+
+    if persist {
+        mutate_persisted_state(|state| {
+            if native {
+                state.display_width = 0;
+                state.display_height = 0;
+                state.display_density = 0;
+            } else {
+                state.display_width = width;
+                state.display_height = height;
+                state.display_density = target_density;
+            }
+        });
+    }
+
+    DISPLAY_APPLY_ACK.store(1, Ordering::Release);
+    Ok(())
 }
 
 fn foreground_package() -> Option<String> {
@@ -3075,14 +3244,9 @@ fn reassert_runtime_state(force_touch: bool) -> Result<(), String> {
 
     if (1..=3).contains(&state.touch) {
         attempted += 1;
-        let resampler_matches = if state.touch == 3 {
-            touch_resampler::ready_hz() == 1000
-        } else {
-            touch_resampler::ready_hz() == 0
-        };
         let touch_matches = TOUCH_STATE.load(Ordering::Acquire) == state.touch
             && TOUCH_APPLY_ACK.load(Ordering::Acquire) == 1
-            && resampler_matches;
+            && touch_profile_is_live(state.touch);
         if (!force_touch && touch_matches) || set_touch_profile(state.touch).is_ok() {
             applied += 1;
         }
@@ -3107,8 +3271,9 @@ fn reassert_runtime_state(force_touch: bool) -> Result<(), String> {
         KEEPALIVE_APPLY_COUNT.fetch_add(1, Ordering::AcqRel);
         Ok(())
     } else {
-        DISPLAY_APPLY_ACK.store(1, Ordering::Release);
-        Ok(())
+        Err(format!(
+            "runtime persistence verify failed: applied {applied} of {attempted} settings"
+        ))
     }
 }
 
@@ -3217,6 +3382,15 @@ fn restore_persisted_state() {
 
     if matches!(state.dt2w, 0 | 1) {
         let _ = vendor_binder::set_touch_mode(0, 14, state.dt2w);
+    }
+
+    if state.display_width >= 0 && state.display_height >= 0 {
+        let _ = apply_display_resolution(
+            state.display_width,
+            state.display_height,
+            state.display_density,
+            false,
+        );
     }
 
     if (0..=2).contains(&state.display_color) {
@@ -3369,6 +3543,24 @@ fn restore_persisted_state() {
         if state.gpu_ged_boost >= 0 {
             let _ = set_gpu_ged_boost(state.gpu_ged_boost == 1);
         }
+    }
+}
+
+fn late_boot_restore_loop() {
+    // Framework and vendor power/touch services can publish defaults after a
+    // root module starts. Repeat the complete saved-state transaction across
+    // that settling window; this is independent of the Android app process.
+    for (attempt, delay_seconds) in [2u64, 4, 8].into_iter().enumerate() {
+        std::thread::sleep(Duration::from_secs(delay_seconds));
+        restore_persisted_state();
+        let runtime_result = reassert_runtime_state(true);
+        reassert_persisted_governors();
+        eprintln!(
+            "RODIN_BOOT_RESTORE attempt={} touch_ack={} runtime_ok={}",
+            attempt + 1,
+            TOUCH_APPLY_ACK.load(Ordering::Acquire),
+            i32::from(runtime_result.is_ok()),
+        );
     }
 }
 
@@ -3608,6 +3800,10 @@ fn maintenance_loop() {
         .checked_sub(Duration::from_secs(65))
         .unwrap_or_else(Instant::now);
 
+    let mut last_display_refresh = Instant::now()
+        .checked_sub(Duration::from_secs(12))
+        .unwrap_or_else(Instant::now);
+
     let mut screen_was_on: Option<bool> = None;
 
     loop {
@@ -3669,6 +3865,11 @@ fn maintenance_loop() {
             last_packages = Instant::now();
         }
 
+        if last_display_refresh.elapsed() >= Duration::from_secs(10) {
+            refresh_display_info();
+            last_display_refresh = Instant::now();
+        }
+
         if last_screen_check.elapsed() >= Duration::from_secs(3) {
             if let Some(screen_on) = screen_is_on() {
                 let woke = screen_was_on == Some(false) && screen_on;
@@ -3702,6 +3903,7 @@ pub fn start_background_services() {
     // must be ready before set_touch_profile() waits for its attachment ACK.
     touch_resampler::start_background();
     restore_persisted_state();
+    std::thread::spawn(late_boot_restore_loop);
     std::thread::spawn(maintenance_loop);
     std::thread::spawn(gaming_dynamic_guard);
 }
@@ -4456,6 +4658,10 @@ fn snapshot_persistence_fields() -> Vec<String> {
             "display_density={}",
             DISPLAY_DENSITY.load(Ordering::Acquire)
         ),
+        format!(
+            "display_native_density={}",
+            DISPLAY_NATIVE_DENSITY.load(Ordering::Acquire)
+        ),
         format!("display_hz_x10={}", DISPLAY_HZ_X10.load(Ordering::Acquire)),
         format!(
             "display_max_hz_x10={}",
@@ -4580,6 +4786,11 @@ fn snapshot_persistence_fields() -> Vec<String> {
             touch_resampler::measurement_active()
         ),
         format!("touch_resampler_ready={}", touch_resampler::ready_hz()),
+        format!(
+            "touch_resampler_path={}",
+            touch_resampler::attachment_path()
+        ),
+        format!("touch_resampler_error={}", touch_resampler::last_error()),
         format!(
             "touch_physical_frames={}",
             touch_resampler::physical_frames()
@@ -4869,30 +5080,7 @@ pub fn handle_command(line: &str) -> String {
             .and_then(|v| v.parse::<i32>().ok())
             .unwrap_or(0);
 
-        if width <= 0 || height <= 0 || (width == 1220 && height == 2712) {
-            let _ = ProcessCommand::new("/system/bin/wm")
-                .args(["size", "reset"])
-                .output();
-            let _ = ProcessCommand::new("/system/bin/wm")
-                .args(["density", "reset"])
-                .output();
-        } else {
-            let _ = ProcessCommand::new("/system/bin/wm")
-                .args(["size", &format!("{width}x{height}")])
-                .output();
-            if density > 0 {
-                let _ = ProcessCommand::new("/system/bin/wm")
-                    .args(["density", &density.to_string()])
-                    .output();
-            } else {
-                let computed_density = (520 * width) / 1220;
-                let _ = ProcessCommand::new("/system/bin/wm")
-                    .args(["density", &computed_density.to_string()])
-                    .output();
-            }
-        }
-        refresh_display_info();
-        Ok(())
+        apply_display_resolution(width, height, density, true)
     } else if let Some(arg) = cmd.strip_prefix("OPEN support ") {
         arg.trim()
             .parse::<i32>()
@@ -4972,7 +5160,7 @@ mod tests {
         PersistedState, classify_touch_panel_version, cpu_frequency_drift_status,
         find_touch_thp_config_offset, gaming_dynamic_target_opp,
         migrate_legacy_gpu_profile_cpu_state, parse_cpu_frequency_table, parse_cpu_time_in_state,
-        parse_ged_current_frequency_mhz, profile_uses_ged_boost,
+        parse_ged_current_frequency_mhz, profile_uses_ged_boost, scaled_display_density,
         validate_cpu_frequency_range_against,
     };
 
@@ -5032,6 +5220,15 @@ mod tests {
         assert_eq!(classify_touch_panel_version("Goodix GDIX algorithm"), 1);
         assert_eq!(classify_touch_panel_version("FocalTech FT3683G"), 2);
         assert_eq!(classify_touch_panel_version("unknown panel"), 0);
+    }
+
+    #[test]
+    fn scales_resolution_density_from_the_rom_native_baseline() {
+        assert_eq!(scaled_display_density(520, 1220), 520);
+        assert_eq!(scaled_display_density(520, 1080), 460);
+        assert_eq!(scaled_display_density(520, 720), 307);
+        assert_eq!(scaled_display_density(520, 1440), 614);
+        assert_eq!(scaled_display_density(440, 1080), 390);
     }
 
     #[test]

@@ -603,7 +603,11 @@ final class RodinBackend {
     if (width <= 0 || height <= 0 || (width == 1220 && height == 2712)) {
       return resetDisplayResolution();
     }
-    final int safeDensity = density > 0 ? density : (520 * width ~/ 1220);
+    final int detectedDensity = extendedValue(78);
+    final int nativeDensity = detectedDensity > 0 ? detectedDensity : 520;
+    final int safeDensity = density > 0
+        ? density
+        : ((nativeDensity * width + 610) ~/ 1220);
     return setExtendedOperation(
       9,
       width,
