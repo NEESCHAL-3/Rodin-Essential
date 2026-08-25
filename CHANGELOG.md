@@ -47,9 +47,14 @@ All notable changes are documented here.
   window. Saved controls remain daemon-owned when the app is force-stopped.
 - Touch persistence verifies the active THP timing instead of trusting cached
   state, so late vendor defaults are detected and corrected automatically.
+- Native 250 mode now applies Rodin's dedicated TouchFeature sensitivity latch
+  instead of sharing the 500-mode calibration that could silently fall back to
+  roughly 135 Hz while the HAL still reported 240 Hz.
 - The 1000 Hz output scheduler now discovers the actual multitouch event among
   every TouchFeature service descriptor and can attach directly to the panel
   event when FocalTech firmware does not retain a compatible service handle.
+- Repeated boot and watchdog restores no longer reset an already-correct ZRAM
+  device; compression, size, and swappiness changes are now idempotent.
 - Resolution telemetry refreshes after framework startup, distinguishes live
   adaptive refresh from the ROM-selected rate, and no longer reports a false
   hardcoded 60/120 Hz value.
