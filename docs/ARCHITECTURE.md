@@ -62,6 +62,12 @@ The daemon listens on a Linux abstract Unix socket. In an AOSP build, SELinux
 allows only the dedicated `rodin_app` domain to connect in production. The
 `rodin_ctl` client is allowed only on `userdebug` and `eng` builds.
 
+The KernelSU Next/Magisk installer instead generates a narrow `connectto` rule
+for the root manager's live daemon domain. Because ordinary application types
+are shared by multiple packages, the module also passes the package UID into
+the daemon and validates each connection with Linux `SO_PEERCRED`. UID 0 and
+the installed Rodin Essential UID are the only accepted module clients.
+
 ## Persistence
 
 The daemon selects its state directory from `RODIN_STATE_DIR`:

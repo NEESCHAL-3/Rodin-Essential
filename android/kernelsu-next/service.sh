@@ -10,6 +10,7 @@ RODIN_WATCHDOG_LOCK="$RODIN_ROOT/watchdog.lock"
 RODIN_WATCHDOG_BOOT_ID="$RODIN_WATCHDOG_LOCK/boot_id"
 RODIN_SERVICE_PATH="$MODDIR/service.sh"
 RODIN_CURRENT_BOOT_ID="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
+RODIN_PACKAGE=io.github.neeschal.rodinessential
 
 export RODIN_STATE_DIR="$RODIN_ROOT"
 
@@ -86,12 +87,56 @@ rodin_cleanup() {
 trap rodin_cleanup EXIT
 trap 'exit 0' HUP INT TERM
 
+rodin_resolve_app_uid() {
+    RODIN_PACKAGE_ENTRY="$(/system/bin/pm list packages -U "$RODIN_PACKAGE" 2>/dev/null \
+        | sed -n "s/^package:$RODIN_PACKAGE[[:space:]]*uid:\([0-9][0-9]*\).*$/\1/p" \
+        | head -n 1)"
+    case "$RODIN_PACKAGE_ENTRY" in
+        ''|*[!0-9]*) ;;
+        *)
+            if [ "$RODIN_PACKAGE_ENTRY" -ge 10000 ] 2>/dev/null; then
+                printf '%s\n' "$RODIN_PACKAGE_ENTRY"
+                return 0
+            fi
+            ;;
+    esac
+
+    RODIN_PACKAGE_ENTRY="$(/system/bin/dumpsys package "$RODIN_PACKAGE" 2>/dev/null \
+        | sed -n 's/.*userId=\([0-9][0-9]*\).*/\1/p' \
+        | head -n 1)"
+    case "$RODIN_PACKAGE_ENTRY" in
+        ''|*[!0-9]*) return 1 ;;
+        *)
+            [ "$RODIN_PACKAGE_ENTRY" -ge 10000 ] 2>/dev/null || return 1
+            printf '%s\n' "$RODIN_PACKAGE_ENTRY"
+            ;;
+    esac
+}
+
 # KernelSU/Magisk late-start scripts may run while framework/vendor services
 # are still publishing their boot defaults. Start the backend only after the
 # completed Android boot so every persisted Rodin setting wins that race.
 while [ "$(getprop sys.boot_completed 2>/dev/null)" != "1" ]; do
     sleep 1
 done
+
+# The module policy must allow an ordinary app domain to reach the root-manager
+# daemon domain. Pin the daemon to the UID Android assigned to this exact APK so
+# no other application sharing that SELinux domain can issue hardware commands.
+RODIN_UID_WAIT_LOGGED=0
+while true; do
+    RODIN_APP_UID="$(rodin_resolve_app_uid)"
+    if [ -n "$RODIN_APP_UID" ]; then
+        break
+    fi
+    if [ "$RODIN_UID_WAIT_LOGGED" -eq 0 ]; then
+        echo "RODIN_MODULE_APP_UID_WAIT package=$RODIN_PACKAGE" >>"$RODIN_LOG"
+        RODIN_UID_WAIT_LOGGED=1
+    fi
+    sleep 2
+done
+export RODIN_APP_UID
+echo "RODIN_MODULE_APP_UID uid=$RODIN_APP_UID" >>"$RODIN_LOG"
 
 while true; do
     if [ -x "$RODIN_DAEMON" ] && ! pidof rodin_daemon >/dev/null 2>&1; then
