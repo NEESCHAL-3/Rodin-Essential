@@ -61,7 +61,7 @@ ANDROID_JAR="$SDK/platforms/android-$PLATFORM/android.jar"
 ENGINE_PREBUILT="$ROOT/runtime/flutter-engine/prebuilt/android-arm64"
 ICU="$ENGINE_PREBUILT/icudtl.dat"
 
-for RODIN_TOOL in flutter cargo python3 keytool readelf unzip zip; do
+for RODIN_TOOL in flutter cargo python3 keytool readelf sha256sum unzip zip; do
     command -v "$RODIN_TOOL" >/dev/null 2>&1 || {
         echo "Missing required tool: $RODIN_TOOL" >&2
         exit 1
@@ -113,6 +113,18 @@ mkdir -p "$ASSETS/flutter_assets" "$LIBS"
 cp -a "$AOT/flutter_assets/." "$ASSETS/flutter_assets/"
 find "$AOT/flutter_assets" -type f -printf '%P\n' | LC_ALL=C sort > "$ASSETS/flutter_assets.index"
 cp -a "$ICU" "$ASSETS/icudtl.dat"
+
+RODIN_RUNTIME_ASSET_STAMP="$(
+    (
+        cd "$ASSETS"
+        find flutter_assets -type f -print0 \
+            | LC_ALL=C sort -z \
+            | xargs -0 sha256sum
+        sha256sum icudtl.dat
+    ) | sha256sum | awk '{print $1}'
+)"
+printf '%s\n' "$RODIN_RUNTIME_ASSET_STAMP" > "$ASSETS/rodin_runtime.stamp"
+echo "RUNTIME_ASSET_STAMP=$RODIN_RUNTIME_ASSET_STAMP"
 
 cp -a "$HOST_SO" "$LIBS/librodin_essential_host.so"
 cp -a "$ENGINE_PREBUILT/libflutter_engine.so" "$LIBS/libflutter_engine.so"

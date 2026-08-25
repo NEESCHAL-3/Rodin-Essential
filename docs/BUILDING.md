@@ -102,6 +102,8 @@ Build verification additionally checks:
 - ZIP entries satisfy 16 KB page alignment.
 - Every native ELF LOAD segment has at least 16 KB alignment.
 - Daemon and control binaries target ARM64 Android.
+- The packaged runtime stamp covers every Flutter asset and `icudtl.dat`, so
+  application updates cannot reuse an incompatible extraction cache.
 
 ## AOSP export
 
