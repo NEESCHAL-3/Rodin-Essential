@@ -38,7 +38,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:screenOrientation="unspecified"
-            android:theme="@style/Theme.RodinEssential">
+            android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
 
             <meta-data
                 android:name="android.app.lib_name"
