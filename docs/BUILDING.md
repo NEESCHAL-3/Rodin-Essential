@@ -86,6 +86,7 @@ flutter analyze ui/flutter
 bash -n build-and-install.sh
 bash -n tools/build-flutter-engine.sh
 bash -n tools/build-kernelsu-next-module.sh
+bash tools/test-kernelsu-watchdog-lock.sh
 bash -n tools/export-aosp-bundle.sh
 bash -n tools/integrate-aosp-rom.sh
 git diff --check

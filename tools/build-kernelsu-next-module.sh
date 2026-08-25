@@ -36,6 +36,8 @@ for RODIN_TOOL in "$RODIN_STRIP" "$RODIN_AAPT2" "$RODIN_APKSIGNER" "$RODIN_ZIPAL
     }
 done
 
+"$RODIN_PROJECT_ROOT/tools/test-kernelsu-watchdog-lock.sh"
+
 mkdir -p "$RODIN_STAGE/bin" "$RODIN_STAGE/app"
 
 echo "===== RODIN ESSENTIAL — KERNELSU NEXT + MAGISK MODULE ====="
