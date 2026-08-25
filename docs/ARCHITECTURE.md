@@ -106,8 +106,11 @@ CPU frequency choices come from each policy's live
 `scaling_available_frequencies` table, with `stats/time_in_state` as the kernel
 compatibility fallback. Range and exact-lock requests are applied atomically,
 verified against `scaling_min_freq` and `scaling_max_freq`, and persisted without
-changing the policy governor. The interface reports saved targets separately
-from effective live limits.
+changing the policy governor. On Xiaomi Rodin builds, the daemon updates the
+same per-policy `thermal_message/cpu_limits` request used by `mi_thermald` and
+the three-field `powerhal_cpu_ctrl/perfserv_freq` request before writing
+cpufreq. A request is accepted only when the final live range matches. The
+interface reports saved targets separately from effective live limits.
 
 Vendor CPU and platform thermal services remain running in every GPU mode.
 Gaming Dynamic and Extreme Beast retain ownership of the Mali cooling constraint
