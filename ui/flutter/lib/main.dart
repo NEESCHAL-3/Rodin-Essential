@@ -2758,7 +2758,7 @@ class _DisclaimerCard extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'Rodin Essential provides direct kernel hardware tuning, MediaTek Mali GPU frequency locks, CPU topology control, and AIDL display calibrations via native ROM system interfaces. Gaming Dynamic and Extreme Beast intentionally override the vendor GPU cooling cap; sustained high clocks can cause severe heat, battery drain, instability, or hardware damage. Stock Balanced and Battery Saver restore normal thermal control.',
+            'Rodin Essential provides direct kernel hardware tuning, MediaTek Mali GPU frequency locks, independent CPU topology control, and AIDL display calibrations via native ROM system interfaces. GPU modes never change CPU settings. Gaming Dynamic and Extreme Beast intentionally override only the vendor GPU cooling cap; sustained high clocks can cause severe heat, battery drain, instability, or hardware damage.',
             style: TextStyle(
               fontSize: 11.2,
               height: 1.45,
@@ -3462,7 +3462,7 @@ class SupportScreen extends StatelessWidget {
                           runSpacing: 4,
                           children: <Widget>[
                             StatusPill(
-                              label: 'v1.17.0',
+                              label: 'v1.17.1',
                               accent: colors.primary,
                             ),
                             StatusPill(

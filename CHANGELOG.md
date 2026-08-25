@@ -2,6 +2,21 @@
 
 All notable changes are documented here.
 
+## 1.17.1
+
+### Fixed
+
+- GPU performance modes no longer change CPU governors or CPU frequency
+  ranges. Existing CPU settings remain independent when switching GPU modes.
+- Legacy CPU values written by earlier GPU profiles are migrated once without
+  overwriting separately customized CPU settings.
+- Vendor CPU and platform thermal services remain running in every GPU mode;
+  Gaming Dynamic and Extreme Beast retain ownership only of the Mali cooling
+  constraint required by their GPU policy.
+- GPU profile transitions are serialized with the maintenance and dynamic
+  guards, preventing the previous mode from reasserting stale values during a
+  rapid mode switch.
+
 ## 1.17.0
 
 ### Added
