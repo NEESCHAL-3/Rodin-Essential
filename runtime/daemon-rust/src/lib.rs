@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::fd::{FromRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -18,11 +18,20 @@ pub const PROTOCOL_VERSION: &str = "13.3";
 const AF_UNIX: i32 = 1;
 const SOCK_STREAM: i32 = 1;
 const SOCK_CLOEXEC: i32 = 0x80000;
+const SOL_SOCKET: i32 = 1;
+const SO_PEERCRED: i32 = 17;
 
 #[repr(C)]
 struct SockAddrUn {
     sun_family: u16,
     sun_path: [i8; 108],
+}
+
+#[repr(C)]
+struct UCred {
+    pid: i32,
+    uid: u32,
+    gid: u32,
 }
 
 unsafe extern "C" {
@@ -31,6 +40,7 @@ unsafe extern "C" {
     fn listen(fd: i32, backlog: i32) -> i32;
     fn accept4(fd: i32, addr: *mut c_void, len: *mut u32, flags: i32) -> i32;
     fn connect(fd: i32, addr: *const c_void, len: u32) -> i32;
+    fn getsockopt(fd: i32, level: i32, name: i32, value: *mut c_void, len: *mut u32) -> i32;
     fn close(fd: i32) -> i32;
 }
 
@@ -379,6 +389,72 @@ pub fn accept_stream(listener: RawFd) -> Result<UnixStream, String> {
         ));
     }
     Ok(unsafe { UnixStream::from_raw_fd(fd) })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AppUidPolicy {
+    SelinuxOnly,
+    Enforce(u32),
+    Reject,
+}
+
+static APP_UID_POLICY: OnceLock<AppUidPolicy> = OnceLock::new();
+
+fn configured_app_uid_policy() -> AppUidPolicy {
+    *APP_UID_POLICY.get_or_init(|| match std::env::var("RODIN_APP_UID") {
+        Err(std::env::VarError::NotPresent) => AppUidPolicy::SelinuxOnly,
+        Err(std::env::VarError::NotUnicode(_)) => AppUidPolicy::Reject,
+        Ok(value) => value
+            .parse::<u32>()
+            .ok()
+            .filter(|uid| *uid >= 10_000)
+            .map(AppUidPolicy::Enforce)
+            .unwrap_or(AppUidPolicy::Reject),
+    })
+}
+
+fn peer_uid(stream: &UnixStream) -> Result<u32, String> {
+    let mut credentials = UCred {
+        pid: 0,
+        uid: u32::MAX,
+        gid: u32::MAX,
+    };
+    let mut length = std::mem::size_of::<UCred>() as u32;
+    let result = unsafe {
+        getsockopt(
+            stream.as_raw_fd(),
+            SOL_SOCKET,
+            SO_PEERCRED,
+            &mut credentials as *mut UCred as *mut c_void,
+            &mut length,
+        )
+    };
+    if result != 0 {
+        return Err(format!(
+            "SO_PEERCRED failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    if length != std::mem::size_of::<UCred>() as u32 {
+        return Err(format!("unexpected SO_PEERCRED length: {length}"));
+    }
+    Ok(credentials.uid)
+}
+
+fn client_uid_allowed(peer: u32, policy: AppUidPolicy) -> bool {
+    peer == 0
+        || match policy {
+            AppUidPolicy::SelinuxOnly => true,
+            AppUidPolicy::Enforce(expected) => peer == expected,
+            AppUidPolicy::Reject => false,
+        }
+}
+
+fn client_authorized(stream: &UnixStream) -> Result<bool, String> {
+    Ok(client_uid_allowed(
+        peer_uid(stream)?,
+        configured_app_uid_policy(),
+    ))
 }
 
 pub fn connect_stream(name: &str) -> Result<UnixStream, String> {
@@ -5482,6 +5558,20 @@ pub fn handle_command(line: &str) -> String {
 }
 
 pub fn serve_client(mut stream: UnixStream) {
+    match client_authorized(&stream) {
+        Ok(true) => {}
+        Ok(false) => {
+            eprintln!("RODIN_ESSENTIALD_PEER_REJECT unauthorized_uid");
+            let _ = stream.write_all(b"ERR unauthorized peer\n");
+            return;
+        }
+        Err(error) => {
+            eprintln!("RODIN_ESSENTIALD_PEER_REJECT {error}");
+            let _ = stream.write_all(b"ERR peer credentials unavailable\n");
+            return;
+        }
+    }
+
     let mut buf = [0u8; 4096];
     let Ok(n) = stream.read(&mut buf) else {
         return;
@@ -5499,18 +5589,29 @@ pub fn serve_client(mut stream: UnixStream) {
 #[cfg(test)]
 mod tests {
     use super::{
-        MI_THERMAL_NO_LIMITS_MODE, PersistedState, classify_touch_panel_version,
-        cpu_frequency_drift_status, find_touch_thp_config_offset, gaming_dynamic_target_opp,
-        mi_thermal_cpu_limit_request, migrate_legacy_gpu_profile_cpu_state,
-        mtk_powerhal_cpu_range_request, normalize_mi_thermal_config_mode,
-        parse_cpu_frequency_table, parse_cpu_time_in_state, parse_ged_current_frequency_mhz,
-        persisted_cpu_ranges_active, profile_uses_ged_boost, scaled_display_density,
-        touch_hal_profile_sequence, valid_mi_thermal_config_mode,
+        AppUidPolicy, MI_THERMAL_NO_LIMITS_MODE, PersistedState, classify_touch_panel_version,
+        client_uid_allowed, cpu_frequency_drift_status, find_touch_thp_config_offset,
+        gaming_dynamic_target_opp, mi_thermal_cpu_limit_request,
+        migrate_legacy_gpu_profile_cpu_state, mtk_powerhal_cpu_range_request,
+        normalize_mi_thermal_config_mode, parse_cpu_frequency_table, parse_cpu_time_in_state,
+        parse_ged_current_frequency_mhz, persisted_cpu_ranges_active, profile_uses_ged_boost,
+        scaled_display_density, touch_hal_profile_sequence, valid_mi_thermal_config_mode,
         validate_cpu_frequency_range_against,
     };
 
     fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
         bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
+    #[test]
+    fn module_socket_accepts_only_root_or_the_installed_app_uid() {
+        let policy = AppUidPolicy::Enforce(10_321);
+        assert!(client_uid_allowed(0, policy));
+        assert!(client_uid_allowed(10_321, policy));
+        assert!(!client_uid_allowed(10_322, policy));
+        assert!(!client_uid_allowed(2_000, policy));
+        assert!(!client_uid_allowed(10_321, AppUidPolicy::Reject));
+        assert!(client_uid_allowed(10_321, AppUidPolicy::SelinuxOnly));
     }
 
     #[test]

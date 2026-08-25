@@ -2,6 +2,7 @@
 
 MODDIR=${0%/*}
 RODIN_CTL="$MODDIR/bin/rodin_ctl"
+RODIN_POLICY="$MODDIR/sepolicy.rule"
 
 echo "Rodin Essential"
 echo ""
@@ -25,6 +26,9 @@ case "$RODIN_PING" in
         echo "Daemon: healthy"
         echo "Daemon PID: $RODIN_PIDS"
         echo "Protocol: ${RODIN_PING#OK PONG }"
+        RODIN_PRIMARY_PID="${RODIN_PIDS%% *}"
+        RODIN_DAEMON_CONTEXT="$(cat "/proc/$RODIN_PRIMARY_PID/attr/current" 2>/dev/null)"
+        [ -n "$RODIN_DAEMON_CONTEXT" ] && echo "Daemon SELinux: $RODIN_DAEMON_CONTEXT"
         ;;
     *)
         echo "Daemon: running but did not answer"
@@ -32,6 +36,11 @@ case "$RODIN_PING" in
         exit 1
         ;;
 esac
+
+RODIN_POLICY_DOMAIN="$(sed -n \
+    's/^allow appdomain \([^ ][^ ]*\) unix_stream_socket connectto$/\1/p' \
+    "$RODIN_POLICY" 2>/dev/null | head -n 1)"
+[ -n "$RODIN_POLICY_DOMAIN" ] && echo "App IPC policy: appdomain -> $RODIN_POLICY_DOMAIN"
 
 RODIN_SNAPSHOT="$($RODIN_CTL GET snapshot 2>/dev/null)"
 echo "$RODIN_SNAPSHOT" | tr ';' '\n' | grep -E '^(io|touch|touch_ack|touch_resampler_ready|perf)=' 2>/dev/null

@@ -151,9 +151,11 @@ RODIN_KEY_PASS='key-password' \
 
 Install the ZIP from KernelSU Next Manager or the Magisk app while Android is
 running. The installer registers the bundled APK as an ordinary user app and
-the module runs only the separate hardware daemon as root. It deliberately uses
-`skip_mount`, so KernelSU does not require a system-overlay metamodule. Recovery
-installation is not supported.
+the module runs only the separate hardware daemon as root. The installer emits
+the socket rule for the root manager's active SELinux domain, and the daemon
+accepts commands only from UID 0 or the UID assigned to the bundled package. It
+deliberately uses `skip_mount`, so KernelSU does not require a system-overlay
+metamodule. Recovery installation is not supported.
 
 Keep the signing key for every future module update. Android rejects an APK
 update signed by a different certificate.

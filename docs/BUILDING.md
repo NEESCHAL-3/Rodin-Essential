@@ -136,8 +136,9 @@ RODIN_KEY_PASS='key-password' \
 
 This builds the application and daemon together, then creates one ZIP for
 KernelSU Next Manager and the Magisk app. The build validates module metadata,
-shell syntax, the bundled APK package/version/signature/zero-DEX/16 KB alignment,
-ARM64 daemon binaries, Android dynamic linker, archive contents, and checksum.
+shell syntax, root-manager SELinux socket policies, the bundled APK
+package/version/signature/zero-DEX/16 KB alignment, ARM64 daemon binaries,
+Android dynamic linker, archive contents, and checksum.
 
 The module installs the bundled APK through Android's package manager as a
 normal user application. It does not mount an APK into a system partition, so

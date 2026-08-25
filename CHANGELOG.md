@@ -28,6 +28,13 @@ All notable changes are documented here.
 
 ### Fixed
 
+- KernelSU Next and Magisk installations now generate an app-to-daemon socket
+  rule for the root manager's live SELinux domain (`su`, `ksu`, or `magisk`).
+  This prevents a healthy daemon from appearing Offline on ROMs that omit the
+  corresponding `connectto` allowance.
+- The root-module daemon validates every socket peer with `SO_PEERCRED` and
+  accepts hardware commands only from UID 0 or the exact Android UID assigned
+  to the bundled Rodin Essential package.
 - CPU range application now selects Rodin's OEM `thermal-nolimits` policy before
   updating the per-policy Xiaomi thermal ceiling, MediaTek PowerHAL request, and
   cpufreq limits. Exact locks remain at the full 2100/3000/3250 MHz policy

@@ -66,6 +66,7 @@ install -m 0755 "$RODIN_MODULE_SOURCE/service.sh" "$RODIN_STAGE/service.sh"
 install -m 0755 "$RODIN_MODULE_SOURCE/action.sh" "$RODIN_STAGE/action.sh"
 install -m 0755 "$RODIN_MODULE_SOURCE/uninstall.sh" "$RODIN_STAGE/uninstall.sh"
 install -m 0644 "$RODIN_MODULE_SOURCE/skip_mount" "$RODIN_STAGE/skip_mount"
+install -m 0644 "$RODIN_MODULE_SOURCE/sepolicy.rule" "$RODIN_STAGE/sepolicy.rule"
 install -m 0644 "$RODIN_APK" "$RODIN_STAGE/app/RodinEssential.apk"
 install -m 0755 "$RODIN_DAEMON" "$RODIN_STAGE/bin/rodin_daemon"
 install -m 0755 "$RODIN_CTL" "$RODIN_STAGE/bin/rodin_ctl"
@@ -79,6 +80,18 @@ for RODIN_SCRIPT in customize.sh service.sh action.sh uninstall.sh; do
         echo "CRLF line endings are not allowed: $RODIN_SCRIPT" >&2
         exit 1
     fi
+done
+
+if LC_ALL=C grep -q $'\r' "$RODIN_STAGE/sepolicy.rule"; then
+    echo "CRLF line endings are not allowed: sepolicy.rule" >&2
+    exit 1
+fi
+for RODIN_POLICY_DOMAIN in su ksu magisk; do
+    grep -Fxq "allow appdomain $RODIN_POLICY_DOMAIN unix_stream_socket connectto" \
+        "$RODIN_STAGE/sepolicy.rule" || {
+        echo "Missing root-manager socket policy: $RODIN_POLICY_DOMAIN" >&2
+        exit 1
+    }
 done
 
 RODIN_MODID="$(sed -n 's/^id=//p' "$RODIN_STAGE/module.prop")"
@@ -143,14 +156,14 @@ done
 (
     cd "$RODIN_STAGE"
     zip -X -9 "$RODIN_ZIP" \
-        module.prop customize.sh service.sh action.sh uninstall.sh skip_mount \
+        module.prop customize.sh service.sh action.sh uninstall.sh skip_mount sepolicy.rule \
         app/RodinEssential.apk bin/rodin_daemon bin/rodin_ctl >/dev/null
 )
 
 unzip -tq "$RODIN_ZIP"
 RODIN_ENTRIES="$(unzip -Z1 "$RODIN_ZIP")"
 for RODIN_REQUIRED in \
-    module.prop customize.sh service.sh action.sh uninstall.sh skip_mount \
+    module.prop customize.sh service.sh action.sh uninstall.sh skip_mount sepolicy.rule \
     app/RodinEssential.apk bin/rodin_daemon bin/rodin_ctl; do
     echo "$RODIN_ENTRIES" | grep -Fxq "$RODIN_REQUIRED" || {
         echo "Missing module entry: $RODIN_REQUIRED" >&2
