@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <style name="Theme.RodinEssential" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
-        <item name="android:windowBackground">@color/rodin_launch_background</item>
-        <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowNoTitle">true</item>
-    </style>
-</resources>
