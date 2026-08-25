@@ -1864,7 +1864,9 @@ fn touch_profile_is_live(profile: i32) -> bool {
     native_matches && resampler_matches
 }
 
-fn apply_touch_hal_profile(profile: i32) -> Result<(), String> {
+type TouchHalStep = (i32, i32, bool);
+
+fn touch_hal_profile_sequence(profile: i32) -> Result<&'static [TouchHalStep], String> {
     // These are Xiaomi TouchFeature HAL modes, not calls into the HyperOS
     // Game Turbo application. The HAL lives in Rodin's vendor/ODM stack and
     // abstracts both supported Goodix and FocalTech panels.
@@ -1873,7 +1875,12 @@ fn apply_touch_hal_profile(profile: i32) -> Result<(), String> {
     // 7: orientation; 202: super report path; 10001-10004: vendor Super Touch.
     // Super-report commands are deliberately last so a subsequent game-mode
     // write cannot return the report pipeline to its 240 Hz base path.
-    let sequence: &[(i32, i32, bool)] = match profile {
+    // Native 240 and native 480 must remain separate transactions. Rodin's
+    // mode-2 value 99 is the vendor high-sensitivity latch for the 240 Hz path:
+    // the HAL normalizes its public readback to 4, but omitting the latch makes
+    // the panel deliver only about 135 Hz while still claiming 240 Hz. The
+    // 480 Hz super-report path uses the ordinary response calibration instead.
+    let sequence: &'static [TouchHalStep] = match profile {
         0 => &[
             (10001, 0, false),
             (10002, 0, false),
@@ -1889,7 +1896,22 @@ fn apply_touch_hal_profile(profile: i32) -> Result<(), String> {
             (6, 2, false),
             (7, 0, false),
         ],
-        1 | 2 => &[
+        1 => &[
+            (10001, 0, false),
+            (10002, 0, false),
+            (10003, 0, false),
+            (10004, 0, false),
+            (0, 1, true),
+            (1, 1, true),
+            (2, 99, true),
+            (3, 4, false),
+            (4, 4, false),
+            (5, 4, false),
+            (6, 0, false),
+            (7, 0, false),
+            (202, 1, true),
+        ],
+        2 => &[
             (10001, 0, false),
             (10002, 0, false),
             (10003, 0, false),
@@ -1921,6 +1943,12 @@ fn apply_touch_hal_profile(profile: i32) -> Result<(), String> {
         ],
         _ => return Err("invalid touch profile".into()),
     };
+
+    Ok(sequence)
+}
+
+fn apply_touch_hal_profile(profile: i32) -> Result<(), String> {
+    let sequence = touch_hal_profile_sequence(profile)?;
 
     let mut failed_required = Vec::new();
     for &(mode, value, required) in sequence {
@@ -3721,15 +3749,18 @@ fn restore_persisted_state() {
         let _ = set_io_scheduler(&state.io);
     }
 
-    if state.zram_swappiness >= 0 {
+    if state.zram_swappiness >= 0 && zram_get_swappiness() != state.zram_swappiness {
         let _ = set_zram_swappiness(state.zram_swappiness);
     }
 
-    if !state.zram_algorithm.is_empty() {
+    if !state.zram_algorithm.is_empty() && zram_get_algorithm() != state.zram_algorithm {
         let _ = set_zram_algorithm(&state.zram_algorithm);
     }
 
-    if state.zram_size_mb >= 0 {
+    // Changing either compression or disksize resets the live swap device.
+    // Repeated late-boot restores must therefore be idempotent: a matching
+    // saved ZRAM configuration is left completely untouched.
+    if state.zram_size_mb >= 0 && zram_get_disksize_mb() != state.zram_size_mb {
         let _ = set_zram_size(state.zram_size_mb);
     }
 
@@ -5474,7 +5505,8 @@ mod tests {
         mtk_powerhal_cpu_range_request, normalize_mi_thermal_config_mode,
         parse_cpu_frequency_table, parse_cpu_time_in_state, parse_ged_current_frequency_mhz,
         persisted_cpu_ranges_active, profile_uses_ged_boost, scaled_display_density,
-        valid_mi_thermal_config_mode, validate_cpu_frequency_range_against,
+        touch_hal_profile_sequence, valid_mi_thermal_config_mode,
+        validate_cpu_frequency_range_against,
     };
 
     fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
@@ -5544,6 +5576,23 @@ mod tests {
         assert_eq!(classify_touch_panel_version("Goodix GDIX algorithm"), 1);
         assert_eq!(classify_touch_panel_version("FocalTech FT3683G"), 2);
         assert_eq!(classify_touch_panel_version("unknown panel"), 0);
+    }
+
+    #[test]
+    fn keeps_native_touch_profiles_on_distinct_vendor_calibrations() {
+        let native_240 = touch_hal_profile_sequence(1).unwrap();
+        let native_480 = touch_hal_profile_sequence(2).unwrap();
+
+        assert!(native_240.contains(&(2, 99, true)));
+        assert!(!native_240.contains(&(2, 4, false)));
+        assert!(native_480.contains(&(2, 4, false)));
+        assert!(
+            !native_480
+                .iter()
+                .any(|&(mode, value, _)| mode == 2 && value == 99)
+        );
+        assert!(native_240.contains(&(202, 1, true)));
+        assert!(native_480.contains(&(202, 1, true)));
     }
 
     #[test]
