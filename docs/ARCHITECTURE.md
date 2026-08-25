@@ -77,7 +77,7 @@ or force-stopping it therefore does not stop the active backend configuration.
 
 Persisted domains include performance profile, GPU bounds/governor/GED/power
 policy, CPU governors and ranges, online-core mask, UFS scheduler, touch profile,
-DT2W, display settings, charging, ZRAM, and per-app assignments.
+DT2W, display settings, charging, and ZRAM.
 
 ## Touch paths
 

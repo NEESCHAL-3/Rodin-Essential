@@ -80,7 +80,7 @@ All notable changes are documented here.
 ### Added
 
 - Complete Rust privileged daemon and command-line health client.
-- Persistent CPU, GPU, touch, display, charging, ZRAM, UFS, and per-app state.
+- Persistent CPU, GPU, touch, display, charging, ZRAM, and UFS state.
 - Extreme Beast, Gaming Dynamic, Stock Balanced, and Battery Saver transactions.
 - Live Mali frequency/load readback, GED state, governor, and power-policy UI.
 - Native 240/480 Hz touch timing and 1 ms Android output mode.
