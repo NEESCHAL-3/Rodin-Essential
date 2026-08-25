@@ -3,6 +3,7 @@
 MODDIR=${0%/*}
 RODIN_CTL="$MODDIR/bin/rodin_ctl"
 RODIN_POLICY="$MODDIR/sepolicy.rule"
+RODIN_POLICY_STATUS=/data/adb/rodin-essential/ipc-policy.status
 
 echo "Rodin Essential"
 echo ""
@@ -41,6 +42,15 @@ RODIN_POLICY_DOMAIN="$(sed -n \
     's/^allow appdomain \([^ ][^ ]*\) unix_stream_socket connectto$/\1/p' \
     "$RODIN_POLICY" 2>/dev/null | head -n 1)"
 [ -n "$RODIN_POLICY_DOMAIN" ] && echo "App IPC policy: appdomain -> $RODIN_POLICY_DOMAIN"
+
+RODIN_POLICY_RESULT="$(sed -n 's/^result=//p' "$RODIN_POLICY_STATUS" 2>/dev/null | head -n 1)"
+RODIN_LIVE_DOMAIN="$(sed -n 's/^domain=//p' "$RODIN_POLICY_STATUS" 2>/dev/null | head -n 1)"
+RODIN_POLICY_METHOD="$(sed -n 's/^method=//p' "$RODIN_POLICY_STATUS" 2>/dev/null | head -n 1)"
+if [ -n "$RODIN_POLICY_RESULT" ]; then
+    echo "Live IPC patch: $RODIN_POLICY_RESULT ($RODIN_LIVE_DOMAIN via $RODIN_POLICY_METHOD)"
+else
+    echo "Live IPC patch: no boot status"
+fi
 
 RODIN_SNAPSHOT="$($RODIN_CTL GET snapshot 2>/dev/null)"
 echo "$RODIN_SNAPSHOT" | tr ';' '\n' | grep -E '^(io|touch|touch_ack|touch_resampler_ready|perf)=' 2>/dev/null

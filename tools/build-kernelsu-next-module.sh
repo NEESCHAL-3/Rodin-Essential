@@ -37,6 +37,7 @@ for RODIN_TOOL in "$RODIN_STRIP" "$RODIN_AAPT2" "$RODIN_APKSIGNER" "$RODIN_ZIPAL
 done
 
 "$RODIN_PROJECT_ROOT/tools/test-kernelsu-watchdog-lock.sh"
+"$RODIN_PROJECT_ROOT/tools/test-root-module-policy.sh"
 
 mkdir -p "$RODIN_STAGE/bin" "$RODIN_STAGE/app"
 
@@ -63,6 +64,7 @@ done
 install -m 0644 "$RODIN_MODULE_SOURCE/module.prop" "$RODIN_STAGE/module.prop"
 install -m 0755 "$RODIN_MODULE_SOURCE/customize.sh" "$RODIN_STAGE/customize.sh"
 install -m 0755 "$RODIN_MODULE_SOURCE/service.sh" "$RODIN_STAGE/service.sh"
+install -m 0755 "$RODIN_MODULE_SOURCE/apply-sepolicy.sh" "$RODIN_STAGE/apply-sepolicy.sh"
 install -m 0755 "$RODIN_MODULE_SOURCE/action.sh" "$RODIN_STAGE/action.sh"
 install -m 0755 "$RODIN_MODULE_SOURCE/uninstall.sh" "$RODIN_STAGE/uninstall.sh"
 install -m 0644 "$RODIN_MODULE_SOURCE/skip_mount" "$RODIN_STAGE/skip_mount"
@@ -74,7 +76,7 @@ install -m 0755 "$RODIN_CTL" "$RODIN_STAGE/bin/rodin_ctl"
 "$RODIN_STRIP" --strip-unneeded "$RODIN_STAGE/bin/rodin_daemon"
 "$RODIN_STRIP" --strip-unneeded "$RODIN_STAGE/bin/rodin_ctl"
 
-for RODIN_SCRIPT in customize.sh service.sh action.sh uninstall.sh; do
+for RODIN_SCRIPT in customize.sh service.sh apply-sepolicy.sh action.sh uninstall.sh; do
     bash -n "$RODIN_STAGE/$RODIN_SCRIPT"
     if LC_ALL=C grep -q $'\r' "$RODIN_STAGE/$RODIN_SCRIPT"; then
         echo "CRLF line endings are not allowed: $RODIN_SCRIPT" >&2
@@ -156,14 +158,14 @@ done
 (
     cd "$RODIN_STAGE"
     zip -X -9 "$RODIN_ZIP" \
-        module.prop customize.sh service.sh action.sh uninstall.sh skip_mount sepolicy.rule \
+        module.prop customize.sh service.sh apply-sepolicy.sh action.sh uninstall.sh skip_mount sepolicy.rule \
         app/RodinEssential.apk bin/rodin_daemon bin/rodin_ctl >/dev/null
 )
 
 unzip -tq "$RODIN_ZIP"
 RODIN_ENTRIES="$(unzip -Z1 "$RODIN_ZIP")"
 for RODIN_REQUIRED in \
-    module.prop customize.sh service.sh action.sh uninstall.sh skip_mount sepolicy.rule \
+    module.prop customize.sh service.sh apply-sepolicy.sh action.sh uninstall.sh skip_mount sepolicy.rule \
     app/RodinEssential.apk bin/rodin_daemon bin/rodin_ctl; do
     echo "$RODIN_ENTRIES" | grep -Fxq "$RODIN_REQUIRED" || {
         echo "Missing module entry: $RODIN_REQUIRED" >&2
