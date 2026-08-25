@@ -32,6 +32,10 @@ All notable changes are documented here.
   rule for the root manager's live SELinux domain (`su`, `ksu`, or `magisk`).
   This prevents a healthy daemon from appearing Offline on ROMs that omit the
   corresponding `connectto` allowance.
+- Root-module startup now reapplies the detected socket rule to the live policy
+  after boot through KernelSU's `ksud` or Magisk's `magiskpolicy`. This covers
+  manager builds that skip or race the early `sepolicy.rule` loader, and Module
+  Action reports the result and patch engine used.
 - The root-module daemon validates every socket peer with `SO_PEERCRED` and
   accepts hardware commands only from UID 0 or the exact Android UID assigned
   to the bundled Rodin Essential package.

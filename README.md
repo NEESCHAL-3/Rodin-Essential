@@ -154,6 +154,10 @@ running. The installer registers the bundled APK as an ordinary user app and
 the module runs only the separate hardware daemon as root. The installer emits
 the socket rule for the root manager's active SELinux domain, and the daemon
 accepts commands only from UID 0 or the UID assigned to the bundled package. It
+also verifies and reapplies that narrow rule to the live policy after Android
+finishes booting, covering manager builds that skip or race early module-policy
+loading. The Module Action screen reports the detected daemon domain and live
+patch method for diagnosis. It
 deliberately uses `skip_mount`, so KernelSU does not require a system-overlay
 metamodule. Recovery installation is not supported.
 

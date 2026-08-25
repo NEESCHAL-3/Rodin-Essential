@@ -9,6 +9,8 @@ RODIN_WATCHDOG_PID="$RODIN_ROOT/watchdog.pid"
 RODIN_WATCHDOG_LOCK="$RODIN_ROOT/watchdog.lock"
 RODIN_WATCHDOG_BOOT_ID="$RODIN_WATCHDOG_LOCK/boot_id"
 RODIN_SERVICE_PATH="$MODDIR/service.sh"
+RODIN_POLICY_HELPER="$MODDIR/apply-sepolicy.sh"
+RODIN_POLICY_STATUS="$RODIN_ROOT/ipc-policy.status"
 RODIN_CURRENT_BOOT_ID="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
 RODIN_PACKAGE=io.github.neeschal.rodinessential
 
@@ -119,6 +121,23 @@ rodin_resolve_app_uid() {
 while [ "$(getprop sys.boot_completed 2>/dev/null)" != "1" ]; do
     sleep 1
 done
+
+# Some manager/ROM combinations start the module service correctly but skip or
+# race the early sepolicy.rule loader. Re-detect the service's actual SELinux
+# domain and inject the same narrow connectto rule into the live policy before
+# the unprivileged app is allowed to use the daemon.
+RODIN_SERVICE_CONTEXT="$(cat /proc/$$/attr/current 2>/dev/null | tr -d '\000')"
+if [ -x "$RODIN_POLICY_HELPER" ]; then
+    if "$RODIN_POLICY_HELPER" "$RODIN_POLICY_STATUS" "$RODIN_SERVICE_CONTEXT"; then
+        RODIN_POLICY_SUMMARY="$(tr '\n' ' ' <"$RODIN_POLICY_STATUS" 2>/dev/null)"
+        echo "RODIN_MODULE_IPC_POLICY $RODIN_POLICY_SUMMARY" >>"$RODIN_LOG"
+    else
+        RODIN_POLICY_SUMMARY="$(tr '\n' ' ' <"$RODIN_POLICY_STATUS" 2>/dev/null)"
+        echo "RODIN_MODULE_IPC_POLICY_FALLBACK_FAILED $RODIN_POLICY_SUMMARY" >>"$RODIN_LOG"
+    fi
+else
+    echo "RODIN_MODULE_IPC_POLICY_HELPER_MISSING" >>"$RODIN_LOG"
+fi
 
 # The module policy must allow an ordinary app domain to reach the root-manager
 # daemon domain. Pin the daemon to the UID Android assigned to this exact APK so
