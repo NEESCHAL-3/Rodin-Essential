@@ -7,11 +7,26 @@ import 'package:flutter/material.dart';
 
 import 'backend/rodin_backend.dart';
 
-Future<void> main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  RodinBackend.instance.start();
-  await RodinThemeController.bootstrap();
-  runApp(const RodinEssentialApp());
+  runApp(const _RodinLaunchFrame());
+
+  unawaited(RodinThemeController.bootstrap());
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    runApp(const RodinEssentialApp());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      RodinBackend.instance.start();
+    });
+  });
+}
+
+class _RodinLaunchFrame extends StatelessWidget {
+  const _RodinLaunchFrame();
+
+  @override
+  Widget build(BuildContext context) {
+    return const ColoredBox(color: Colors.white);
+  }
 }
 
 enum RodinScreen {

@@ -48,6 +48,55 @@ fn rodin_photo_vm_and_object(
     Some((vm, object_raw, sdk))
 }
 
+fn rodin_prepare_launch_window(activity: *mut ANativeActivity) {
+    let Some((vm, object_raw, _)) = rodin_photo_vm_and_object(activity) else {
+        return;
+    };
+
+    let mut env = match vm.get_env() {
+        Ok(env) => env,
+        Err(_) => return,
+    };
+
+    let result: jni::errors::Result<bool> = env.with_local_frame(8, |env| {
+        let activity_obj = unsafe { jni::objects::JObject::from_raw(object_raw) };
+
+        let window = env
+            .call_method(&activity_obj, "getWindow", "()Landroid/view/Window;", &[])?
+            .l()?;
+
+        let decor = env
+            .call_method(&window, "getDecorView", "()Landroid/view/View;", &[])?
+            .l()?;
+
+        env.call_method(
+            &decor,
+            "setBackgroundColor",
+            "(I)V",
+            &[jni::objects::JValue::Int(-1)],
+        )?;
+        env.call_method(&decor, "invalidate", "()V", &[])?;
+
+        env.call_method(
+            &activity_obj,
+            "setTranslucent",
+            "(Z)Z",
+            &[jni::objects::JValue::Bool(0)],
+        )?
+        .z()
+    });
+
+    match result {
+        Ok(opaque) => log_str(&format!(
+            "LAUNCH_WINDOW_PREPARED=PASS background=white opaque={opaque}"
+        )),
+        Err(error) => {
+            let _ = env.exception_clear();
+            log_str(&format!("LAUNCH_WINDOW_PREPARED=FAIL error={error}"));
+        }
+    }
+}
+
 fn rodin_photo_check_named(activity: *mut ANativeActivity, permission_name: &str) -> bool {
     let Some((vm, object_raw, _)) = rodin_photo_vm_and_object(activity) else {
         return false;
@@ -1566,6 +1615,13 @@ unsafe extern "C" {
     fn eglGetProcAddress(procname: *const c_char) -> *const c_void;
 }
 
+#[link(name = "GLESv3")]
+unsafe extern "C" {
+    fn glClearColor(red: f32, green: f32, blue: f32, alpha: f32);
+    fn glClear(mask: u32);
+    fn glViewport(x: i32, y: i32, width: i32, height: i32);
+}
+
 #[link(name = "dl")]
 unsafe extern "C" {
     fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void;
@@ -2420,6 +2476,64 @@ unsafe fn retire_egl_surface(state: *mut HostState) {
             "EGL_WINDOW_SURFACE=RETIRED generation={} pending={} ",
             egl.surface_generation,
             egl.retired_surfaces.len(),
+        ));
+    }
+}
+
+unsafe fn present_launch_background(state: *mut HostState, window: *mut ANativeWindow) {
+    const GL_COLOR_BUFFER_BIT: u32 = 0x0000_4000;
+
+    if state.is_null() || window.is_null() {
+        return;
+    }
+
+    let host = unsafe { &*state };
+    let egl = match host.egl.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    if egl.display == 0 || egl.surface == 0 || egl.context == 0 {
+        log_str("LAUNCH_BACKGROUND=FAIL stage=egl_not_ready");
+        return;
+    }
+
+    let display = egl.display as *mut c_void;
+    let surface = egl.surface as *mut c_void;
+    let context = egl.context as *mut c_void;
+    let width = unsafe { ANativeWindow_getWidth(window) };
+    let height = unsafe { ANativeWindow_getHeight(window) };
+
+    if width <= 0 || height <= 0 {
+        log_str("LAUNCH_BACKGROUND=FAIL stage=invalid_size");
+        return;
+    }
+
+    if unsafe { eglMakeCurrent(display, surface, surface, context) } == EGL_FALSE {
+        log_str(&format!(
+            "LAUNCH_BACKGROUND=FAIL stage=make_current error={}",
+            egl_error_hex()
+        ));
+        return;
+    }
+
+    unsafe {
+        glViewport(0, 0, width, height);
+        glClearColor(1.0, 1.0, 1.0, 1.0);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+
+    let presented = unsafe { eglSwapBuffers(display, surface) } != EGL_FALSE;
+    let cleared =
+        unsafe { eglMakeCurrent(display, ptr::null_mut(), ptr::null_mut(), ptr::null_mut()) }
+            != EGL_FALSE;
+
+    if presented && cleared {
+        log_str("LAUNCH_BACKGROUND=PASS renderer=EGL color=white");
+    } else {
+        log_str(&format!(
+            "LAUNCH_BACKGROUND=FAIL stage=present presented={presented} cleared={cleared} error={}",
+            egl_error_hex()
         ));
     }
 }
@@ -3352,6 +3466,8 @@ unsafe extern "C" fn on_window_created(activity: *mut ANativeActivity, window: *
         return;
     }
 
+    unsafe { present_launch_background(state, window) };
+
     match unsafe { start_flutter(activity, state) } {
         Ok(()) => {
             unsafe { send_metrics(activity, state) };
@@ -3540,6 +3656,7 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
         return;
     }
 
+    rodin_prepare_launch_window(activity);
     rodin_photo_init(activity);
     rodin_haptic_init(activity);
     rodin_apps_init(activity);

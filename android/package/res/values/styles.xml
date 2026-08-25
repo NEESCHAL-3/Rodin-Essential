@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.RodinEssential" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">#F4F7FB</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+</resources>
