@@ -124,10 +124,12 @@ proc_tp_file
 ```
 
 CPU range and exact-lock support requires write access to Rodin's
-`thermal_message/cpu_limits` node through `sysfs_therm` and to
-`powerhal_cpu_ctrl/perfserv_freq` through `proc_powerhal_cpu_ctrl`. The supplied
-vendor policy grants both to `rodin_daemon`; do not grant either label to the
-ordinary application domain.
+`thermal_message/sconfig` and `thermal_message/cpu_limits` nodes through
+`sysfs_therm`, and to `powerhal_cpu_ctrl/perfserv_freq` through
+`proc_powerhal_cpu_ctrl`. The daemon holds OEM mode `6` only while a custom CPU
+range exists and restores the previously active mode after the last reset. The
+supplied vendor policy grants these labels to `rodin_daemon`; do not grant them
+to the ordinary application domain.
 
 OEM ports sometimes rename a type without changing the node. On the exact
 vendor image shipped with the ROM, inspect the labels rather than guessing:

@@ -904,6 +904,8 @@ fn validate_cpu_frequency_range(policy: i32, min_mhz: i32, max_mhz: i32) -> Resu
 }
 
 const MI_THERMAL_CPU_LIMITS: &str = "/sys/devices/virtual/thermal/thermal_message/cpu_limits";
+const MI_THERMAL_SCONFIG: &str = "/sys/devices/virtual/thermal/thermal_message/sconfig";
+const MI_THERMAL_NO_LIMITS_MODE: i32 = 6;
 const MTK_POWERHAL_CPU_FREQ: &str = "/proc/powerhal_cpu_ctrl/perfserv_freq";
 
 static CPU_FREQ_APPLY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -922,6 +924,124 @@ fn mtk_powerhal_cpu_range_request(policy: i32, min_mhz: i32, max_mhz: i32) -> St
         min_mhz as i64 * 1_000,
         max_mhz as i64 * 1_000
     )
+}
+
+fn persisted_cpu_ranges_active(state: &PersistedState) -> bool {
+    [
+        (state.cpu_min_freq0, state.cpu_max_freq0),
+        (state.cpu_min_freq4, state.cpu_max_freq4),
+        (state.cpu_min_freq7, state.cpu_max_freq7),
+    ]
+    .into_iter()
+    .any(|(min_mhz, max_mhz)| min_mhz > 0 && max_mhz > 0)
+}
+
+fn valid_mi_thermal_config_mode(mode: i32) -> bool {
+    (0..=0x800).contains(&mode)
+}
+
+fn normalize_mi_thermal_config_mode(mode: i32) -> Result<i32, String> {
+    // The kernel interface reports -1 until Xiaomi userspace publishes its
+    // first explicit selection. mi_thermald is already running the normal
+    // configuration at that point, so preserve it as mode 0 when taking
+    // temporary ownership for a custom CPU range.
+    if mode == -1 {
+        Ok(0)
+    } else if valid_mi_thermal_config_mode(mode) {
+        Ok(mode)
+    } else {
+        Err(format!("MI thermal config reported invalid mode {mode}"))
+    }
+}
+
+fn read_mi_thermal_config_mode() -> Result<i32, String> {
+    read_trimmed(MI_THERMAL_SCONFIG)
+        .map_err(|error| format!("MI thermal config read: {error}"))?
+        .parse::<i32>()
+        .map_err(|error| format!("MI thermal config parse: {error}"))
+        .and_then(normalize_mi_thermal_config_mode)
+}
+
+fn write_mi_thermal_config_mode(mode: i32) -> Result<(), String> {
+    if !valid_mi_thermal_config_mode(mode) {
+        return Err(format!("invalid MI thermal config mode {mode}"));
+    }
+
+    fs::write(MI_THERMAL_SCONFIG, mode.to_string())
+        .map_err(|error| format!("MI thermal config write: {error}"))?;
+    let actual = read_mi_thermal_config_mode()?;
+    if actual != mode {
+        return Err(format!(
+            "MI thermal config verify requested {mode}, live {actual}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn ensure_cpu_unrestricted_mode_unlocked() -> Result<(), String> {
+    CPU_THERMAL_MODE_ACK.store(-1, Ordering::Release);
+    let result = (|| {
+        let state = persisted_state()
+            .lock()
+            .ok()
+            .map(|state| state.clone())
+            .unwrap_or_default();
+        let current = read_mi_thermal_config_mode()?;
+
+        if state.cpu_thermal_mode_prev < 0 {
+            mutate_persisted_state(|state| state.cpu_thermal_mode_prev = current);
+        }
+
+        if current != MI_THERMAL_NO_LIMITS_MODE {
+            write_mi_thermal_config_mode(MI_THERMAL_NO_LIMITS_MODE)?;
+            // mi_thermald reloads the selected encrypted policy asynchronously.
+            // Let it remove the stock CPU algorithms before publishing cpufreq.
+            std::thread::sleep(Duration::from_millis(300));
+        }
+
+        Ok(())
+    })();
+    CPU_THERMAL_MODE_ACK.store(if result.is_ok() { 1 } else { 0 }, Ordering::Release);
+    result
+}
+
+fn ensure_cpu_unrestricted_mode() -> Result<(), String> {
+    let _guard = cpu_freq_apply_lock()
+        .lock()
+        .map_err(|_| "CPU frequency apply lock poisoned".to_string())?;
+    ensure_cpu_unrestricted_mode_unlocked()
+}
+
+fn restore_cpu_thermal_mode_unlocked() -> Result<(), String> {
+    CPU_THERMAL_MODE_ACK.store(-1, Ordering::Release);
+    let previous = persisted_state()
+        .lock()
+        .ok()
+        .map(|state| state.cpu_thermal_mode_prev)
+        .unwrap_or(-1);
+    if previous < 0 {
+        return Ok(());
+    }
+
+    let result = (|| {
+        if read_mi_thermal_config_mode()? != previous {
+            write_mi_thermal_config_mode(previous)?;
+            std::thread::sleep(Duration::from_millis(300));
+        }
+
+        mutate_persisted_state(|state| state.cpu_thermal_mode_prev = -1);
+        Ok(())
+    })();
+    CPU_THERMAL_MODE_ACK.store(if result.is_ok() { 1 } else { 0 }, Ordering::Release);
+    result
+}
+
+fn restore_cpu_thermal_mode() -> Result<(), String> {
+    let _guard = cpu_freq_apply_lock()
+        .lock()
+        .map_err(|_| "CPU frequency apply lock poisoned".to_string())?;
+    restore_cpu_thermal_mode_unlocked()
 }
 
 fn write_optional_cpu_control(path: &str, value: &str, label: &str) -> Result<(), String> {
@@ -1035,12 +1155,20 @@ fn set_cpu_cluster_max_freq(policy: i32, mhz: i32) -> Result<(), String> {
 
 fn set_cpu_cluster_freq_range(policy: i32, min_mhz: i32, max_mhz: i32) -> Result<(), String> {
     CPU_FREQ_WRITE_ACK.store(-1, Ordering::Release);
+    let state_before = persisted_state()
+        .lock()
+        .ok()
+        .map(|state| state.clone())
+        .unwrap_or_default();
+    let had_saved_range = persisted_cpu_ranges_active(&state_before);
     let guard = cpu_freq_apply_lock()
         .lock()
         .map_err(|_| "CPU frequency apply lock poisoned".to_string());
     let result = match guard {
         Ok(_guard) => {
-            let result = apply_cluster_freq_controls_unlocked(policy, min_mhz, max_mhz);
+            let result = validate_cpu_frequency_range(policy, min_mhz, max_mhz)
+                .and_then(|_| ensure_cpu_unrestricted_mode_unlocked())
+                .and_then(|_| apply_cluster_freq_controls_unlocked(policy, min_mhz, max_mhz));
             if result.is_ok() {
                 mutate_persisted_state(|state| match policy {
                     0 => {
@@ -1057,6 +1185,10 @@ fn set_cpu_cluster_freq_range(policy: i32, min_mhz: i32, max_mhz: i32) -> Result
                     }
                     _ => {}
                 });
+            } else if !had_saved_range {
+                // The first custom range did not apply. Do not leave the
+                // vendor thermal configuration changed for a failed command.
+                let _ = restore_cpu_thermal_mode_unlocked();
             }
             result
         }
@@ -1080,7 +1212,17 @@ fn reset_cpu_cluster_freq_range(policy: i32) -> Result<(), String> {
         .map_err(|_| "CPU frequency apply lock poisoned".to_string());
     let result = match guard {
         Ok(_guard) => {
-            let result = apply_cluster_freq_controls_unlocked(policy, min_mhz, max_mhz);
+            let state_before = persisted_state()
+                .lock()
+                .ok()
+                .map(|state| state.clone())
+                .unwrap_or_default();
+            let result = if persisted_cpu_ranges_active(&state_before) {
+                ensure_cpu_unrestricted_mode_unlocked()
+                    .and_then(|_| apply_cluster_freq_controls_unlocked(policy, min_mhz, max_mhz))
+            } else {
+                apply_cluster_freq_controls_unlocked(policy, min_mhz, max_mhz)
+            };
             if result.is_ok() {
                 mutate_persisted_state(|state| match policy {
                     0 => {
@@ -1098,7 +1240,21 @@ fn reset_cpu_cluster_freq_range(policy: i32) -> Result<(), String> {
                     _ => {}
                 });
             }
-            result
+
+            if result.is_ok() {
+                let state_after = persisted_state()
+                    .lock()
+                    .ok()
+                    .map(|state| state.clone())
+                    .unwrap_or_default();
+                if !persisted_cpu_ranges_active(&state_after) {
+                    restore_cpu_thermal_mode_unlocked()
+                } else {
+                    Ok(())
+                }
+            } else {
+                result
+            }
         }
         Err(error) => Err(error),
     };
@@ -1950,6 +2106,7 @@ static KEEPALIVE_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
 static KEEPALIVE_APPLY_COUNT: AtomicI32 = AtomicI32::new(0);
 static CPU_WRITE_ACK: AtomicI32 = AtomicI32::new(-1);
 static CPU_FREQ_WRITE_ACK: AtomicI32 = AtomicI32::new(-1);
+static CPU_THERMAL_MODE_ACK: AtomicI32 = AtomicI32::new(-1);
 static CORE_CTL_NODE_COUNT: AtomicI32 = AtomicI32::new(0);
 static GPU_PROFILE_APPLY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -2007,6 +2164,7 @@ struct PersistedState {
     cpu_max_freq4: i32,
     cpu_min_freq7: i32,
     cpu_max_freq7: i32,
+    cpu_thermal_mode_prev: i32,
 }
 
 impl Default for PersistedState {
@@ -2053,6 +2211,7 @@ impl Default for PersistedState {
             cpu_max_freq4: -1,
             cpu_min_freq7: -1,
             cpu_max_freq7: -1,
+            cpu_thermal_mode_prev: -1,
         }
     }
 }
@@ -2375,6 +2534,15 @@ fn load_persisted_state() -> PersistedState {
                     state.cpu_max_freq7 = v;
                 }
             }
+            "cpu_thermal_mode_prev" => {
+                if let Some(v) = int_value() {
+                    state.cpu_thermal_mode_prev = if valid_mi_thermal_config_mode(v) {
+                        v
+                    } else {
+                        -1
+                    };
+                }
+            }
             _ if key.starts_with("app.") => {
                 if let Some(v) = int_value() {
                     state.app_profiles.insert(key[4..].to_string(), v);
@@ -2476,6 +2644,10 @@ fn save_persisted_state(state: &PersistedState) -> Result<(), String> {
     out.push_str(&format!("cpu_max_freq4={}\n", state.cpu_max_freq4));
     out.push_str(&format!("cpu_min_freq7={}\n", state.cpu_min_freq7));
     out.push_str(&format!("cpu_max_freq7={}\n", state.cpu_max_freq7));
+    out.push_str(&format!(
+        "cpu_thermal_mode_prev={}\n",
+        state.cpu_thermal_mode_prev
+    ));
 
     for (pkg, profile) in &state.app_profiles {
         out.push_str(&format!("app.{pkg}={profile}\n"));
@@ -3561,44 +3733,56 @@ fn restore_persisted_state() {
         let _ = set_zram_size(state.zram_size_mb);
     }
 
-    if state.cpu_min_freq0 > 0 || state.cpu_max_freq0 > 0 {
-        let min = if state.cpu_min_freq0 > 0 {
-            state.cpu_min_freq0
-        } else {
-            300
-        };
-        let max = if state.cpu_max_freq0 > 0 {
-            state.cpu_max_freq0
-        } else {
-            2100
-        };
-        let _ = apply_cluster_freq_controls(0, min, max);
-    }
-    if state.cpu_min_freq4 > 0 || state.cpu_max_freq4 > 0 {
-        let min = if state.cpu_min_freq4 > 0 {
-            state.cpu_min_freq4
-        } else {
-            400
-        };
-        let max = if state.cpu_max_freq4 > 0 {
-            state.cpu_max_freq4
-        } else {
-            3000
-        };
-        let _ = apply_cluster_freq_controls(4, min, max);
-    }
-    if state.cpu_min_freq7 > 0 || state.cpu_max_freq7 > 0 {
-        let min = if state.cpu_min_freq7 > 0 {
-            state.cpu_min_freq7
-        } else {
-            1000
-        };
-        let max = if state.cpu_max_freq7 > 0 {
-            state.cpu_max_freq7
-        } else {
-            3250
-        };
-        let _ = apply_cluster_freq_controls(7, min, max);
+    let has_persisted_cpu_ranges = persisted_cpu_ranges_active(&state);
+    let cpu_mode_ready = if has_persisted_cpu_ranges {
+        ensure_cpu_unrestricted_mode().is_ok()
+    } else {
+        let _ = restore_cpu_thermal_mode();
+        true
+    };
+
+    if cpu_mode_ready {
+        if state.cpu_min_freq0 > 0 || state.cpu_max_freq0 > 0 {
+            let min = if state.cpu_min_freq0 > 0 {
+                state.cpu_min_freq0
+            } else {
+                300
+            };
+            let max = if state.cpu_max_freq0 > 0 {
+                state.cpu_max_freq0
+            } else {
+                2100
+            };
+            let _ = apply_cluster_freq_controls(0, min, max);
+        }
+        if state.cpu_min_freq4 > 0 || state.cpu_max_freq4 > 0 {
+            let min = if state.cpu_min_freq4 > 0 {
+                state.cpu_min_freq4
+            } else {
+                400
+            };
+            let max = if state.cpu_max_freq4 > 0 {
+                state.cpu_max_freq4
+            } else {
+                3000
+            };
+            let _ = apply_cluster_freq_controls(4, min, max);
+        }
+        if state.cpu_min_freq7 > 0 || state.cpu_max_freq7 > 0 {
+            let min = if state.cpu_min_freq7 > 0 {
+                state.cpu_min_freq7
+            } else {
+                1000
+            };
+            let max = if state.cpu_max_freq7 > 0 {
+                state.cpu_max_freq7
+            } else {
+                3250
+            };
+            let _ = apply_cluster_freq_controls(7, min, max);
+        }
+    } else {
+        CPU_FREQ_WRITE_ACK.store(0, Ordering::Release);
     }
 
     if state.gpu_uncap == 1 {
@@ -3760,36 +3944,46 @@ fn reassert_persisted_governors() {
 
 fn cpu_frequency_guard() {
     loop {
-        let mut has_saved_range = false;
-
-        if let Ok(_guard) = cpu_freq_apply_lock().try_lock() {
+        let has_saved_range = if let Ok(_guard) = cpu_freq_apply_lock().try_lock() {
             let state = persisted_state()
                 .lock()
                 .ok()
                 .map(|state| state.clone())
                 .unwrap_or_default();
 
-            for (policy, min_mhz, max_mhz) in [
-                (0, state.cpu_min_freq0, state.cpu_max_freq0),
-                (4, state.cpu_min_freq4, state.cpu_max_freq4),
-                (7, state.cpu_min_freq7, state.cpu_max_freq7),
-            ] {
-                if min_mhz <= 0 || max_mhz <= 0 {
-                    continue;
-                }
+            let has_saved_range = persisted_cpu_ranges_active(&state);
+            if has_saved_range {
+                if ensure_cpu_unrestricted_mode_unlocked().is_ok() {
+                    for (policy, min_mhz, max_mhz) in [
+                        (0, state.cpu_min_freq0, state.cpu_max_freq0),
+                        (4, state.cpu_min_freq4, state.cpu_max_freq4),
+                        (7, state.cpu_min_freq7, state.cpu_max_freq7),
+                    ] {
+                        if min_mhz <= 0 || max_mhz <= 0 {
+                            continue;
+                        }
 
-                has_saved_range = true;
-                if get_cpu_cluster_live_min_freq(policy) != min_mhz
-                    || get_cpu_cluster_live_max_freq(policy) != max_mhz
-                {
-                    let _ = apply_cluster_freq_controls_unlocked(policy, min_mhz, max_mhz);
+                        if get_cpu_cluster_live_min_freq(policy) != min_mhz
+                            || get_cpu_cluster_live_max_freq(policy) != max_mhz
+                        {
+                            let _ = apply_cluster_freq_controls_unlocked(policy, min_mhz, max_mhz);
+                        }
+                    }
+                } else {
+                    CPU_FREQ_WRITE_ACK.store(0, Ordering::Release);
                 }
+            } else if state.cpu_thermal_mode_prev >= 0
+                && restore_cpu_thermal_mode_unlocked().is_err()
+            {
+                CPU_THERMAL_MODE_ACK.store(0, Ordering::Release);
             }
+
+            has_saved_range
         } else {
             // A foreground apply is already in progress. Check again quickly
             // after that transaction releases the shared CPU control lock.
-            has_saved_range = true;
-        }
+            true
+        };
 
         std::thread::sleep(Duration::from_millis(if has_saved_range {
             100
@@ -4713,6 +4907,10 @@ fn snapshot_persistence_fields() -> Vec<String> {
         cpu_live_min7,
         cpu_live_max7,
     );
+    let cpu_thermal_mode = read_mi_thermal_config_mode().unwrap_or(-1);
+    let cpu_thermal_unrestricted = i32::from(
+        persisted_cpu_ranges_active(&state) && cpu_thermal_mode == MI_THERMAL_NO_LIMITS_MODE,
+    );
 
     let zram_stat = zram_get_mm_stat();
     let zram_disk_mb = zram_get_disksize_mb();
@@ -4863,6 +5061,13 @@ fn snapshot_persistence_fields() -> Vec<String> {
         format!("cpu_freq_drift0={cpu_freq_drift0}"),
         format!("cpu_freq_drift4={cpu_freq_drift4}"),
         format!("cpu_freq_drift7={cpu_freq_drift7}"),
+        format!("cpu_thermal_mode={cpu_thermal_mode}"),
+        format!("cpu_thermal_mode_prev={}", state.cpu_thermal_mode_prev),
+        format!("cpu_thermal_unrestricted={cpu_thermal_unrestricted}"),
+        format!(
+            "cpu_thermal_mode_ack={}",
+            CPU_THERMAL_MODE_ACK.load(Ordering::Acquire)
+        ),
         format!("cpu_avail0={}", cpu_frequency_table_csv(0)),
         format!("cpu_avail4={}", cpu_frequency_table_csv(4)),
         format!("cpu_avail7={}", cpu_frequency_table_csv(7)),
@@ -5263,11 +5468,13 @@ pub fn serve_client(mut stream: UnixStream) {
 #[cfg(test)]
 mod tests {
     use super::{
-        PersistedState, classify_touch_panel_version, cpu_frequency_drift_status,
-        find_touch_thp_config_offset, gaming_dynamic_target_opp, mi_thermal_cpu_limit_request,
-        migrate_legacy_gpu_profile_cpu_state, mtk_powerhal_cpu_range_request,
+        MI_THERMAL_NO_LIMITS_MODE, PersistedState, classify_touch_panel_version,
+        cpu_frequency_drift_status, find_touch_thp_config_offset, gaming_dynamic_target_opp,
+        mi_thermal_cpu_limit_request, migrate_legacy_gpu_profile_cpu_state,
+        mtk_powerhal_cpu_range_request, normalize_mi_thermal_config_mode,
         parse_cpu_frequency_table, parse_cpu_time_in_state, parse_ged_current_frequency_mhz,
-        profile_uses_ged_boost, scaled_display_density, validate_cpu_frequency_range_against,
+        persisted_cpu_ranges_active, profile_uses_ged_boost, scaled_display_density,
+        valid_mi_thermal_config_mode, validate_cpu_frequency_range_against,
     };
 
     fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
@@ -5375,6 +5582,43 @@ mod tests {
         assert!(profile_uses_ged_boost(1));
         assert!(!profile_uses_ged_boost(2));
         assert!(profile_uses_ged_boost(3));
+    }
+
+    #[test]
+    fn validates_xiaomi_thermal_config_mode_range() {
+        assert!(valid_mi_thermal_config_mode(0));
+        assert!(valid_mi_thermal_config_mode(MI_THERMAL_NO_LIMITS_MODE));
+        assert!(valid_mi_thermal_config_mode(0x800));
+        assert!(!valid_mi_thermal_config_mode(-1));
+        assert!(!valid_mi_thermal_config_mode(0x801));
+
+        assert_eq!(normalize_mi_thermal_config_mode(-1), Ok(0));
+        assert_eq!(normalize_mi_thermal_config_mode(0), Ok(0));
+        assert_eq!(
+            normalize_mi_thermal_config_mode(MI_THERMAL_NO_LIMITS_MODE),
+            Ok(MI_THERMAL_NO_LIMITS_MODE)
+        );
+        assert!(normalize_mi_thermal_config_mode(-2).is_err());
+        assert!(normalize_mi_thermal_config_mode(0x801).is_err());
+    }
+
+    #[test]
+    fn detects_only_complete_saved_cpu_ranges() {
+        let stock = PersistedState::default();
+        assert!(!persisted_cpu_ranges_active(&stock));
+
+        let partial = PersistedState {
+            cpu_min_freq4: 1200,
+            ..PersistedState::default()
+        };
+        assert!(!persisted_cpu_ranges_active(&partial));
+
+        let exact = PersistedState {
+            cpu_min_freq7: 3250,
+            cpu_max_freq7: 3250,
+            ..PersistedState::default()
+        };
+        assert!(persisted_cpu_ranges_active(&exact));
     }
 
     #[test]

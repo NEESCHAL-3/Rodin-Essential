@@ -28,7 +28,8 @@ installer and are not supported by the included AOSP policy.
 - Four persistent CPU/GPU performance profiles with live hardware readback.
 - Mali devfreq range, governor, GED boost, power-policy, and OPP controls.
 - CPU core mask, independent cluster governors, and validated per-cluster
-  minimum/maximum or exact-lock controls sourced from the live kernel OPP table.
+  minimum/maximum or sustained exact-lock controls sourced from the live kernel
+  OPP table.
 - UFS scheduler selection across every detected UFS logical unit.
 - Touch profiles for 240 Hz native timing, 480 Hz native timing, and a 1 ms
   Android output stream generated from the native 480 Hz source.
@@ -53,6 +54,13 @@ Vendor CPU and platform thermal services remain running in every mode. Gaming
 Dynamic and Extreme Beast override the Mali cooling constraint and can still
 cause extreme heat, rapid battery drain, instability, or an emergency hardware
 shutdown.
+
+Custom CPU ranges remain separate from GPU profiles and governors. While at
+least one custom CPU range is active, the daemon selects Rodin's OEM
+`thermal-nolimits` configuration so Xiaomi's userspace policy cannot replace an
+exact lock with a lower ceiling. It keeps the thermal services alive, remembers
+the configuration that was active beforehand, and restores it when the final
+custom CPU range is reset.
 
 ## Integration choices
 
