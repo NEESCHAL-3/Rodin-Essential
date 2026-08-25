@@ -96,13 +96,15 @@ the daemon only.
 
 ## Performance ownership
 
-Profile changes are transactions: CPU ranges, GPU bounds, governor, GED state,
-power policy, and thermal-service ownership are applied together. A background
-guard compares persisted intent with live readback and reapplies drifted values.
+GPU profile changes are isolated transactions: GPU bounds, governor, GED state,
+power policy, and the Mali cooling constraint are applied together. CPU
+governors, CPU frequency ranges, and CPU core state are controlled independently.
+A background guard compares persisted intent with live readback and reapplies
+only drifted values owned by each subsystem.
 
-Stock Balanced and Battery Saver return vendor thermal services to the running
-state. Gaming Dynamic and Extreme Beast stop those services and retain ownership
-of their requested GPU policy.
+Vendor CPU and platform thermal services remain running in every GPU mode.
+Gaming Dynamic and Extreme Beast retain ownership of the Mali cooling constraint
+required by their requested GPU policy without stopping those global services.
 
 ## Build invariants
 

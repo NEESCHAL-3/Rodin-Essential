@@ -41,15 +41,16 @@ installer and are not supported by the included AOSP policy.
 
 | Profile | GPU range and governor | GED / power policy | CPU behavior |
 | --- | --- | --- | --- |
-| Stock Balanced | Vendor-managed 260–1300 MHz, `dummy` | GED off, `coarse_demand` | OEM `sugov_ext` ranges |
-| Gaming Dynamic | 260–1300 MHz, `simple_ondemand` | GED on, `always_on` | Full `schedutil` ranges |
-| Battery Saver | 260–598 MHz, `powersave` | GED off, `coarse_demand` | Reduced `schedutil` ceilings |
-| Extreme Beast | Fixed 1300 MHz, `performance`, DVFS off | GED on, `always_on` | Fixed maximum cluster clocks |
+| Stock Balanced | Vendor-managed 260–1300 MHz, `dummy` | GED off, `coarse_demand` | Unchanged; controlled separately |
+| Gaming Dynamic | 260–1300 MHz, `simple_ondemand` | GED on, `always_on` | Unchanged; controlled separately |
+| Battery Saver | 260–598 MHz, `powersave` | GED off, `coarse_demand` | Unchanged; controlled separately |
+| Extreme Beast | Fixed 1300 MHz, `performance`, DVFS off | GED on, `always_on` | Unchanged; controlled separately |
 
-Gaming Dynamic and Extreme Beast stop the vendor thermal-control services used
-by this vendor stack. They can cause extreme heat, rapid battery drain, crashes,
-or an emergency hardware shutdown. Stock Balanced and Battery Saver restore the
-vendor services.
+GPU profiles never modify CPU governors, CPU clock ranges, or CPU core state.
+Vendor CPU and platform thermal services remain running in every mode. Gaming
+Dynamic and Extreme Beast override the Mali cooling constraint and can still
+cause extreme heat, rapid battery drain, instability, or an emergency hardware
+shutdown.
 
 ## Integration choices
 

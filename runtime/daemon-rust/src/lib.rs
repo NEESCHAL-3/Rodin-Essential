@@ -1037,7 +1037,7 @@ fn write_if_present(path: &str, value: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-fn restore_thermal_safety() {
+fn ensure_vendor_thermal_services_running() {
     let _ = ProcessCommand::new("/system/bin/chmod")
         .args(["0644", "/sys/class/thermal/cooling_device3/cur_state"])
         .output();
@@ -1053,12 +1053,7 @@ fn restore_thermal_safety() {
     let _ = ProcessCommand::new("/system/bin/start").arg("frs").output();
 }
 
-fn disable_gpu_thermal_limits() {
-    for service in ["vendor.thermal-mediatek", "mi_thermald", "thermald", "frs"] {
-        let _ = ProcessCommand::new("/system/bin/stop")
-            .arg(service)
-            .output();
-    }
+fn clear_gpu_cooling_cap() {
     let _ = ProcessCommand::new("/system/bin/chmod")
         .args(["0644", "/sys/class/thermal/cooling_device3/cur_state"])
         .output();
@@ -1138,9 +1133,7 @@ fn settle_beast_gpu_lock(attempts: usize, delay: Duration) -> bool {
 
 pub fn enforce_performance_profile(profile: i32) -> bool {
     if matches!(profile, 1 | 3) {
-        disable_gpu_thermal_limits();
-    } else {
-        restore_thermal_safety();
+        clear_gpu_cooling_cap();
     }
 
     match profile {
@@ -1148,13 +1141,6 @@ pub fn enforce_performance_profile(profile: i32) -> bool {
             // Extreme Beast: fixed 1300 MHz OPP with the GPU cooling cap
             // explicitly disabled for this unrestricted profile.
             let _ = settle_beast_gpu_lock(60, Duration::from_millis(25));
-
-            let _ = set_cpu_governor(0, "performance");
-            let _ = set_cpu_governor(4, "performance");
-            let _ = set_cpu_governor(7, "performance");
-            apply_cluster_freq_sysfs(0, 2100, 2100);
-            apply_cluster_freq_sysfs(4, 3000, 3000);
-            apply_cluster_freq_sysfs(7, 3250, 3250);
         }
         1 => {
             // Gaming Dynamic: the complete hardware OPP table under the
@@ -1188,13 +1174,6 @@ pub fn enforce_performance_profile(profile: i32) -> bool {
             let _ = fs::write("/sys/module/ged/parameters/ged_boost_enable", "1");
             let _ = fs::write("/sys/module/ged/parameters/boost_gpu_enable", "1");
             let _ = fs::write("/sys/module/ged/parameters/ged_smart_boost", "1");
-
-            let _ = set_cpu_governor(0, "schedutil");
-            let _ = set_cpu_governor(4, "schedutil");
-            let _ = set_cpu_governor(7, "schedutil");
-            apply_cluster_freq_sysfs(0, 300, 2100);
-            apply_cluster_freq_sysfs(4, 400, 3000);
-            apply_cluster_freq_sysfs(7, 1000, 3250);
         }
         2 => {
             // Battery Saver: lowest governor with a 598 MHz hard ceiling.
@@ -1224,13 +1203,6 @@ pub fn enforce_performance_profile(profile: i32) -> bool {
             let _ = fs::write("/sys/module/ged/parameters/ged_boost_enable", "0");
             let _ = fs::write("/sys/module/ged/parameters/boost_gpu_enable", "0");
             let _ = fs::write("/sys/module/ged/parameters/ged_smart_boost", "0");
-
-            let _ = set_cpu_governor(0, "schedutil");
-            let _ = set_cpu_governor(4, "schedutil");
-            let _ = set_cpu_governor(7, "schedutil");
-            apply_cluster_freq_sysfs(0, 300, 1400);
-            apply_cluster_freq_sysfs(4, 400, 1800);
-            apply_cluster_freq_sysfs(7, 1000, 1800);
         }
         _ => {
             // Stock Balanced hands DVFS back to the MediaTek power HAL. Rodin's
@@ -1264,13 +1236,6 @@ pub fn enforce_performance_profile(profile: i32) -> bool {
             let _ = fs::write("/sys/module/ged/parameters/ged_boost_enable", "0");
             let _ = fs::write("/sys/module/ged/parameters/boost_gpu_enable", "0");
             let _ = fs::write("/sys/module/ged/parameters/ged_smart_boost", "0");
-
-            let _ = set_cpu_governor(0, "sugov_ext");
-            let _ = set_cpu_governor(4, "sugov_ext");
-            let _ = set_cpu_governor(7, "sugov_ext");
-            apply_cluster_freq_sysfs(0, 300, 2100);
-            apply_cluster_freq_sysfs(4, 400, 3000);
-            apply_cluster_freq_sysfs(7, 1000, 3250);
         }
     }
 
@@ -1281,6 +1246,13 @@ pub fn apply_performance_profile(profile: i32) -> Result<(), String> {
     if !matches!(profile, 0..=3) {
         return Err("invalid performance profile".into());
     }
+
+    // A profile transition is one hardware transaction. Exclude the
+    // maintenance and dynamic guards so the previous profile cannot win a
+    // final write while the new Mali state is being established.
+    let _profile_guard = gpu_profile_apply_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let mut verified = enforce_performance_profile(profile);
 
@@ -1297,15 +1269,7 @@ pub fn apply_performance_profile(profile: i32) -> Result<(), String> {
                 state.gpu = "performance".to_string();
                 state.gpu_governor = "performance".to_string();
                 state.gpu_power_policy = "always_on".to_string();
-                state.cpu0 = "performance".to_string();
-                state.cpu4 = "performance".to_string();
-                state.cpu7 = "performance".to_string();
-                state.cpu_min_freq0 = 2100;
-                state.cpu_max_freq0 = 2100;
-                state.cpu_min_freq4 = 3000;
-                state.cpu_max_freq4 = 3000;
-                state.cpu_min_freq7 = 3250;
-                state.cpu_max_freq7 = 3250;
+                state.gpu_profile_cpu_isolated = 1;
             });
         }
         1 => {
@@ -1318,15 +1282,7 @@ pub fn apply_performance_profile(profile: i32) -> Result<(), String> {
                 state.gpu = "simple_ondemand".to_string();
                 state.gpu_governor = "simple_ondemand".to_string();
                 state.gpu_power_policy = "always_on".to_string();
-                state.cpu0 = "schedutil".to_string();
-                state.cpu4 = "schedutil".to_string();
-                state.cpu7 = "schedutil".to_string();
-                state.cpu_min_freq0 = 300;
-                state.cpu_max_freq0 = 2100;
-                state.cpu_min_freq4 = 400;
-                state.cpu_max_freq4 = 3000;
-                state.cpu_min_freq7 = 1000;
-                state.cpu_max_freq7 = 3250;
+                state.gpu_profile_cpu_isolated = 1;
             });
         }
         2 => {
@@ -1339,15 +1295,7 @@ pub fn apply_performance_profile(profile: i32) -> Result<(), String> {
                 state.gpu = "powersave".to_string();
                 state.gpu_governor = "powersave".to_string();
                 state.gpu_power_policy = "coarse_demand".to_string();
-                state.cpu0 = "schedutil".to_string();
-                state.cpu4 = "schedutil".to_string();
-                state.cpu7 = "schedutil".to_string();
-                state.cpu_min_freq0 = 300;
-                state.cpu_max_freq0 = 1400;
-                state.cpu_min_freq4 = 400;
-                state.cpu_max_freq4 = 1800;
-                state.cpu_min_freq7 = 1000;
-                state.cpu_max_freq7 = 1800;
+                state.gpu_profile_cpu_isolated = 1;
             });
         }
         _ => {
@@ -1360,15 +1308,7 @@ pub fn apply_performance_profile(profile: i32) -> Result<(), String> {
                 state.gpu = "dummy".to_string();
                 state.gpu_governor = "dummy".to_string();
                 state.gpu_power_policy = "coarse_demand".to_string();
-                state.cpu0 = "sugov_ext".to_string();
-                state.cpu4 = "sugov_ext".to_string();
-                state.cpu7 = "sugov_ext".to_string();
-                state.cpu_min_freq0 = -1;
-                state.cpu_max_freq0 = -1;
-                state.cpu_min_freq4 = -1;
-                state.cpu_max_freq4 = -1;
-                state.cpu_min_freq7 = -1;
-                state.cpu_max_freq7 = -1;
+                state.gpu_profile_cpu_isolated = 1;
             });
         }
     }
@@ -1847,12 +1787,17 @@ static KEEPALIVE_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
 static KEEPALIVE_APPLY_COUNT: AtomicI32 = AtomicI32::new(0);
 static CPU_WRITE_ACK: AtomicI32 = AtomicI32::new(-1);
 static CORE_CTL_NODE_COUNT: AtomicI32 = AtomicI32::new(0);
+static GPU_PROFILE_APPLY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 static DISPLAY_WIDTH: AtomicI32 = AtomicI32::new(-1);
 static DISPLAY_HEIGHT: AtomicI32 = AtomicI32::new(-1);
 static DISPLAY_DENSITY: AtomicI32 = AtomicI32::new(-1);
 static DISPLAY_HZ_X10: AtomicI32 = AtomicI32::new(-1);
 static DISPLAY_MAX_HZ_X10: AtomicI32 = AtomicI32::new(-1);
+
+fn gpu_profile_apply_lock() -> &'static Mutex<()> {
+    GPU_PROFILE_APPLY_LOCK.get_or_init(|| Mutex::new(()))
+}
 
 #[derive(Clone)]
 struct PersistedState {
@@ -1868,6 +1813,7 @@ struct PersistedState {
     expert_gamut: i32,
     expert: [i32; 8],
     perf: i32,
+    gpu_profile_cpu_isolated: i32,
     cpu_manual: i32,
     cpu_online_mask: i32,
     cpu0: String,
@@ -1910,6 +1856,7 @@ impl Default for PersistedState {
             expert_gamut: 1,
             expert: [128, 128, 128, 128, 0, 0, 50, 255],
             perf: 0,
+            gpu_profile_cpu_isolated: 1,
             cpu_manual: 0,
             cpu_online_mask: 0xFF,
             cpu0: String::new(),
@@ -1939,6 +1886,75 @@ impl Default for PersistedState {
     }
 }
 
+fn legacy_gpu_profile_cpu_signature(state: &PersistedState) -> bool {
+    let governors = (
+        state.cpu0.as_str(),
+        state.cpu4.as_str(),
+        state.cpu7.as_str(),
+    );
+    let ranges = (
+        state.cpu_min_freq0,
+        state.cpu_max_freq0,
+        state.cpu_min_freq4,
+        state.cpu_max_freq4,
+        state.cpu_min_freq7,
+        state.cpu_max_freq7,
+    );
+
+    match state.perf {
+        3 => {
+            governors == ("performance", "performance", "performance")
+                && ranges == (2100, 2100, 3000, 3000, 3250, 3250)
+        }
+        1 => {
+            governors == ("schedutil", "schedutil", "schedutil")
+                && ranges == (300, 2100, 400, 3000, 1000, 3250)
+        }
+        2 => {
+            governors == ("schedutil", "schedutil", "schedutil")
+                && ranges == (300, 1400, 400, 1800, 1000, 1800)
+        }
+        0 => {
+            governors == ("sugov_ext", "sugov_ext", "sugov_ext")
+                && ranges == (-1, -1, -1, -1, -1, -1)
+        }
+        _ => false,
+    }
+}
+
+fn migrate_legacy_gpu_profile_cpu_state(state: &mut PersistedState) -> bool {
+    if state.gpu_profile_cpu_isolated == 1 {
+        return false;
+    }
+
+    let reset_legacy_cpu = legacy_gpu_profile_cpu_signature(state);
+    if reset_legacy_cpu {
+        state.cpu0.clear();
+        state.cpu4.clear();
+        state.cpu7.clear();
+        state.cpu_min_freq0 = -1;
+        state.cpu_max_freq0 = -1;
+        state.cpu_min_freq4 = -1;
+        state.cpu_max_freq4 = -1;
+        state.cpu_min_freq7 = -1;
+        state.cpu_max_freq7 = -1;
+    }
+
+    state.gpu_profile_cpu_isolated = 1;
+    reset_legacy_cpu
+}
+
+fn restore_vendor_cpu_defaults() {
+    for policy in [0, 4, 7] {
+        if set_cpu_governor(policy, "sugov_ext").is_err() {
+            let _ = set_cpu_governor(policy, "schedutil");
+        }
+    }
+    apply_cluster_freq_sysfs(0, 300, 2100);
+    apply_cluster_freq_sysfs(4, 400, 3000);
+    apply_cluster_freq_sysfs(7, 1000, 3250);
+}
+
 static PERSISTED_STATE: OnceLock<Mutex<PersistedState>> = OnceLock::new();
 static LAST_EXTERNAL_PACKAGE: OnceLock<Mutex<String>> = OnceLock::new();
 static RESOLVED_STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -1965,6 +1981,10 @@ fn load_persisted_state() -> PersistedState {
     let Ok(raw) = fs::read_to_string(state_file()) else {
         return state;
     };
+
+    // State written before GPU/CPU profile isolation did not carry this key.
+    // Mark an existing file as legacy until the parser finds the new marker.
+    state.gpu_profile_cpu_isolated = 0;
 
     for line in raw.lines() {
         let line = line.trim();
@@ -2074,6 +2094,11 @@ fn load_persisted_state() -> PersistedState {
             "perf" => {
                 if let Some(v) = int_value() {
                     state.perf = v;
+                }
+            }
+            "gpu_profile_cpu_isolated" => {
+                if let Some(v) = int_value() {
+                    state.gpu_profile_cpu_isolated = if v == 1 { 1 } else { 0 };
                 }
             }
             "cpu_manual" => {
@@ -2231,6 +2256,10 @@ fn save_persisted_state(state: &PersistedState) -> Result<(), String> {
     }
 
     out.push_str(&format!("perf={}\n", state.perf));
+    out.push_str(&format!(
+        "gpu_profile_cpu_isolated={}\n",
+        state.gpu_profile_cpu_isolated
+    ));
     out.push_str(&format!("cpu_manual={}\n", state.cpu_manual));
     out.push_str(&format!(
         "cpu_online_mask={}\n",
@@ -3066,6 +3095,20 @@ fn restore_persisted_state() {
         .map(|s| s.clone())
         .unwrap_or_default();
 
+    let legacy_state = state.gpu_profile_cpu_isolated != 1;
+    let reset_legacy_cpu = migrate_legacy_gpu_profile_cpu_state(&mut state);
+    if legacy_state {
+        if let Ok(mut guard) = persisted_state().lock() {
+            *guard = state.clone();
+        }
+        let _ = save_persisted_state(&state);
+    }
+    if reset_legacy_cpu {
+        // Undo only the exact CPU signature written by an older GPU profile.
+        // Custom CPU settings that do not match that signature are preserved.
+        restore_vendor_cpu_defaults();
+    }
+
     PERSISTENCE_LOADED.store(1, Ordering::Release);
 
     if matches!(state.charging, 0 | 8) {
@@ -3126,9 +3169,8 @@ fn restore_persisted_state() {
     }
 
     if (0..=3).contains(&state.perf) {
-        // Applying a base profile touches the same persisted fields as manual
-        // CPU/GPU controls. Preserve the user's exact saved state and restore
-        // it after the base profile has established its vendor/thermal setup.
+        // GPU profiles are isolated from CPU controls. Preserve the exact
+        // persisted selection while restoring the requested Mali state.
         let persisted = state.clone();
         let _ = apply_performance_profile(state.perf);
         PERFORMANCE_STATE.store(persisted.perf, Ordering::Release);
@@ -3238,6 +3280,10 @@ fn restore_persisted_state() {
 }
 
 fn reassert_persisted_governors() {
+    let Ok(_profile_guard) = gpu_profile_apply_lock().try_lock() else {
+        return;
+    };
+
     let state = persisted_state()
         .lock()
         .ok()
@@ -3369,6 +3415,11 @@ fn gaming_dynamic_guard() {
     let mut boost_until = Instant::now();
 
     loop {
+        let Ok(profile_guard) = gpu_profile_apply_lock().try_lock() else {
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        };
+
         let profile = persisted_state()
             .lock()
             .ok()
@@ -3384,13 +3435,14 @@ fn gaming_dynamic_guard() {
             last_written_opp = -1;
             smoothed_load = 0;
             boost_until = Instant::now();
+            drop(profile_guard);
             std::thread::sleep(Duration::from_millis(100));
             continue;
         }
 
-        // Gaming and Beast are explicit unrestricted profiles. Hold the GPU
-        // cooling device at state 0 so the vendor thermal stack cannot replace
-        // their 1300 MHz ceiling with a lower OPP.
+        // Gaming and Beast own only the Mali cooling device. The vendor thermal
+        // services remain running for CPU and platform management while this
+        // guard prevents a GPU cooling cap from replacing their 1300 MHz target.
         let _ = fs::write("/sys/class/thermal/cooling_device3/cur_state", "0");
 
         if profile == 3 {
@@ -3398,6 +3450,7 @@ fn gaming_dynamic_guard() {
             // boot completion. Reassert every Beast-owned node and lock DVFS
             // only after GED confirms that OPP 0 is actually live.
             let _ = arm_or_lock_beast_gpu();
+            drop(profile_guard);
             std::thread::sleep(Duration::from_millis(100));
             continue;
         }
@@ -3433,6 +3486,7 @@ fn gaming_dynamic_guard() {
             last_written_opp = target_opp;
         }
 
+        drop(profile_guard);
         std::thread::sleep(Duration::from_millis(100));
     }
 }
@@ -3548,6 +3602,9 @@ fn maintenance_loop() {
 pub fn start_background_services() {
     let _ = persisted_state();
     refresh_display_info();
+    // Older releases stopped global thermal services for GPU profiles. Keep
+    // vendor CPU and platform thermal management alive in every GPU mode.
+    ensure_vendor_thermal_services_running();
     // Persisted custom touch profiles can be restored below, so the worker
     // must be ready before set_touch_profile() waits for its attachment ACK.
     touch_resampler::start_background();
@@ -4121,10 +4178,9 @@ fn set_gpu_uncap(enable: bool) -> Result<(), String> {
     let mut beast_locked = true;
 
     if enable {
-        disable_gpu_thermal_limits();
+        clear_gpu_cooling_cap();
         beast_locked = settle_beast_gpu_lock(60, Duration::from_millis(25));
     } else {
-        restore_thermal_safety();
         let _ = fs::write("/sys/class/misc/mali0/device/power_policy", "coarse_demand");
         let _ = fs::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "40");
         let _ = fs::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "0");
@@ -4261,6 +4317,10 @@ fn snapshot_persistence_fields() -> Vec<String> {
         format!(
             "perf_verify_ok={}",
             PERFORMANCE_PROFILE_OK.load(Ordering::Acquire)
+        ),
+        format!(
+            "gpu_profile_cpu_isolated={}",
+            state.gpu_profile_cpu_isolated
         ),
         format!("cpu_drift0={cpu0_drift}"),
         format!("cpu_drift4={cpu4_drift}"),
@@ -4773,7 +4833,8 @@ pub fn serve_client(mut stream: UnixStream) {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_touch_panel_version, find_touch_thp_config_offset, gaming_dynamic_target_opp,
+        PersistedState, classify_touch_panel_version, find_touch_thp_config_offset,
+        gaming_dynamic_target_opp, migrate_legacy_gpu_profile_cpu_state,
         parse_ged_current_frequency_mhz, profile_uses_ged_boost,
     };
 
@@ -4830,5 +4891,50 @@ mod tests {
         assert!(profile_uses_ged_boost(1));
         assert!(!profile_uses_ged_boost(2));
         assert!(profile_uses_ged_boost(3));
+    }
+
+    #[test]
+    fn migrates_only_the_cpu_signature_written_by_legacy_gpu_profiles() {
+        let mut legacy = PersistedState {
+            perf: 3,
+            gpu_profile_cpu_isolated: 0,
+            cpu0: "performance".into(),
+            cpu4: "performance".into(),
+            cpu7: "performance".into(),
+            cpu_min_freq0: 2100,
+            cpu_max_freq0: 2100,
+            cpu_min_freq4: 3000,
+            cpu_max_freq4: 3000,
+            cpu_min_freq7: 3250,
+            cpu_max_freq7: 3250,
+            ..PersistedState::default()
+        };
+
+        assert!(migrate_legacy_gpu_profile_cpu_state(&mut legacy));
+        assert_eq!(legacy.gpu_profile_cpu_isolated, 1);
+        assert!(legacy.cpu0.is_empty());
+        assert_eq!(legacy.cpu_min_freq0, -1);
+        assert_eq!(legacy.cpu_max_freq7, -1);
+
+        let mut custom = PersistedState {
+            perf: 3,
+            gpu_profile_cpu_isolated: 0,
+            cpu0: "schedutil".into(),
+            cpu4: "schedutil".into(),
+            cpu7: "schedutil".into(),
+            cpu_min_freq0: 600,
+            cpu_max_freq0: 1800,
+            cpu_min_freq4: 800,
+            cpu_max_freq4: 2200,
+            cpu_min_freq7: 1200,
+            cpu_max_freq7: 2800,
+            ..PersistedState::default()
+        };
+
+        assert!(!migrate_legacy_gpu_profile_cpu_state(&mut custom));
+        assert_eq!(custom.gpu_profile_cpu_isolated, 1);
+        assert_eq!(custom.cpu0, "schedutil");
+        assert_eq!(custom.cpu_min_freq0, 600);
+        assert_eq!(custom.cpu_max_freq7, 2800);
     }
 }
