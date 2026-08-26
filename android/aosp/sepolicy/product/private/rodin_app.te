@@ -1,2 +1,4 @@
 type rodin_app, domain;
+typeattribute rodin_app coredomain;
 app_domain(rodin_app)
+untrusted_app_domain(rodin_app)

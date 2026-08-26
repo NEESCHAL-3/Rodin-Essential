@@ -368,10 +368,19 @@ mod android {
     }
 
     fn output_handle() -> Result<(File, PathBuf, i32, Option<u32>), i32> {
-        if let Some(pid) = touch_service_pid()
-            && let Ok((file, path)) = service_output_handle(pid)
-        {
-            return Ok((file, path, 1, Some(pid)));
+        // AOSP policy deliberately does not grant CAP_SYS_PTRACE to the
+        // daemon: Android's platform neverallows reserve that capability for
+        // a fixed set of core diagnostics. ROM-native deployments therefore
+        // use TouchFeature for native calibration and open the panel event
+        // directly under the daemon's dedicated input permission. Root-module
+        // deployments may first duplicate the vendor service handle and retain
+        // the direct path as their fallback.
+        if std::env::var("RODIN_DIRECT_INPUT_ONLY").as_deref() != Ok("1") {
+            if let Some(pid) = touch_service_pid()
+                && let Ok((file, path)) = service_output_handle(pid)
+            {
+                return Ok((file, path, 1, Some(pid)));
+            }
         }
 
         direct_output_handle().map(|(file, path)| (file, path, 2, None))

@@ -160,20 +160,22 @@ KEY_PASS="${RODIN_KEY_PASS:-$KS_PASS}"
 KEYSTORE="${RODIN_KEYSTORE:-}"
 
 if [ -z "$KEYSTORE" ]; then
-    KEYSTORE="$OUT/signing/rodin-essential-development.jks"
+    KEYSTORE="$ROOT/out/signing/rodin-essential-development.jks"
     ALIAS="rodin-essential-development"
     mkdir -p "$(dirname "$KEYSTORE")"
-    keytool -genkeypair \
-        -keystore "$KEYSTORE" \
-        -storetype JKS \
-        -storepass "$KS_PASS" \
-        -keypass "$KEY_PASS" \
-        -alias "$ALIAS" \
-        -keyalg RSA \
-        -keysize 4096 \
-        -validity 10000 \
-        -dname "CN=Rodin Essential Development,O=Rodin Essential,C=NP" \
-        >/dev/null 2>&1
+    if [ ! -f "$KEYSTORE" ]; then
+        keytool -genkeypair \
+            -keystore "$KEYSTORE" \
+            -storetype JKS \
+            -storepass "$KS_PASS" \
+            -keypass "$KEY_PASS" \
+            -alias "$ALIAS" \
+            -keyalg RSA \
+            -keysize 4096 \
+            -validity 10000 \
+            -dname "CN=Rodin Essential Development,O=Rodin Essential,C=NP" \
+            >/dev/null 2>&1
+    fi
 else
     [ -f "$KEYSTORE" ] || {
         echo "RODIN_KEYSTORE does not exist: $KEYSTORE" >&2
@@ -241,6 +243,30 @@ for RODIN_ELF in \
     verify_elf_alignment "$RODIN_ELF"
 done
 echo "16K_ELF_ALIGNMENT=PASS"
+
+python3 - "$HOST_SO" "$BACKEND_DART" <<'PY'
+import re
+import subprocess
+import sys
+
+host, dart = sys.argv[1:]
+source = open(dart, encoding="utf-8").read()
+required = set(
+    re.findall(r"'((?:rodin_backend|rodin_host)_[A-Za-z0-9_]+)'", source)
+)
+symbols = subprocess.check_output(["readelf", "-Ws", host], text=True)
+exported = set(
+    re.findall(
+        r"\b((?:rodin_backend|rodin_host)_[A-Za-z0-9_]+)\s*$",
+        symbols,
+        re.MULTILINE,
+    )
+)
+missing = sorted(required - exported)
+if missing:
+    raise SystemExit("Missing native API symbols: " + ", ".join(missing))
+print(f"NATIVE_API_PARITY=PASS ({len(required)} Dart lookups)")
+PY
 
 if [ "${RODIN_BUILD_ONLY:-0}" = "1" ]; then
     echo

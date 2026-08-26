@@ -11,10 +11,10 @@ Flutter AOT interface
         │ Dart FFI
         ▼
 Rust NativeActivity host
-        │ abstract Unix socket, protocol 13.3
+        │ authenticated Unix socket, protocol 13.4
         ▼
 Rust rodin_daemon
-        ├── sysfs / procfs / cgroup / block controls
+        ├── sysfs / procfs / block controls
         ├── Xiaomi touch and display AIDL services
         ├── MediaTek GED and Mali devfreq
         └── persistent state and drift reassertion
@@ -33,13 +33,17 @@ payload is ARM64 native code:
 The APK uses a regular application UID. It has no shared UID, root launcher,
 privileged permission allowlist, or direct sysfs write path.
 
+In an AOSP integration, its certificate-bound `rodin_app` domain retains the
+standard `untrusted_app_all` base policy. The dedicated label narrows daemon
+socket ownership; it does not turn the APK into a privileged or system app.
+
 ### Native host
 
 `runtime/host-rust` owns:
 
 - NativeActivity lifecycle, Android window, input queue, and back dispatch.
 - EGL/OpenGL/Skia Flutter embedder lifecycle and choreographer frame pacing.
-- JNI bridges for permissions, haptics, app catalog, theme, and URL launch.
+- JNI bridges for permissions, haptics, theme, and URL launch.
 - Nonblocking Dart FFI calls and cached daemon telemetry.
 - Command serialization over the daemon socket.
 
@@ -62,11 +66,15 @@ The daemon listens on a Linux abstract Unix socket. In an AOSP build, SELinux
 allows only the dedicated `rodin_app` domain to connect in production. The
 `rodin_ctl` client is allowed only on `userdebug` and `eng` builds.
 
-The KernelSU Next/Magisk installer instead generates a narrow `connectto` rule
-for the root manager's live daemon domain. Because ordinary application types
-are shared by multiple packages, the module also passes the package UID into
-the daemon and validates each connection with Linux `SO_PEERCRED`. UID 0 and
-the installed Rodin Essential UID are the only accepted module clients.
+The KernelSU Next/Magisk daemon initiates a second authenticated socket path to
+the normal Android app, avoiding an app-to-root SELinux transition. Both peers
+validate Linux credentials with `SO_PEERCRED`: the app accepts only UID 0, and
+the daemon accepts only UID 0 or the exact UID Android assigned to Rodin
+Essential. The root module does not patch SELinux and never depends on the
+direct path. If the installed policy already permits the authenticated direct
+connection, the host can use it; otherwise it latches onto the daemon-initiated
+path. AOSP builds use the direct path with a certificate-bound dedicated
+`rodin_app` SELinux domain.
 
 ## Persistence
 
@@ -76,10 +84,13 @@ The daemon selects its state directory from `RODIN_STATE_DIR`:
 - KernelSU Next or Magisk service: `/data/adb/rodin-essential`
 - Development fallback: `/data/adb/rodin-essential`
 
-State is written atomically through `state.conf.tmp` and rename. The daemon
-loads it once at startup, reapplies it after Android boot completes, and keeps
-running independently of the application process. Removing the app from recents
-or force-stopping it therefore does not stop the active backend configuration.
+State updates are transactional. The daemon writes `state.conf.tmp` with mode
+0600, synchronizes it, renames it over `state.conf`, and synchronizes the state
+directory before replacing its in-memory state. A command cannot report a
+durable success if that sequence fails. The daemon loads the file once at
+startup, reapplies it after Android boot completes, and keeps running
+independently of the application process. Removing the app from recents or
+force-stopping it therefore does not stop the active backend configuration.
 
 Persisted domains include performance profile, GPU bounds/governor/GED/power
 policy, CPU governors and ranges, online-core mask, UFS scheduler, touch profile,
@@ -94,11 +105,13 @@ only as a fallback on ports that omit the AIDL service.
 - 250 mode requests the native 240 Hz timing block.
 - 500 mode requests the native 480 Hz timing block.
 - 1000 mode keeps the physical source at 480 Hz and emits a verified 1 ms
-  Android event stream through a duplicated vendor event descriptor.
+  Android event stream through the panel input event.
 
-The 1000 path needs `SYS_PTRACE`, input-device access, `pidfd_getfd`, and narrowly
-scoped SELinux access to the Rodin touch HAL domain. These permissions belong to
-the daemon only.
+In a root-module deployment, the daemon first tries `pidfd_getfd` on Xiaomi's
+touch service handle and falls back to opening the detected multitouch event
+directly. The AOSP deployment selects the direct input path explicitly. This
+keeps Android's platform `SYS_PTRACE` neverallow intact while granting only the
+daemon access to `input_device`.
 
 ## Performance ownership
 

@@ -37,7 +37,6 @@ enum RodinScreen {
   charging,
   touchBoost,
   displayStudio,
-  perAppProfiles,
   cpuControl,
   advancedConfiguration,
   resolution,
@@ -63,8 +62,6 @@ extension RodinScreenName on RodinScreen {
         return 'Touch Response';
       case RodinScreen.displayStudio:
         return 'Display Studio';
-      case RodinScreen.perAppProfiles:
-        return 'Per-app Profiles';
       case RodinScreen.cpuControl:
         return 'CPU Core & Frequency';
       case RodinScreen.advancedConfiguration:
@@ -653,8 +650,6 @@ class _RodinShellState extends State<RodinShell> {
         return TouchBoostScreen(onBack: _back);
       case RodinScreen.displayStudio:
         return DisplayStudioScreen(onBack: _back);
-      case RodinScreen.perAppProfiles:
-        return PerAppProfilesScreen(onBack: _back);
       case RodinScreen.cpuControl:
         return CpuControlScreen(onBack: _back);
       case RodinScreen.advancedConfiguration:
@@ -3306,9 +3301,7 @@ class HubsScreen extends StatelessWidget {
         final int rawUncap = backend.extendedValue(52);
         final int activePerf = snapshot.performanceProfile >= 0
             ? snapshot.performanceProfile
-            : (backend.extendedValue(19) == 1 && backend.extendedValue(20) >= 0
-                  ? backend.extendedValue(20)
-                  : 0);
+            : 0;
 
         final bool isBeast =
             (rawUncap == 1 && rawMinFreq == 1300 && rawMaxFreq == 1300) ||
@@ -3477,7 +3470,7 @@ class SupportScreen extends StatelessWidget {
                           runSpacing: 4,
                           children: <Widget>[
                             StatusPill(
-                              label: 'v1.18.0',
+                              label: 'v1.18.1',
                               accent: colors.primary,
                             ),
                             StatusPill(
@@ -5300,419 +5293,6 @@ class _DisplayStudioScreenState extends State<DisplayStudioScreen> {
           ),
         );
       },
-    );
-  }
-}
-
-String _performanceProfileLabel(int profile) {
-  return switch (profile) {
-    0 => 'Stock Balanced',
-    1 => 'Gaming Dynamic',
-    2 => 'Battery Saver',
-    3 => 'Extreme Beast',
-    _ => 'Stock Balanced',
-  };
-}
-
-class PerAppProfilesScreen extends StatefulWidget {
-  const PerAppProfilesScreen({required this.onBack, super.key});
-
-  final VoidCallback onBack;
-
-  @override
-  State<PerAppProfilesScreen> createState() => _PerAppProfilesScreenState();
-}
-
-class _PerAppProfilesScreenState extends State<PerAppProfilesScreen> {
-  Timer? _catalogTimer;
-  List<RodinInstalledApp> _apps = const <RodinInstalledApp>[];
-  String _query = '';
-  int _catalogRevision = -1;
-
-  @override
-  void initState() {
-    super.initState();
-
-    final RodinBackend backend = RodinBackend.instance;
-    backend.refreshInstalledApps();
-    _reloadCatalog(force: true);
-
-    _catalogTimer = Timer.periodic(const Duration(milliseconds: 3000), (_) {
-      if (!mounted) return;
-      _reloadCatalog();
-    });
-  }
-
-  void _reloadCatalog({bool force = false}) {
-    final RodinBackend backend = RodinBackend.instance;
-    final int revision = backend.installedAppsRevision();
-
-    if (!force && revision == _catalogRevision) {
-      return;
-    }
-
-    final List<RodinInstalledApp> apps = backend.installedApps();
-
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      _catalogRevision = revision;
-      _apps = apps;
-    });
-  }
-
-  @override
-  void dispose() {
-    _catalogTimer?.cancel();
-    _catalogTimer = null;
-    super.dispose();
-  }
-
-  List<RodinInstalledApp> get _filteredApps {
-    final String query = _query.trim().toLowerCase();
-
-    if (query.isEmpty) {
-      return _apps;
-    }
-
-    return _apps
-        .where((RodinInstalledApp app) {
-          return app.label.toLowerCase().contains(query) ||
-              app.packageName.toLowerCase().contains(query);
-        })
-        .toList(growable: false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final List<RodinInstalledApp> shown = _filteredApps;
-
-    return RodinScrollPage(
-      header: DetailHeader(title: 'Per-app Profiles', onBack: widget.onBack),
-      slivers: <Widget>[
-        SliverToBoxAdapter(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              const SizedBox(height: 4),
-              Text(
-                'Native foreground profiles with direct installed-app assignments',
-                style: TextStyle(
-                  fontSize: 13.5,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 10),
-              _PerAppHeaderStatus(apps: _apps),
-              const SizedBox(height: 12),
-              const SectionLabel('Installed apps'),
-              const SizedBox(height: 8),
-              SurfaceCard(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 13,
-                  vertical: 4,
-                ),
-                child: TextField(
-                  onChanged: (String value) {
-                    setState(() => _query = value);
-                  },
-                  textInputAction: TextInputAction.search,
-                  decoration: const InputDecoration(
-                    icon: Icon(Icons.search_rounded),
-                    hintText: 'Search apps or package names',
-                    border: InputBorder.none,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-            ],
-          ),
-        ),
-        if (_apps.isEmpty)
-          const SliverToBoxAdapter(
-            child: SurfaceCard(
-              child: _InfoBlock(
-                title: 'Loading installed apps',
-                text:
-                    'The native PackageManager catalog is refreshing in the background.',
-              ),
-            ),
-          )
-        else if (shown.isEmpty)
-          const SliverToBoxAdapter(
-            child: SurfaceCard(
-              child: _InfoBlock(
-                title: 'No matching apps',
-                text: 'Try another app name or package name.',
-              ),
-            ),
-          )
-        else
-          SliverList.builder(
-            itemCount: shown.length,
-            itemBuilder: (BuildContext context, int index) {
-              final RodinInstalledApp app = shown[index];
-              return Padding(
-                key: ValueKey<String>(app.packageName),
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _AppProfileRow(
-                  app: app,
-                  onProfileChanged: () => setState(() {}),
-                ),
-              );
-            },
-          ),
-      ],
-    );
-  }
-}
-
-class _PerAppHeaderStatus extends StatelessWidget {
-  const _PerAppHeaderStatus({required this.apps});
-
-  final List<RodinInstalledApp> apps;
-
-  @override
-  Widget build(BuildContext context) {
-    const Color accent = Color(0xFF67C2FF);
-
-    return _BackendSnapshotBuilder(
-      builder: (RodinBackendSnapshot snapshot) {
-        final RodinBackend backend = RodinBackend.instance;
-        final int perAppEnabled = backend.extendedValue(19);
-        final int activeProfile = backend.extendedValue(20);
-        final int mappingCount = backend.extendedValue(21);
-        final int applyAck = backend.extendedValue(30);
-        final int pruned = backend.extendedValue(31);
-        final int keepaliveAck = backend.extendedValue(32);
-        final int keepaliveCount = backend.extendedValue(33);
-        final int activeIndex = backend.activeInstalledAppIndex();
-
-        RodinInstalledApp? activeApp;
-        for (final RodinInstalledApp app in apps) {
-          if (app.index == activeIndex) {
-            activeApp = app;
-            break;
-          }
-        }
-
-        return Column(
-          children: <Widget>[
-            HeroCard(
-              icon: Icons.auto_awesome_motion_rounded,
-              accent: accent,
-              title: activeApp?.label ?? 'Per-app controller',
-              subtitle: perAppEnabled == 1
-                  ? activeApp == null
-                        ? 'Active · unmapped apps use Balanced'
-                        : '${activeApp.packageName} · runtime ${_performanceProfileLabel(activeProfile)}'
-                  : 'Disabled · saved global profile controls performance',
-            ),
-            const SizedBox(height: 9),
-            _SwitchCard(
-              icon: Icons.apps_rounded,
-              accent: const Color(0xFF56D8C7),
-              title: 'Enable per-app profiles',
-              subtitle:
-                  'Foreground changes are handled by the privileged Rust daemon',
-              value: perAppEnabled == 1,
-              enabled: snapshot.ready && !snapshot.busy,
-              stateKnown: perAppEnabled >= 0,
-              onChanged: backend.setPerAppPerformance,
-            ),
-            const SizedBox(height: 9),
-            SurfaceCard(
-              child: Column(
-                children: <Widget>[
-                  _DiagnosticRow(
-                    label: 'Runtime apply ACK',
-                    good: perAppEnabled != 1 || applyAck == 1,
-                    detail: perAppEnabled != 1
-                        ? 'Inactive'
-                        : applyAck == 1
-                        ? 'Applied and verified'
-                        : applyAck == 0
-                        ? 'Last apply failed'
-                        : 'Waiting for foreground app',
-                  ),
-                  const Divider(height: 14),
-                  _DiagnosticRow(
-                    label: 'Saved mappings',
-                    good: mappingCount >= 0,
-                    detail: mappingCount >= 0
-                        ? '$mappingCount apps'
-                        : 'Unknown',
-                  ),
-                  const Divider(height: 14),
-                  _DiagnosticRow(
-                    label: 'Package cleanup',
-                    good: pruned >= 0,
-                    detail: pruned > 0
-                        ? '$pruned stale mappings removed'
-                        : 'No stale mappings',
-                  ),
-                  const Divider(height: 14),
-                  _DiagnosticRow(
-                    label: 'Runtime keepalive',
-                    good: keepaliveAck != 0,
-                    detail: keepaliveAck == 1
-                        ? 'Active · $keepaliveCount reassertions'
-                        : keepaliveAck == 0
-                        ? 'Last reassertion failed'
-                        : 'Waiting for first wake cycle',
-                  ),
-                ],
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _AppProfileRow extends StatelessWidget {
-  const _AppProfileRow({required this.app, this.onProfileChanged});
-
-  final RodinInstalledApp app;
-  final VoidCallback? onProfileChanged;
-
-  Widget _buildIcon(ColorScheme colors, Color accent) {
-    if (app.iconPath.isNotEmpty) {
-      final File file = File(app.iconPath);
-      return Container(
-        width: 42,
-        height: 42,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(11),
-          color: colors.surfaceContainerHighest.withValues(alpha: 0.4),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Image.file(
-          file,
-          width: 42,
-          height: 42,
-          cacheWidth: 84,
-          cacheHeight: 84,
-          filterQuality: FilterQuality.low,
-          gaplessPlayback: true,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => IconTile(
-            icon: app.system ? Icons.android_rounded : Icons.apps_rounded,
-            accent: app.system ? colors.onSurfaceVariant : accent,
-            size: 42,
-          ),
-        ),
-      );
-    }
-
-    return IconTile(
-      icon: app.system ? Icons.android_rounded : Icons.apps_rounded,
-      accent: app.system ? colors.onSurfaceVariant : accent,
-      size: 42,
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colors = Theme.of(context).colorScheme;
-    const Color accent = Color(0xFF67C2FF);
-    final RodinBackend backend = RodinBackend.instance;
-    final int selectedProfile = backend.installedAppProfile(app.index);
-
-    const List<_ChoiceOption> options = <_ChoiceOption>[
-      _ChoiceOption(-1, 'Default'),
-      _ChoiceOption(0, 'Balanced'),
-      _ChoiceOption(1, 'Performance'),
-      _ChoiceOption(2, 'Battery'),
-      _ChoiceOption(3, 'Gaming'),
-    ];
-
-    return RepaintBoundary(
-      child: SurfaceCard(
-        padding: const EdgeInsets.fromLTRB(13, 12, 13, 11),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Row(
-              children: <Widget>[
-                _buildIcon(colors, accent),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        app.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        app.packageName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 10.8,
-                          color: colors.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  _performanceProfileLabel(selectedProfile),
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                    color: selectedProfile >= 0
-                        ? accent
-                        : colors.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: options
-                  .map((_ChoiceOption option) {
-                    final bool selected = option.code == selectedProfile;
-
-                    return ChoiceChip(
-                      label: Text(option.label),
-                      selected: selected,
-                      onSelected: !selected
-                          ? (_) {
-                              final bool accepted = backend
-                                  .setInstalledAppProfile(
-                                    app.index,
-                                    option.code,
-                                  );
-                              if (accepted) {
-                                RodinHaptics.segment();
-                                onProfileChanged?.call();
-                              } else {
-                                RodinHaptics.reject();
-                              }
-                            }
-                          : null,
-                      visualDensity: VisualDensity.compact,
-                    );
-                  })
-                  .toList(growable: false),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -9894,10 +9474,7 @@ class _MaliGpuScreenState extends State<MaliGpuScreen> {
             _optimisticProfile ??
             (snapshot.performanceProfile >= 0
                 ? snapshot.performanceProfile
-                : (backend.extendedValue(19) == 1 &&
-                          backend.extendedValue(20) >= 0
-                      ? backend.extendedValue(20)
-                      : 0));
+                : 0);
         final int requestedMaxFreq = switch (activePerf) {
           3 => 1300,
           1 => 1300,
@@ -12726,19 +12303,14 @@ class LiveDashboardHero extends StatelessWidget {
   Widget build(BuildContext context) {
     return _BackendSnapshotBuilder(
       builder: (RodinBackendSnapshot snapshot) {
-        final RodinBackend backend = RodinBackend.instance;
         final ColorScheme colors = Theme.of(context).colorScheme;
         final bool ready = snapshot.ready;
         final int onlineCores = _rodinOnlineCoreCount(snapshot);
-        final int perAppEnabled = backend.extendedValue(19);
-        final int perAppProfile = backend.extendedValue(20);
         final int activePerf = snapshot.performanceProfile >= 0
             ? snapshot.performanceProfile
-            : (perAppEnabled == 1 && perAppProfile >= 0 ? perAppProfile : 0);
+            : 0;
         final String profile = _rodinPerformanceLabel(activePerf);
-        final String source = perAppEnabled == 1
-            ? 'Adaptive Engine active'
-            : 'Global System Profile';
+        const String source = 'Global System Profile';
         final String battery = snapshot.batteryCapacity >= 0
             ? '${snapshot.batteryCapacity}%'
             : '—';
@@ -12875,13 +12447,7 @@ class LiveDashboardHero extends StatelessWidget {
                   const SizedBox(height: 6),
                   Row(
                     children: <Widget>[
-                      Icon(
-                        perAppEnabled == 1
-                            ? Icons.apps_rounded
-                            : Icons.tune_rounded,
-                        size: 15,
-                        color: profileAccent,
-                      ),
+                      Icon(Icons.tune_rounded, size: 15, color: profileAccent),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(

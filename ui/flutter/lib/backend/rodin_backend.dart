@@ -1,27 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:ffi' as ffi;
 
 typedef _BackendGetNative = ffi.Int32 Function(ffi.Int32);
 typedef _BackendGetDart = int Function(int);
 typedef _BackendSetNative = ffi.Int32 Function(ffi.Int32, ffi.Int32, ffi.Int32);
 typedef _BackendSetDart = int Function(int, int, int);
-
-final class RodinInstalledApp {
-  const RodinInstalledApp({
-    required this.index,
-    required this.packageName,
-    required this.label,
-    required this.system,
-    this.iconPath = '',
-  });
-
-  final int index;
-  final String packageName;
-  final String label;
-  final bool system;
-  final String iconPath;
-}
 
 final class RodinBackendSnapshot {
   const RodinBackendSnapshot({
@@ -176,14 +159,6 @@ final class RodinBackend {
   late _SetI32Dart _hapticNative;
   late _BackendGetDart _backendGetNative;
   late _BackendSetDart _backendSetNative;
-  late _I32Dart _appsRefreshNative;
-  late _I32Dart _appsRevisionNative;
-  late _I32Dart _appsCountNative;
-  late _I32Dart _appsBlobLenNative;
-  late _I32ToI32Dart _appsBlobByteNative;
-  late _I32ToI32Dart _appProfileNative;
-  late _SetTwoI32Dart _setAppProfileNative;
-  late _I32Dart _activeAppIndexNative;
   late _SetI32Dart _setBackInterceptNative;
   late _I32Dart _consumeBackRequestNative;
 
@@ -376,32 +351,6 @@ final class RodinBackend {
             'rodin_backend_extended_set',
           );
 
-      _appsRefreshNative = lib.lookupFunction<_I32Native, _I32Dart>(
-        'rodin_host_apps_refresh',
-      );
-      _appsRevisionNative = lib.lookupFunction<_I32Native, _I32Dart>(
-        'rodin_host_apps_revision',
-      );
-      _appsCountNative = lib.lookupFunction<_I32Native, _I32Dart>(
-        'rodin_host_apps_count',
-      );
-      _appsBlobLenNative = lib.lookupFunction<_I32Native, _I32Dart>(
-        'rodin_host_apps_blob_len',
-      );
-      _appsBlobByteNative = lib.lookupFunction<_I32ToI32Native, _I32ToI32Dart>(
-        'rodin_host_apps_blob_byte',
-      );
-      _appProfileNative = lib.lookupFunction<_I32ToI32Native, _I32ToI32Dart>(
-        'rodin_host_app_profile',
-      );
-      _setAppProfileNative = lib
-          .lookupFunction<_SetTwoI32Native, _SetTwoI32Dart>(
-            'rodin_host_set_app_profile',
-          );
-      _activeAppIndexNative = lib.lookupFunction<_I32Native, _I32Dart>(
-        'rodin_host_active_app_index',
-      );
-
       _setBackInterceptNative = lib.lookupFunction<_SetI32Native, _SetI32Dart>(
         'rodin_host_set_back_intercept',
       );
@@ -586,11 +535,6 @@ final class RodinBackend {
 
   bool resetExpertDisplay() => setExtendedOperation(4, 0);
 
-  bool setPerAppPerformance(bool enabled) =>
-      setExtendedOperation(5, enabled ? 1 : 0);
-
-  bool assignLastAppProfile(int profile) => setExtendedOperation(6, profile);
-
   bool setCpuManualMode(bool enabled) =>
       setExtendedOperation(7, enabled ? 1 : 0);
 
@@ -704,100 +648,6 @@ final class RodinBackend {
 
   bool setGpuPowerPolicy(int policyCode) =>
       setExtendedOperation(22, policyCode);
-
-  bool refreshInstalledApps() {
-    if (!_started || _lib == null) return false;
-    return _appsRefreshNative() == 1;
-  }
-
-  int installedAppsRevision() {
-    if (!_started || _lib == null) return -1;
-    return _appsRevisionNative();
-  }
-
-  int installedAppsCount() {
-    if (!_started || _lib == null) return 0;
-    return _appsCountNative().clamp(0, 4096).toInt();
-  }
-
-  List<RodinInstalledApp> installedApps() {
-    if (!_started || _lib == null) {
-      return const <RodinInstalledApp>[];
-    }
-
-    final int length = _appsBlobLenNative().clamp(0, 1 << 20).toInt();
-
-    if (length <= 0) {
-      return const <RodinInstalledApp>[];
-    }
-
-    final List<int> bytes = List<int>.filled(length, 0);
-
-    for (int offset = 0; offset < length; offset++) {
-      final int value = _appsBlobByteNative(offset);
-
-      if (value < 0 || value > 255) {
-        return const <RodinInstalledApp>[];
-      }
-
-      bytes[offset] = value;
-    }
-
-    final String raw = utf8.decode(bytes, allowMalformed: true);
-
-    final List<RodinInstalledApp> apps = <RodinInstalledApp>[];
-    final List<String> rows = const LineSplitter().convert(raw);
-
-    for (int index = 0; index < rows.length; index++) {
-      final List<String> fields = rows[index].split('\t');
-
-      if (fields.length < 3) {
-        continue;
-      }
-
-      final String packageName = fields[0].trim();
-      final String label = fields[1].trim();
-      final bool system = fields[2].trim() == '1';
-      final String iconPath = fields.length >= 4 ? fields[3].trim() : '';
-
-      if (packageName.isEmpty) {
-        continue;
-      }
-
-      apps.add(
-        RodinInstalledApp(
-          index: index,
-          packageName: packageName,
-          label: label.isEmpty ? packageName : label,
-          system: system,
-          iconPath: iconPath,
-        ),
-      );
-    }
-
-    return List<RodinInstalledApp>.unmodifiable(apps);
-  }
-
-  int installedAppProfile(int index) {
-    if (!_started || _lib == null || index < 0) return -1;
-    return _appProfileNative(index);
-  }
-
-  bool setInstalledAppProfile(int index, int profile) {
-    if (!_started ||
-        _lib == null ||
-        index < 0 ||
-        !const <int>{-1, 0, 1, 2, 3}.contains(profile)) {
-      return false;
-    }
-
-    return _queue(_setAppProfileNative(index, profile));
-  }
-
-  int activeInstalledAppIndex() {
-    if (!_started || _lib == null) return -1;
-    return _activeAppIndexNative();
-  }
 
   int photoPermissionState() {
     if (!_started) return 0;

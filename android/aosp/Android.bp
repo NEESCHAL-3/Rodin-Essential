@@ -7,9 +7,13 @@ package {
 android_app_import {
     name: "RodinEssential",
     apk: "prebuilt/RodinEssential.apk",
-    certificate: "platform",
+    presigned: true,
+    preprocessed: true,
     product_specific: true,
     required: ["rodin_daemon"],
+    dex_preopt: {
+        enabled: false,
+    },
 }
 
 cc_prebuilt_binary {
@@ -17,7 +21,11 @@ cc_prebuilt_binary {
     srcs: ["prebuilt/rodin_daemon"],
     compile_multilib: "64",
     product_specific: true,
-    check_elf_files: false,
+    shared_libs: [
+        "libbinder_ndk",
+        "libc",
+        "libdl",
+    ],
     strip: {
         none: true,
     },
@@ -29,7 +37,10 @@ cc_prebuilt_binary {
     srcs: ["prebuilt/rodin_ctl"],
     compile_multilib: "64",
     product_specific: true,
-    check_elf_files: false,
+    shared_libs: [
+        "libc",
+        "libdl",
+    ],
     strip: {
         none: true,
     },
