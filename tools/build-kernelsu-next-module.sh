@@ -37,7 +37,7 @@ for RODIN_TOOL in "$RODIN_STRIP" "$RODIN_AAPT2" "$RODIN_APKSIGNER" "$RODIN_ZIPAL
 done
 
 "$RODIN_PROJECT_ROOT/tools/test-kernelsu-watchdog-lock.sh"
-"$RODIN_PROJECT_ROOT/tools/test-root-module-policy.sh"
+"$RODIN_PROJECT_ROOT/tools/test-root-module-contract.sh"
 
 mkdir -p "$RODIN_STAGE/bin" "$RODIN_STAGE/app"
 
@@ -64,11 +64,9 @@ done
 install -m 0644 "$RODIN_MODULE_SOURCE/module.prop" "$RODIN_STAGE/module.prop"
 install -m 0755 "$RODIN_MODULE_SOURCE/customize.sh" "$RODIN_STAGE/customize.sh"
 install -m 0755 "$RODIN_MODULE_SOURCE/service.sh" "$RODIN_STAGE/service.sh"
-install -m 0755 "$RODIN_MODULE_SOURCE/apply-sepolicy.sh" "$RODIN_STAGE/apply-sepolicy.sh"
 install -m 0755 "$RODIN_MODULE_SOURCE/action.sh" "$RODIN_STAGE/action.sh"
 install -m 0755 "$RODIN_MODULE_SOURCE/uninstall.sh" "$RODIN_STAGE/uninstall.sh"
 install -m 0644 "$RODIN_MODULE_SOURCE/skip_mount" "$RODIN_STAGE/skip_mount"
-install -m 0644 "$RODIN_MODULE_SOURCE/sepolicy.rule" "$RODIN_STAGE/sepolicy.rule"
 install -m 0644 "$RODIN_APK" "$RODIN_STAGE/app/RodinEssential.apk"
 install -m 0755 "$RODIN_DAEMON" "$RODIN_STAGE/bin/rodin_daemon"
 install -m 0755 "$RODIN_CTL" "$RODIN_STAGE/bin/rodin_ctl"
@@ -76,7 +74,7 @@ install -m 0755 "$RODIN_CTL" "$RODIN_STAGE/bin/rodin_ctl"
 "$RODIN_STRIP" --strip-unneeded "$RODIN_STAGE/bin/rodin_daemon"
 "$RODIN_STRIP" --strip-unneeded "$RODIN_STAGE/bin/rodin_ctl"
 
-for RODIN_SCRIPT in customize.sh service.sh apply-sepolicy.sh action.sh uninstall.sh; do
+for RODIN_SCRIPT in customize.sh service.sh action.sh uninstall.sh; do
     bash -n "$RODIN_STAGE/$RODIN_SCRIPT"
     if LC_ALL=C grep -q $'\r' "$RODIN_STAGE/$RODIN_SCRIPT"; then
         echo "CRLF line endings are not allowed: $RODIN_SCRIPT" >&2
@@ -84,17 +82,14 @@ for RODIN_SCRIPT in customize.sh service.sh apply-sepolicy.sh action.sh uninstal
     fi
 done
 
-if LC_ALL=C grep -q $'\r' "$RODIN_STAGE/sepolicy.rule"; then
-    echo "CRLF line endings are not allowed: sepolicy.rule" >&2
+grep -Fxq 'export RODIN_REVERSE_IPC=1' "$RODIN_STAGE/service.sh" || {
+    echo "Missing authenticated reverse IPC activation" >&2
     exit 1
-fi
-for RODIN_POLICY_DOMAIN in su ksu magisk; do
-    grep -Fxq "allow appdomain $RODIN_POLICY_DOMAIN unix_stream_socket connectto" \
-        "$RODIN_STAGE/sepolicy.rule" || {
-        echo "Missing root-manager socket policy: $RODIN_POLICY_DOMAIN" >&2
-        exit 1
-    }
-done
+}
+grep -Fq 'App IPC: verified (daemon-initiated)' "$RODIN_STAGE/action.sh" || {
+    echo "Module Action does not verify the Android app transport" >&2
+    exit 1
+}
 
 RODIN_MODID="$(sed -n 's/^id=//p' "$RODIN_STAGE/module.prop")"
 RODIN_VERSION_CODE="$(sed -n 's/^versionCode=//p' "$RODIN_STAGE/module.prop")"
@@ -127,6 +122,23 @@ RODIN_APK_VERSION_NAME="$(printf '%s\n' "$RODIN_APK_HEADER" | sed -n "s/^package
 }
 
 "$RODIN_APKSIGNER" verify --verbose "$RODIN_STAGE/app/RodinEssential.apk" >/dev/null
+RODIN_CERT_DIGEST="$("$RODIN_APKSIGNER" verify --print-certs \
+    "$RODIN_STAGE/app/RodinEssential.apk" \
+    | sed -n 's/^.*certificate SHA-256 digest: //p' | head -n 1 \
+    | tr '[:upper:]' '[:lower:]')"
+RODIN_EXPECTED_CERT_DIGEST="$(tr -d '[:space:]:' \
+    <"$RODIN_PROJECT_ROOT/android/package/release-cert.sha256" \
+    | tr '[:upper:]' '[:lower:]')"
+[[ "$RODIN_CERT_DIGEST" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "Unable to read APK signing certificate" >&2
+    exit 1
+}
+[ "$RODIN_CERT_DIGEST" = "$RODIN_EXPECTED_CERT_DIGEST" ] || {
+    echo "Official release certificate mismatch" >&2
+    echo "expected=$RODIN_EXPECTED_CERT_DIGEST" >&2
+    echo "actual=$RODIN_CERT_DIGEST" >&2
+    exit 1
+}
 "$RODIN_ZIPALIGN" -c -P 16 -v 4 "$RODIN_STAGE/app/RodinEssential.apk" >/dev/null
 if unzip -Z1 "$RODIN_STAGE/app/RodinEssential.apk" | grep -Eq '(^|/)classes([0-9]*)?\.dex$'; then
     echo "DEX is not allowed in the Rodin Essential APK" >&2
@@ -158,14 +170,14 @@ done
 (
     cd "$RODIN_STAGE"
     zip -X -9 "$RODIN_ZIP" \
-        module.prop customize.sh service.sh apply-sepolicy.sh action.sh uninstall.sh skip_mount sepolicy.rule \
+        module.prop customize.sh service.sh action.sh uninstall.sh skip_mount \
         app/RodinEssential.apk bin/rodin_daemon bin/rodin_ctl >/dev/null
 )
 
 unzip -tq "$RODIN_ZIP"
 RODIN_ENTRIES="$(unzip -Z1 "$RODIN_ZIP")"
 for RODIN_REQUIRED in \
-    module.prop customize.sh service.sh apply-sepolicy.sh action.sh uninstall.sh skip_mount sepolicy.rule \
+    module.prop customize.sh service.sh action.sh uninstall.sh skip_mount \
     app/RodinEssential.apk bin/rodin_daemon bin/rodin_ctl; do
     echo "$RODIN_ENTRIES" | grep -Fxq "$RODIN_REQUIRED" || {
         echo "Missing module entry: $RODIN_REQUIRED" >&2
@@ -175,6 +187,10 @@ done
 
 if echo "$RODIN_ENTRIES" | grep -Eq '(^|/)system/'; then
     echo "Unexpected system overlay in the root module" >&2
+    exit 1
+fi
+if echo "$RODIN_ENTRIES" | grep -Eq '(^|/)(sepolicy\.rule|apply-sepolicy\.sh)$'; then
+    echo "Unexpected SELinux patch payload in the root module" >&2
     exit 1
 fi
 
@@ -192,5 +208,6 @@ echo "ROOT_MODULE=PASS"
 echo "MANAGERS=KernelSU Next, Magisk"
 echo "APK_PACKAGE=$RODIN_APK_PACKAGE"
 echo "APK_VERSION=$RODIN_APK_VERSION_NAME ($RODIN_APK_VERSION_CODE)"
+echo "APK_CERT_SHA256=$RODIN_CERT_DIGEST"
 echo "ZIP=$RODIN_ZIP"
 echo "STABLE_ZIP=$RODIN_STABLE_ZIP"

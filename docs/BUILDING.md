@@ -56,9 +56,10 @@ should always use build-only mode or `tools/export-aosp-bundle.sh`.
 
 ## Signing
 
-An omitted `RODIN_KEYSTORE` creates a disposable development key inside the
-ignored build output. Nothing under `android/package` contains release signing
-material.
+An omitted `RODIN_KEYSTORE` creates a stable local development key at
+`out/signing/rodin-essential-development.jks`. The ignored key is generated
+once and reused so repeated local builds remain update-compatible. Nothing
+under `android/package` contains private signing material.
 
 Supply release credentials through environment variables:
 
@@ -70,25 +71,29 @@ RODIN_KEY_PASS='key-password' \
 RODIN_BUILD_ONLY=1 ./build-and-install.sh
 ```
 
-AOSP integration re-signs the imported APK with the ROM platform certificate.
-The certificate does not change the app UID and the manifest requests no
-privileged permission.
+AOSP exports require an explicit persistent key. The imported APK remains
+presigned with that certificate, and the exported public PEM binds its exact
+package name to the dedicated `rodin_app` domain. The private key remains with
+the ROM maintainer.
 
 ## Local checks
 
 Run before committing:
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy -p rodin-essential-daemon --all-targets -- -D warnings
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test -p rodin-essential-daemon
-flutter analyze ui/flutter
+dart format --output=none --set-exit-if-changed ui/flutter/lib
+(cd ui/flutter && flutter analyze)
 bash -n build-and-install.sh
 bash -n tools/build-flutter-engine.sh
 bash -n tools/build-kernelsu-next-module.sh
-bash tools/test-kernelsu-watchdog-lock.sh
 bash -n tools/export-aosp-bundle.sh
 bash -n tools/integrate-aosp-rom.sh
+./tools/test-kernelsu-watchdog-lock.sh
+./tools/test-root-module-contract.sh
+./tools/test-aosp-integration.sh
 git diff --check
 ```
 
@@ -102,6 +107,7 @@ Build verification additionally checks:
 - APK signature verification succeeds.
 - ZIP entries satisfy 16 KB page alignment.
 - Every native ELF LOAD segment has at least 16 KB alignment.
+- Every Dart FFI lookup resolves to an exported ARM64 host symbol.
 - Daemon and control binaries target ARM64 Android.
 - The packaged runtime stamp covers every Flutter asset and `icudtl.dat`, so
   application updates cannot reuse an incompatible extraction cache.
@@ -109,7 +115,11 @@ Build verification additionally checks:
 ## AOSP export
 
 ```bash
-./tools/export-aosp-bundle.sh
+RODIN_KEYSTORE=/absolute/path/rom-app.jks \
+RODIN_KEY_ALIAS=rodin-essential \
+RODIN_KEYSTORE_PASS='store-password' \
+RODIN_KEY_PASS='key-password' \
+  ./tools/export-aosp-bundle.sh
 ```
 
 The export fails rather than replacing an existing destination. Pass a new
@@ -118,7 +128,11 @@ absolute or relative destination as its first argument when required.
 To build and stage the integration directly in an AOSP checkout:
 
 ```bash
-./tools/integrate-aosp-rom.sh /absolute/path/to/aosp
+RODIN_KEYSTORE=/absolute/path/rom-app.jks \
+RODIN_KEY_ALIAS=rodin-essential \
+RODIN_KEYSTORE_PASS='store-password' \
+RODIN_KEY_PASS='key-password' \
+  ./tools/integrate-aosp-rom.sh /absolute/path/to/aosp
 ```
 
 The helper does not modify existing device or product makefiles. It prints the
@@ -136,14 +150,18 @@ RODIN_KEY_PASS='key-password' \
 
 This builds the application and daemon together, then creates one ZIP for
 KernelSU Next Manager and the Magisk app. The build validates module metadata,
-shell syntax, root-manager SELinux socket policies, the bundled APK
-package/version/signature/zero-DEX/16 KB alignment, ARM64 daemon binaries,
-Android dynamic linker, archive contents, and checksum.
+shell syntax, the authenticated reverse-IPC contract, the official APK signing
+certificate, package/version/zero-DEX/16 KB alignment, ARM64 daemon binaries,
+Android dynamic linker, archive contents, and checksum. It also rejects any
+SELinux patch payload or system overlay in the resulting ZIP.
 
 The module installs the bundled APK through Android's package manager as a
 normal user application. It does not mount an APK into a system partition, so
-KernelSU does not need a mounting metamodule. Installation from recovery is not
-supported.
+KernelSU does not need a metamodule. The daemon exposes an outward connection
+for policies that block the authenticated direct path; the module neither
+patches live SELinux policy nor converts the APK into a privileged application.
+A policy that already permits the direct connection may use it. Installation
+from recovery is not supported.
 
 The builder requires a persistent `RODIN_KEYSTORE`; it never creates a
 disposable module signing identity. Reuse the same key for all published module

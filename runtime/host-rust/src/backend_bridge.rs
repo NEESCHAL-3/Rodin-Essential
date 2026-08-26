@@ -1,7 +1,6 @@
-use std::collections::HashMap;
 use std::ffi::c_void;
 use std::io::{Read, Write};
-use std::os::fd::FromRawFd;
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
@@ -10,7 +9,10 @@ use std::time::Duration;
 const AF_UNIX: i32 = 1;
 const SOCK_STREAM: i32 = 1;
 const SOCK_CLOEXEC: i32 = 0x80000;
-const SOCKET_NAME: &str = "rodin_essentiald_v13";
+const SOL_SOCKET: i32 = 1;
+const SO_PEERCRED: i32 = 17;
+const SOCKET_NAME: &str = "rodin_essentiald_v14";
+const REVERSE_SOCKET_NAME: &str = "rodin_essential_app_v14";
 const EXTENDED_VALUE_COUNT: usize = 81;
 
 #[repr(C)]
@@ -19,9 +21,20 @@ struct SockAddrUn {
     sun_path: [i8; 108],
 }
 
+#[repr(C)]
+struct UCred {
+    pid: i32,
+    uid: u32,
+    gid: u32,
+}
+
 unsafe extern "C" {
     fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
+    fn bind(fd: i32, addr: *const c_void, len: u32) -> i32;
+    fn listen(fd: i32, backlog: i32) -> i32;
+    fn accept4(fd: i32, addr: *mut c_void, len: *mut u32, flags: i32) -> i32;
     fn connect(fd: i32, addr: *const c_void, len: u32) -> i32;
+    fn getsockopt(fd: i32, level: i32, name: i32, value: *mut c_void, len: *mut u32) -> i32;
     fn close(fd: i32) -> i32;
 }
 
@@ -79,8 +92,6 @@ struct Cache {
     dolby: AtomicI32,
     performance: AtomicI32,
     extended: [AtomicI32; EXTENDED_VALUE_COUNT],
-    perapp_profiles: Mutex<HashMap<String, i32>>,
-    perapp_last_package: Mutex<String>,
 }
 
 impl Cache {
@@ -117,8 +128,6 @@ impl Cache {
             dolby: AtomicI32::new(-1),
             performance: AtomicI32::new(-1),
             extended: std::array::from_fn(|_| AtomicI32::new(-1)),
-            perapp_profiles: Mutex::new(HashMap::new()),
-            perapp_last_package: Mutex::new(String::new()),
         }
     }
 }
@@ -138,8 +147,6 @@ enum Command {
     GpuGovernor(i32),
     IoScheduler(i32),
     Extended(i32, i32, i32),
-    PerAppPackage(String, i32),
-    OpenLink(i32),
 }
 
 struct Runtime {
@@ -165,6 +172,113 @@ fn abstract_addr(name: &str) -> Option<(SockAddrUn, u32)> {
 }
 
 static LAST_DAEMON_SPAWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static IPC_TRANSPORT: AtomicI32 = AtomicI32::new(0);
+
+struct ReverseIpc {
+    incoming: Mutex<mpsc::Receiver<UnixStream>>,
+}
+
+static REVERSE_IPC: OnceLock<Option<ReverseIpc>> = OnceLock::new();
+
+fn bind_listener(name: &str) -> Result<RawFd, String> {
+    let (addr, len) = abstract_addr(name).ok_or("invalid reverse socket name")?;
+    let fd = unsafe { socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0) };
+    if fd < 0 {
+        return Err(format!(
+            "reverse socket: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    if unsafe { bind(fd, &addr as *const _ as *const c_void, len) } != 0 {
+        let error = std::io::Error::last_os_error();
+        unsafe { close(fd) };
+        return Err(format!("reverse bind: {error}"));
+    }
+    if unsafe { listen(fd, 4) } != 0 {
+        let error = std::io::Error::last_os_error();
+        unsafe { close(fd) };
+        return Err(format!("reverse listen: {error}"));
+    }
+    Ok(fd)
+}
+
+fn peer_uid(stream: &UnixStream) -> Result<u32, String> {
+    let mut credentials = UCred {
+        pid: 0,
+        uid: u32::MAX,
+        gid: u32::MAX,
+    };
+    let mut length = std::mem::size_of::<UCred>() as u32;
+    let result = unsafe {
+        getsockopt(
+            stream.as_raw_fd(),
+            SOL_SOCKET,
+            SO_PEERCRED,
+            &mut credentials as *mut UCred as *mut c_void,
+            &mut length,
+        )
+    };
+    if result != 0 || length != std::mem::size_of::<UCred>() as u32 {
+        return Err(format!(
+            "reverse peer credentials: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(credentials.uid)
+}
+
+fn reverse_ipc() -> Option<&'static ReverseIpc> {
+    REVERSE_IPC
+        .get_or_init(|| {
+            let listener = match bind_listener(REVERSE_SOCKET_NAME) {
+                Ok(listener) => listener,
+                Err(error) => {
+                    rodin_action_log(format!("RODIN_REVERSE_IPC_BIND_FAIL error={error}"));
+                    return None;
+                }
+            };
+            let (sender, receiver) = mpsc::sync_channel(1);
+            std::thread::spawn(move || {
+                loop {
+                    let fd = unsafe {
+                        accept4(
+                            listener,
+                            std::ptr::null_mut(),
+                            std::ptr::null_mut(),
+                            SOCK_CLOEXEC,
+                        )
+                    };
+                    if fd < 0 {
+                        std::thread::sleep(Duration::from_millis(100));
+                        continue;
+                    }
+                    let stream = unsafe { UnixStream::from_raw_fd(fd) };
+                    if peer_uid(&stream) != Ok(0) {
+                        rodin_action_log("RODIN_REVERSE_IPC_PEER_REJECT non_root".into());
+                        continue;
+                    }
+                    if sender.send(stream).is_err() {
+                        return;
+                    }
+                }
+            });
+            Some(ReverseIpc {
+                incoming: Mutex::new(receiver),
+            })
+        })
+        .as_ref()
+}
+
+fn take_reverse_connection() -> Result<UnixStream, String> {
+    let runtime = reverse_ipc().ok_or("reverse IPC unavailable")?;
+    let receiver = runtime
+        .incoming
+        .lock()
+        .map_err(|_| "reverse IPC lock poisoned")?;
+    receiver
+        .recv_timeout(Duration::from_secs(3))
+        .map_err(|error| format!("reverse IPC: {error}"))
+}
 
 fn ensure_daemon_running() {
     let now = std::time::SystemTime::now()
@@ -178,7 +292,26 @@ fn ensure_daemon_running() {
     }
 }
 
+fn configure_daemon_stream(stream: UnixStream) -> UnixStream {
+    // Super Touch's vendor first-frame transaction may wait up to two seconds
+    // for the panel pipeline. Keep the UI asynchronous, but allow that verified
+    // HAL transaction to finish instead of reporting a false timeout.
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
+    stream
+}
+
 fn connect_daemon() -> Result<UnixStream, String> {
+    if IPC_TRANSPORT.load(Ordering::Acquire) == 2 {
+        return match take_reverse_connection() {
+            Ok(stream) => Ok(configure_daemon_stream(stream)),
+            Err(error) => {
+                ensure_daemon_running();
+                Err(error)
+            }
+        };
+    }
+
     let (addr, len) = abstract_addr(SOCKET_NAME).ok_or("invalid socket name")?;
     let fd = unsafe { socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0) };
     if fd < 0 {
@@ -187,16 +320,33 @@ fn connect_daemon() -> Result<UnixStream, String> {
     if unsafe { connect(fd, &addr as *const _ as *const c_void, len) } != 0 {
         let e = std::io::Error::last_os_error();
         unsafe { close(fd) };
-        ensure_daemon_running();
-        return Err(format!("connect: {e}"));
+        match take_reverse_connection() {
+            Ok(stream) => {
+                IPC_TRANSPORT.store(2, Ordering::Release);
+                return Ok(configure_daemon_stream(stream));
+            }
+            Err(reverse_error) => {
+                ensure_daemon_running();
+                return Err(format!("direct connect: {e}; {reverse_error}"));
+            }
+        }
     }
     let stream = unsafe { UnixStream::from_raw_fd(fd) };
-    // Super Touch's vendor first-frame transaction may wait up to two seconds
-    // for the panel pipeline. Keep the UI asynchronous, but allow that verified
-    // HAL transaction to finish instead of reporting a false timeout.
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
-    Ok(stream)
+    if peer_uid(&stream) != Ok(0) {
+        drop(stream);
+        return match take_reverse_connection() {
+            Ok(stream) => {
+                IPC_TRANSPORT.store(2, Ordering::Release);
+                Ok(configure_daemon_stream(stream))
+            }
+            Err(reverse_error) => {
+                ensure_daemon_running();
+                Err(format!("direct daemon peer is not UID 0; {reverse_error}"))
+            }
+        };
+    }
+    IPC_TRANSPORT.store(1, Ordering::Release);
+    Ok(configure_daemon_stream(stream))
 }
 
 fn request(command: &str) -> Result<String, String> {
@@ -328,7 +478,7 @@ fn refresh(cache: &Cache) -> Result<(), String> {
             map.insert(k.to_string(), v.to_string());
         }
     }
-    if map.get("protocol").map(String::as_str) != Some("13.3") {
+    if map.get("protocol").map(String::as_str) != Some("13.4") {
         return Err("protocol mismatch".into());
     }
 
@@ -443,9 +593,6 @@ fn refresh(cache: &Cache) -> Result<(), String> {
         ("cpu_drift7", 16),
         ("gpu_drift", 17),
         ("io_drift", 18),
-        ("perapp_enabled", 19),
-        ("perapp_active", 20),
-        ("perapp_count", 21),
         ("display_width", 22),
         ("display_height", 23),
         ("display_hz_x10", 24),
@@ -454,8 +601,6 @@ fn refresh(cache: &Cache) -> Result<(), String> {
         ("sunlight_saved", 27),
         ("display_ack", 28),
         ("touch_ack", 29),
-        ("perapp_apply_ack", 30),
-        ("perapp_pruned", 31),
         ("runtime_keepalive_ack", 32),
         ("runtime_keepalive_count", 33),
         ("cpu_manual", 34),
@@ -542,28 +687,6 @@ fn refresh(cache: &Cache) -> Result<(), String> {
         }
     }
 
-    if let Ok(mut profiles) = cache.perapp_profiles.lock() {
-        profiles.clear();
-
-        if let Some(raw) = map.get("perapp_map") {
-            for item in raw.split(',') {
-                let Some((package, profile)) = item.rsplit_once(':') else {
-                    continue;
-                };
-
-                if let Ok(profile) = profile.parse::<i32>()
-                    && matches!(profile, 0..=3)
-                {
-                    profiles.insert(package.to_string(), profile);
-                }
-            }
-        }
-    }
-
-    if let Ok(mut package) = cache.perapp_last_package.lock() {
-        *package = map.get("perapp_last_pkg").cloned().unwrap_or_default();
-    }
-
     cache.ready.store(1, Ordering::Release);
     Ok(())
 }
@@ -645,10 +768,6 @@ fn perform(command: Command) -> Result<(), String> {
                 }
                 3 => format!("SET display.expert.channel {a} {b}"),
                 4 => "SET display.expert.reset".to_string(),
-                5 if matches!(a, 0 | 1) => format!("SET perapp.enabled {a}"),
-                6 if matches!(a, -1..=3) => {
-                    format!("SET perapp.assign {a}")
-                }
                 7 if matches!(a, 0 | 1) => {
                     format!("SET cpu.manual {a}")
                 }
@@ -824,22 +943,6 @@ fn perform(command: Command) -> Result<(), String> {
 
             request(&command).map(|_| ())
         }
-        Command::PerAppPackage(package, profile) if matches!(profile, -1..=3) => {
-            if package.len() < 3
-                || package.len() > 255
-                || !package.contains('.')
-                || !package
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-            {
-                return Err("invalid package name".into());
-            }
-
-            request(&format!("SET perapp.package {profile} {package}")).map(|_| ())
-        }
-        Command::OpenLink(code) if matches!(code, 0 | 1) => {
-            request(&format!("OPEN support {code}")).map(|_| ())
-        }
         _ => Err("invalid backend command".into()),
     }
 }
@@ -860,8 +963,6 @@ fn rodin_command_name(command: &Command) -> &'static str {
         Command::GpuGovernor(_) => "gpu.governor",
         Command::IoScheduler(_) => "ufs.scheduler",
         Command::Extended(_, _, _) => "extended.feature",
-        Command::PerAppPackage(_, _) => "perapp.package",
-        Command::OpenLink(_) => "support.link",
     }
 }
 
@@ -890,7 +991,7 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
                     match refresh(&cache) {
                         Ok(()) => {
                             if !logged_pass {
-                                app_log(b"RODIN_BACKEND_APP=PASS protocol=13.3\0");
+                                app_log(b"RODIN_BACKEND_APP=PASS protocol=13.4\0");
                                 logged_pass = true;
                             }
                             logged_fail = false;
@@ -970,7 +1071,7 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
             match refresh(&cache) {
                 Ok(()) => {
                     if !logged_pass {
-                        app_log(b"RODIN_BACKEND_APP=PASS protocol=13.3\0");
+                        app_log(b"RODIN_BACKEND_APP=PASS protocol=13.4\0");
                         logged_pass = true;
                     }
                     logged_fail = false;
@@ -1301,11 +1402,7 @@ pub extern "C" fn rodin_backend_set_performance_profile(v: i32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rodin_backend_open_support_link(v: i32) -> i32 {
-    if crate::rodin_host_open_url_jni(v) {
-        1
-    } else {
-        send(Command::OpenLink(v))
-    }
+    i32::from(crate::rodin_host_open_url_jni(v))
 }
 
 #[unsafe(no_mangle)]
@@ -1322,26 +1419,4 @@ pub extern "C" fn rodin_backend_extended_get(index: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn rodin_backend_extended_set(op: i32, a: i32, b: i32) -> i32 {
     send(Command::Extended(op, a, b))
-}
-
-pub fn per_app_profile_for_package(package: &str) -> i32 {
-    runtime()
-        .and_then(|runtime| runtime.cache.perapp_profiles.lock().ok())
-        .and_then(|profiles| profiles.get(package).copied())
-        .unwrap_or(-1)
-}
-
-pub fn set_per_app_package_profile(package: &str, profile: i32) -> i32 {
-    if !matches!(profile, -1..=3) {
-        return 0;
-    }
-
-    send(Command::PerAppPackage(package.to_string(), profile))
-}
-
-pub fn last_per_app_package() -> String {
-    runtime()
-        .and_then(|runtime| runtime.cache.perapp_last_package.lock().ok())
-        .map(|package| package.clone())
-        .unwrap_or_default()
 }

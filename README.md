@@ -25,7 +25,7 @@ installer and are not supported by the included AOSP policy.
 
 ## Main features
 
-- Four persistent CPU/GPU performance profiles with live hardware readback.
+- Four persistent GPU performance profiles with live hardware readback.
 - Mali devfreq range, governor, GED boost, power-policy, and OPP controls.
 - CPU core mask, independent cluster governors, and validated per-cluster
   minimum/maximum or sustained exact-lock controls sourced from the live kernel
@@ -104,8 +104,9 @@ RODIN_BUILD_ONLY=1 ./build-and-install.sh
 Output is written under `out/release/<timestamp>/`. The build verifies
 Flutter analysis, ARM64 AOT output, zero DEX, APK signing, 16 KB ZIP alignment,
 16 KB ELF segment alignment, and a content stamp covering the packaged Flutter
-assets and ICU data. If no signing key is supplied, a development key is
-created inside that ignored output directory.
+assets and ICU data. If no signing key is supplied, a stable development key is
+created once under the ignored `out/signing/` directory and reused by later
+local builds.
 
 For release signing, set:
 
@@ -120,17 +121,27 @@ RODIN_BUILD_ONLY=1 ./build-and-install.sh
 ## Export for an AOSP tree
 
 ```bash
-./tools/export-aosp-bundle.sh
+RODIN_KEYSTORE=/absolute/path/rom-app.jks \
+RODIN_KEY_ALIAS=rodin-essential \
+RODIN_KEYSTORE_PASS='store-password' \
+RODIN_KEY_PASS='key-password' \
+  ./tools/export-aosp-bundle.sh
 ```
 
 The generated `dist/aosp/RodinEssential-<timestamp>/` directory contains the
 APK, daemon, control client, `Android.bp`, init service, split product/vendor
-SELinux policy, and checksums.
+SELinux policy, the APK public certificate used by the dedicated app-domain
+mapping, and checksums. Keep the same private key for every ROM update; the
+private key is never copied into the bundle.
 
 To build and stage the integration directly in an existing ROM source tree:
 
 ```bash
-./tools/integrate-aosp-rom.sh /absolute/path/to/aosp
+RODIN_KEYSTORE=/absolute/path/rom-app.jks \
+RODIN_KEY_ALIAS=rodin-essential \
+RODIN_KEYSTORE_PASS='store-password' \
+RODIN_KEY_PASS='key-password' \
+  ./tools/integrate-aosp-rom.sh /absolute/path/to/aosp
 ```
 
 The helper creates `vendor/rodin-essential` and prints the product and
@@ -151,15 +162,15 @@ RODIN_KEY_PASS='key-password' \
 
 Install the ZIP from KernelSU Next Manager or the Magisk app while Android is
 running. The installer registers the bundled APK as an ordinary user app and
-the module runs only the separate hardware daemon as root. The installer emits
-the socket rule for the root manager's active SELinux domain, and the daemon
-accepts commands only from UID 0 or the UID assigned to the bundled package. It
-also verifies and reapplies that narrow rule to the live policy after Android
-finishes booting, covering manager builds that skip or race early module-policy
-loading. The Module Action screen reports the detected daemon domain and live
-patch method for diagnosis. It
-deliberately uses `skip_mount`, so KernelSU does not require a system-overlay
-metamodule. Recovery installation is not supported.
+the module runs only the separate hardware daemon as root. No live SELinux
+patch, system overlay, privileged-app conversion, or app-to-root socket rule is
+used. The module always enables a daemon-initiated fallback for ROMs that block
+the direct connection. The app accepts that fallback only from UID 0, while the
+daemon accepts commands only from UID 0 or the UID Android assigned to the
+bundled package. Module Action reports whether an actual app connection has
+completed instead of treating a root-only control-client ping as proof. The
+package uses `skip_mount`; because it overlays no partition files, KernelSU does
+not require a metamodule. Recovery installation is not supported.
 
 Keep the signing key for every future module update. Android rejects an APK
 update signed by a different certificate.

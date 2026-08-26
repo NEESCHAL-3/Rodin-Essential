@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
 use std::ffi::c_void;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -12,8 +12,9 @@ use std::time::{Duration, Instant};
 
 mod touch_resampler;
 
-pub const SOCKET_NAME: &str = "rodin_essentiald_v13";
-pub const PROTOCOL_VERSION: &str = "13.3";
+pub const SOCKET_NAME: &str = "rodin_essentiald_v14";
+pub const REVERSE_SOCKET_NAME: &str = "rodin_essential_app_v14";
+pub const PROTOCOL_VERSION: &str = "13.4";
 
 const AF_UNIX: i32 = 1;
 const SOCK_STREAM: i32 = 1;
@@ -399,6 +400,8 @@ enum AppUidPolicy {
 }
 
 static APP_UID_POLICY: OnceLock<AppUidPolicy> = OnceLock::new();
+static APP_CLIENT_SEEN: AtomicI32 = AtomicI32::new(0);
+static APP_CLIENT_TRANSPORT: AtomicI32 = AtomicI32::new(0);
 
 fn configured_app_uid_policy() -> AppUidPolicy {
     *APP_UID_POLICY.get_or_init(|| match std::env::var("RODIN_APP_UID") {
@@ -450,11 +453,11 @@ fn client_uid_allowed(peer: u32, policy: AppUidPolicy) -> bool {
         }
 }
 
-fn client_authorized(stream: &UnixStream) -> Result<bool, String> {
-    Ok(client_uid_allowed(
-        peer_uid(stream)?,
-        configured_app_uid_policy(),
-    ))
+fn record_app_client(peer: u32, transport: i32) {
+    if peer != 0 {
+        APP_CLIENT_SEEN.store(1, Ordering::Release);
+        APP_CLIENT_TRANSPORT.store(transport, Ordering::Release);
+    }
 }
 
 pub fn connect_stream(name: &str) -> Result<UnixStream, String> {
@@ -631,7 +634,7 @@ fn set_cpu_manual(enabled: bool) -> Result<(), String> {
             mutate_persisted_state(|state| {
                 state.cpu_manual = 1;
                 state.cpu_online_mask = current | 0x01;
-            });
+            })?;
         } else {
             apply_saved_cpu_mask(0xFF)?;
             let _ = set_core_ctl_enabled(true)?;
@@ -639,7 +642,7 @@ fn set_cpu_manual(enabled: bool) -> Result<(), String> {
             mutate_persisted_state(|state| {
                 state.cpu_manual = 0;
                 state.cpu_online_mask = 0xFF;
-            });
+            })?;
         }
 
         Ok(())
@@ -668,12 +671,11 @@ fn set_cpu_core(cpu: usize, online: bool) -> Result<(), String> {
         Ok(()) => {
             let mask = live_cpu_mask();
 
-            mutate_persisted_state(|state| {
+            let persisted = mutate_persisted_state(|state| {
                 state.cpu_online_mask = mask | 0x01;
             });
-
-            CPU_WRITE_ACK.store(1, Ordering::Release);
-            Ok(())
+            CPU_WRITE_ACK.store(if persisted.is_ok() { 1 } else { 0 }, Ordering::Release);
+            persisted
         }
         Err(error) => {
             CPU_WRITE_ACK.store(0, Ordering::Release);
@@ -700,7 +702,7 @@ fn restore_cpu_state() {
         CPU_WRITE_ACK.store(if result.is_ok() { 1 } else { 0 }, Ordering::Release);
 
         if result.is_ok() {
-            mutate_persisted_state(|state| {
+            let _ = mutate_persisted_state(|state| {
                 state.cpu_manual = 0;
                 state.cpu_online_mask = 0xFF;
             });
@@ -1066,7 +1068,7 @@ fn ensure_cpu_unrestricted_mode_unlocked() -> Result<(), String> {
         let current = read_mi_thermal_config_mode()?;
 
         if state.cpu_thermal_mode_prev < 0 {
-            mutate_persisted_state(|state| state.cpu_thermal_mode_prev = current);
+            mutate_persisted_state(|state| state.cpu_thermal_mode_prev = current)?;
         }
 
         if current != MI_THERMAL_NO_LIMITS_MODE {
@@ -1106,7 +1108,7 @@ fn restore_cpu_thermal_mode_unlocked() -> Result<(), String> {
             std::thread::sleep(Duration::from_millis(300));
         }
 
-        mutate_persisted_state(|state| state.cpu_thermal_mode_prev = -1);
+        mutate_persisted_state(|state| state.cpu_thermal_mode_prev = -1)?;
         Ok(())
     })();
     CPU_THERMAL_MODE_ACK.store(if result.is_ok() { 1 } else { 0 }, Ordering::Release);
@@ -1242,11 +1244,11 @@ fn set_cpu_cluster_freq_range(policy: i32, min_mhz: i32, max_mhz: i32) -> Result
         .map_err(|_| "CPU frequency apply lock poisoned".to_string());
     let result = match guard {
         Ok(_guard) => {
-            let result = validate_cpu_frequency_range(policy, min_mhz, max_mhz)
+            let mut result = validate_cpu_frequency_range(policy, min_mhz, max_mhz)
                 .and_then(|_| ensure_cpu_unrestricted_mode_unlocked())
                 .and_then(|_| apply_cluster_freq_controls_unlocked(policy, min_mhz, max_mhz));
             if result.is_ok() {
-                mutate_persisted_state(|state| match policy {
+                result = mutate_persisted_state(|state| match policy {
                     0 => {
                         state.cpu_min_freq0 = min_mhz;
                         state.cpu_max_freq0 = max_mhz;
@@ -1293,14 +1295,14 @@ fn reset_cpu_cluster_freq_range(policy: i32) -> Result<(), String> {
                 .ok()
                 .map(|state| state.clone())
                 .unwrap_or_default();
-            let result = if persisted_cpu_ranges_active(&state_before) {
+            let mut result = if persisted_cpu_ranges_active(&state_before) {
                 ensure_cpu_unrestricted_mode_unlocked()
                     .and_then(|_| apply_cluster_freq_controls_unlocked(policy, min_mhz, max_mhz))
             } else {
                 apply_cluster_freq_controls_unlocked(policy, min_mhz, max_mhz)
             };
             if result.is_ok() {
-                mutate_persisted_state(|state| match policy {
+                result = mutate_persisted_state(|state| match policy {
                     0 => {
                         state.cpu_min_freq0 = -1;
                         state.cpu_max_freq0 = -1;
@@ -1356,7 +1358,7 @@ fn set_gpu_governor(governor: &str) -> Result<(), String> {
         mutate_persisted_state(|state| {
             state.gpu = governor.to_string();
             state.gpu_governor = governor.to_string();
-        });
+        })?;
         Ok(())
     } else {
         Err(format!("gpu governor verify {actual}"))
@@ -1408,26 +1410,7 @@ fn write_if_present(path: &str, value: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-fn ensure_vendor_thermal_services_running() {
-    let _ = ProcessCommand::new("/system/bin/chmod")
-        .args(["0644", "/sys/class/thermal/cooling_device3/cur_state"])
-        .output();
-    let _ = ProcessCommand::new("/system/bin/start")
-        .arg("vendor.thermal-mediatek")
-        .output();
-    let _ = ProcessCommand::new("/system/bin/start")
-        .arg("mi_thermald")
-        .output();
-    let _ = ProcessCommand::new("/system/bin/start")
-        .arg("thermald")
-        .output();
-    let _ = ProcessCommand::new("/system/bin/start").arg("frs").output();
-}
-
 fn clear_gpu_cooling_cap() {
-    let _ = ProcessCommand::new("/system/bin/chmod")
-        .args(["0644", "/sys/class/thermal/cooling_device3/cur_state"])
-        .output();
     let _ = fs::write("/sys/class/thermal/cooling_device3/cur_state", "0");
 }
 
@@ -1449,17 +1432,17 @@ fn write_beast_gpu_constraints() {
         "/sys/module/ged/parameters/gpu_cust_upbound_freq",
         "1300000",
     );
-    gpu_write_file(
+    let _ = gpu_write_file(
         "/sys/class/devfreq/13000000.mali/max_freq",
         "/sys/class/misc/mali0/device/devfreq/13000000.mali/max_freq",
         "1300000000",
     );
-    gpu_write_file(
+    let _ = gpu_write_file(
         "/sys/class/devfreq/13000000.mali/min_freq",
         "/sys/class/misc/mali0/device/devfreq/13000000.mali/min_freq",
         "1300000000",
     );
-    gpu_write_file(
+    let _ = gpu_write_file(
         "/sys/class/devfreq/13000000.mali/governor",
         "/sys/class/misc/mali0/device/devfreq/13000000.mali/governor",
         "performance",
@@ -1517,17 +1500,17 @@ pub fn enforce_performance_profile(profile: i32) -> bool {
             // Gaming Dynamic: the complete hardware OPP table under the
             // load-based governor, with GED and zero-latency power enabled.
             let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
-            gpu_write_file(
+            let _ = gpu_write_file(
                 "/sys/class/devfreq/13000000.mali/max_freq",
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/max_freq",
                 "1300000000",
             );
-            gpu_write_file(
+            let _ = gpu_write_file(
                 "/sys/class/devfreq/13000000.mali/min_freq",
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/min_freq",
                 "260000000",
             );
-            gpu_write_file(
+            let _ = gpu_write_file(
                 "/sys/class/devfreq/13000000.mali/governor",
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/governor",
                 "simple_ondemand",
@@ -1549,17 +1532,17 @@ pub fn enforce_performance_profile(profile: i32) -> bool {
         2 => {
             // Battery Saver: lowest governor with a 598 MHz hard ceiling.
             let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
-            gpu_write_file(
+            let _ = gpu_write_file(
                 "/sys/class/devfreq/13000000.mali/min_freq",
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/min_freq",
                 "260000000",
             );
-            gpu_write_file(
+            let _ = gpu_write_file(
                 "/sys/class/devfreq/13000000.mali/max_freq",
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/max_freq",
                 "598000000",
             );
-            gpu_write_file(
+            let _ = gpu_write_file(
                 "/sys/class/devfreq/13000000.mali/governor",
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/governor",
                 "powersave",
@@ -1579,17 +1562,17 @@ pub fn enforce_performance_profile(profile: i32) -> bool {
             // Stock Balanced hands DVFS back to the MediaTek power HAL. Rodin's
             // stock governor is `dummy`; the vendor service then owns live caps.
             let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
-            gpu_write_file(
+            let _ = gpu_write_file(
                 "/sys/class/devfreq/13000000.mali/max_freq",
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/max_freq",
                 "1300000000",
             );
-            gpu_write_file(
+            let _ = gpu_write_file(
                 "/sys/class/devfreq/13000000.mali/min_freq",
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/min_freq",
                 "260000000",
             );
-            gpu_write_file(
+            let _ = gpu_write_file(
                 "/sys/class/devfreq/13000000.mali/governor",
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/governor",
                 "dummy",
@@ -1629,60 +1612,53 @@ pub fn apply_performance_profile(profile: i32) -> Result<(), String> {
 
     PERFORMANCE_STATE.store(profile, Ordering::Release);
 
-    match profile {
-        3 => {
-            mutate_persisted_state(|state| {
-                state.perf = 3;
-                state.gpu_uncap = 1;
-                state.gpu_min_freq_mhz = 1300;
-                state.gpu_max_freq_mhz = 1300;
-                state.gpu_ged_boost = 1;
-                state.gpu = "performance".to_string();
-                state.gpu_governor = "performance".to_string();
-                state.gpu_power_policy = "always_on".to_string();
-                state.gpu_profile_cpu_isolated = 1;
-            });
-        }
-        1 => {
-            mutate_persisted_state(|state| {
-                state.perf = 1;
-                state.gpu_uncap = 0;
-                state.gpu_min_freq_mhz = 260;
-                state.gpu_max_freq_mhz = 1300;
-                state.gpu_ged_boost = 1;
-                state.gpu = "simple_ondemand".to_string();
-                state.gpu_governor = "simple_ondemand".to_string();
-                state.gpu_power_policy = "always_on".to_string();
-                state.gpu_profile_cpu_isolated = 1;
-            });
-        }
-        2 => {
-            mutate_persisted_state(|state| {
-                state.perf = 2;
-                state.gpu_uncap = 0;
-                state.gpu_min_freq_mhz = 260;
-                state.gpu_max_freq_mhz = 598;
-                state.gpu_ged_boost = 0;
-                state.gpu = "powersave".to_string();
-                state.gpu_governor = "powersave".to_string();
-                state.gpu_power_policy = "coarse_demand".to_string();
-                state.gpu_profile_cpu_isolated = 1;
-            });
-        }
-        _ => {
-            mutate_persisted_state(|state| {
-                state.perf = 0;
-                state.gpu_uncap = 0;
-                state.gpu_min_freq_mhz = 0;
-                state.gpu_max_freq_mhz = 0;
-                state.gpu_ged_boost = 0;
-                state.gpu = "dummy".to_string();
-                state.gpu_governor = "dummy".to_string();
-                state.gpu_power_policy = "coarse_demand".to_string();
-                state.gpu_profile_cpu_isolated = 1;
-            });
-        }
-    }
+    let persistence = match profile {
+        3 => mutate_persisted_state(|state| {
+            state.perf = 3;
+            state.gpu_uncap = 1;
+            state.gpu_min_freq_mhz = 1300;
+            state.gpu_max_freq_mhz = 1300;
+            state.gpu_ged_boost = 1;
+            state.gpu = "performance".to_string();
+            state.gpu_governor = "performance".to_string();
+            state.gpu_power_policy = "always_on".to_string();
+            state.gpu_profile_cpu_isolated = 1;
+        }),
+        1 => mutate_persisted_state(|state| {
+            state.perf = 1;
+            state.gpu_uncap = 0;
+            state.gpu_min_freq_mhz = 260;
+            state.gpu_max_freq_mhz = 1300;
+            state.gpu_ged_boost = 1;
+            state.gpu = "simple_ondemand".to_string();
+            state.gpu_governor = "simple_ondemand".to_string();
+            state.gpu_power_policy = "always_on".to_string();
+            state.gpu_profile_cpu_isolated = 1;
+        }),
+        2 => mutate_persisted_state(|state| {
+            state.perf = 2;
+            state.gpu_uncap = 0;
+            state.gpu_min_freq_mhz = 260;
+            state.gpu_max_freq_mhz = 598;
+            state.gpu_ged_boost = 0;
+            state.gpu = "powersave".to_string();
+            state.gpu_governor = "powersave".to_string();
+            state.gpu_power_policy = "coarse_demand".to_string();
+            state.gpu_profile_cpu_isolated = 1;
+        }),
+        _ => mutate_persisted_state(|state| {
+            state.perf = 0;
+            state.gpu_uncap = 0;
+            state.gpu_min_freq_mhz = 0;
+            state.gpu_max_freq_mhz = 0;
+            state.gpu_ged_boost = 0;
+            state.gpu = "dummy".to_string();
+            state.gpu_governor = "dummy".to_string();
+            state.gpu_power_policy = "coarse_demand".to_string();
+            state.gpu_profile_cpu_isolated = 1;
+        }),
+    };
+    persistence?;
 
     // Some vendor GED workers can rewrite a flag while the profile transaction
     // is still settling. Reassert the profile-owned boost state after publishing
@@ -1916,15 +1892,31 @@ fn touch_profile_rates(profile: i32) -> (i32, i32) {
     }
 }
 
+fn touch_thp_memory_control_enabled() -> bool {
+    // Root-manager deployments can inspect the vendor touch service to lock
+    // and verify its private THP cadence. Android platform policy correctly
+    // forbids a custom coredomain from tracing another service, so ROM-native
+    // builds use the public TouchFeature HAL and dedicated input-device path.
+    std::env::var("RODIN_DIRECT_INPUT_ONLY").as_deref() != Ok("1")
+}
+
 fn touch_profile_is_live(profile: i32) -> bool {
     let Some(expected_rate) = touch_profile_locked_rate(profile) else {
         return false;
     };
     let native_matches = if vendor_binder::touch_available() {
-        locate_touch_thp_layout()
-            .and_then(|layout| read_touch_thp_rate(layout, layout.current_rate_addr))
-            .map(|rate| rate == expected_rate)
-            .unwrap_or(false)
+        if touch_thp_memory_control_enabled() {
+            locate_touch_thp_layout()
+                .and_then(|layout| read_touch_thp_rate(layout, layout.current_rate_addr))
+                .map(|rate| rate == expected_rate)
+                .unwrap_or(false)
+        } else {
+            // TouchFeature has no readback method for its private cadence.
+            // The setter transaction was already checked for Binder success;
+            // rely on that ACK and keep the resampler check below independent.
+            TOUCH_STATE.load(Ordering::Acquire) == profile
+                && TOUCH_APPLY_ACK.load(Ordering::Acquire) == 1
+        }
     } else if touch_panel_code() == 1 {
         fs::read_to_string("/sys/devices/platform/goodix_ts.0/switch_report_rate")
             .map(|raw| raw.trim() == if expected_rate == 240 { "0" } else { "1" })
@@ -2082,10 +2074,14 @@ fn set_touch_profile(profile: i32) -> Result<(), String> {
         let resampled = profile == 3;
         let vendor_profile = if resampled { 2 } else { profile };
         let locked_rate = touch_profile_locked_rate(profile);
-        let layout_and_expected_rate = locked_rate
-            .map(write_touch_thp_rate)
-            .transpose()?
-            .map(|layout| (layout, locked_rate.unwrap_or_default()));
+        let layout_and_expected_rate = if touch_thp_memory_control_enabled() {
+            locked_rate
+                .map(write_touch_thp_rate)
+                .transpose()?
+                .map(|layout| (layout, locked_rate.unwrap_or_default()))
+        } else {
+            None
+        };
         apply_touch_hal_profile(vendor_profile)?;
 
         if let Some((layout, expected_rate)) = layout_and_expected_rate {
@@ -2129,7 +2125,7 @@ fn set_touch_profile(profile: i32) -> Result<(), String> {
     TOUCH_PANEL.store(panel, Ordering::Release);
     TOUCH_CONTROL_PATH.store(control_path, Ordering::Release);
     TOUCH_APPLY_ACK.store(1, Ordering::Release);
-    mutate_persisted_state(|s| s.touch = profile);
+    mutate_persisted_state(|s| s.touch = profile)?;
     Ok(())
 }
 
@@ -2140,9 +2136,13 @@ fn set_display_color(mode: i32) -> Result<(), String> {
         2 => 1,
         _ => return Err("invalid display color mode".into()),
     };
-    let _ = vendor_binder::set_display_feature(case_id, 2, 255);
+    if !vendor_binder::set_display_feature(case_id, 2, 255) {
+        DISPLAY_APPLY_ACK.store(0, Ordering::Release);
+        return Err("display HAL color transaction failed".into());
+    }
     DISPLAY_COLOR_STATE.store(mode, Ordering::Release);
-    mutate_persisted_state(|s| s.display_color = mode);
+    mutate_persisted_state(|s| s.display_color = mode)?;
+    DISPLAY_APPLY_ACK.store(1, Ordering::Release);
     Ok(())
 }
 
@@ -2150,47 +2150,31 @@ fn set_display_temp(mode: i32) -> Result<(), String> {
     if !matches!(mode, 1..=3) {
         return Err("invalid display temperature".into());
     }
-    let _ = vendor_binder::set_display_feature(23, mode, 255);
+    if !vendor_binder::set_display_feature(23, mode, 255) {
+        DISPLAY_APPLY_ACK.store(0, Ordering::Release);
+        return Err("display HAL temperature transaction failed".into());
+    }
     DISPLAY_TEMP_STATE.store(mode, Ordering::Release);
-    mutate_persisted_state(|s| s.display_temp = mode);
+    mutate_persisted_state(|s| s.display_temp = mode)?;
+    DISPLAY_APPLY_ACK.store(1, Ordering::Release);
     Ok(())
 }
 
 fn set_display_toggle(case_id: i32, enabled: bool, state: &AtomicI32) -> Result<(), String> {
     let val = if enabled { 1 } else { 0 };
-    let _ = vendor_binder::set_display_feature(case_id, val, 255);
+    if !vendor_binder::set_display_feature(case_id, val, 255) {
+        DISPLAY_APPLY_ACK.store(0, Ordering::Release);
+        return Err(format!("display HAL feature {case_id} transaction failed"));
+    }
     state.store(val, Ordering::Release);
     mutate_persisted_state(|s| match case_id {
         57 => s.silky = val,
         27 => s.video = val,
         44 => s.dolby = val,
         _ => {}
-    });
+    })?;
+    DISPLAY_APPLY_ACK.store(1, Ordering::Release);
     Ok(())
-}
-
-fn open_support_link(code: i32) -> Result<(), String> {
-    let url = match code {
-        0 => "https://github.com/NEESCHAL-3",
-        1 => "https://t.me/PocoX7ProNepalChat",
-        _ => return Err("invalid support link".into()),
-    };
-    let status = std::process::Command::new("/system/bin/cmd")
-        .env("PATH", "/system/bin:/system/xbin")
-        .args(["activity", "start", "--user", "0", "-a", "android.intent.action.VIEW", "-d", url])
-        .status()
-        .or_else(|_| {
-            std::process::Command::new("/system/bin/sh")
-                .env("PATH", "/system/bin:/system/xbin")
-                .args(["-c", &format!("/system/bin/am start --user 0 -a android.intent.action.VIEW -d '{url}' -f 0x10000000")])
-                .status()
-        })
-        .map_err(|e| format!("launch support link: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("activity start returned {status}"))
-    }
 }
 
 const DEFAULT_STATE_DIR: &str = "/data/adb/rodin-essential";
@@ -2199,13 +2183,9 @@ const STATE_DIR_ENV: &str = "RODIN_STATE_DIR";
 static PERFORMANCE_PROFILE_SUPPORTED: AtomicI32 = AtomicI32::new(-1);
 static PERFORMANCE_PROFILE_VERIFIED: AtomicI32 = AtomicI32::new(-1);
 static PERFORMANCE_PROFILE_OK: AtomicI32 = AtomicI32::new(-1);
-static ACTIVE_PER_APP_PROFILE: AtomicI32 = AtomicI32::new(-1);
 static PERSISTENCE_LOADED: AtomicI32 = AtomicI32::new(0);
 static DISPLAY_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
 static TOUCH_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
-static PER_APP_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
-static PRUNED_APP_PROFILE_COUNT: AtomicI32 = AtomicI32::new(0);
-static LAST_PER_APP_PROFILE: AtomicI32 = AtomicI32::new(-1);
 static KEEPALIVE_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
 static KEEPALIVE_APPLY_COUNT: AtomicI32 = AtomicI32::new(0);
 static CPU_WRITE_ACK: AtomicI32 = AtomicI32::new(-1);
@@ -2250,8 +2230,6 @@ struct PersistedState {
     cpu7: String,
     gpu: String,
     io: String,
-    perapp_enabled: i32,
-    app_profiles: BTreeMap<String, i32>,
     brightness_prev: i32,
     zram_size_mb: i32,
     zram_algorithm: String,
@@ -2297,8 +2275,6 @@ impl Default for PersistedState {
             cpu7: String::new(),
             gpu: String::new(),
             io: String::new(),
-            perapp_enabled: 0,
-            app_profiles: BTreeMap::new(),
             brightness_prev: -1,
             zram_size_mb: 8192,
             zram_algorithm: "lz4".to_string(),
@@ -2390,7 +2366,6 @@ fn restore_vendor_cpu_defaults() {
 }
 
 static PERSISTED_STATE: OnceLock<Mutex<PersistedState>> = OnceLock::new();
-static LAST_EXTERNAL_PACKAGE: OnceLock<Mutex<String>> = OnceLock::new();
 static RESOLVED_STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 fn state_dir() -> &'static Path {
@@ -2565,11 +2540,6 @@ fn load_persisted_state() -> PersistedState {
             "cpu7" => state.cpu7 = value.to_string(),
             "gpu" => state.gpu = value.to_string(),
             "io" => state.io = value.to_string(),
-            "perapp_enabled" => {
-                if let Some(v) = int_value() {
-                    state.perapp_enabled = v;
-                }
-            }
             "brightness_prev" => {
                 if let Some(v) = int_value() {
                     state.brightness_prev = v;
@@ -2647,11 +2617,6 @@ fn load_persisted_state() -> PersistedState {
                     };
                 }
             }
-            _ if key.starts_with("app.") => {
-                if let Some(v) = int_value() {
-                    state.app_profiles.insert(key[4..].to_string(), v);
-                }
-            }
             _ => {}
         }
     }
@@ -2690,12 +2655,11 @@ fn persisted_state() -> &'static Mutex<PersistedState> {
     PERSISTED_STATE.get_or_init(|| Mutex::new(load_persisted_state()))
 }
 
-fn last_external_package() -> &'static Mutex<String> {
-    LAST_EXTERNAL_PACKAGE.get_or_init(|| Mutex::new(String::new()))
-}
-
 fn save_persisted_state(state: &PersistedState) -> Result<(), String> {
-    fs::create_dir_all(state_dir()).map_err(|e| format!("state mkdir: {e}"))?;
+    let state_dir = state_dir();
+    fs::create_dir_all(state_dir).map_err(|e| format!("state mkdir: {e}"))?;
+    fs::set_permissions(state_dir, fs::Permissions::from_mode(0o700))
+        .map_err(|e| format!("state directory permissions: {e}"))?;
 
     let mut out = String::new();
     out.push_str(&format!("charging={}\n", state.charging));
@@ -2731,7 +2695,6 @@ fn save_persisted_state(state: &PersistedState) -> Result<(), String> {
     out.push_str(&format!("cpu7={}\n", state.cpu7));
     out.push_str(&format!("gpu={}\n", state.gpu));
     out.push_str(&format!("io={}\n", state.io));
-    out.push_str(&format!("perapp_enabled={}\n", state.perapp_enabled));
     out.push_str(&format!("brightness_prev={}\n", state.brightness_prev));
     out.push_str(&format!("zram_size_mb={}\n", state.zram_size_mb));
     out.push_str(&format!("zram_algorithm={}\n", state.zram_algorithm));
@@ -2753,27 +2716,43 @@ fn save_persisted_state(state: &PersistedState) -> Result<(), String> {
         state.cpu_thermal_mode_prev
     ));
 
-    for (pkg, profile) in &state.app_profiles {
-        out.push_str(&format!("app.{pkg}={profile}\n"));
-    }
-
     let state_file = state_file();
-    let tmp = state_dir().join("state.conf.tmp");
-    fs::write(&tmp, out).map_err(|e| format!("state write: {e}"))?;
+    let tmp = state_dir.join("state.conf.tmp");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(|e| format!("state open: {e}"))?;
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("state temporary-file permissions: {e}"))?;
+    file.write_all(out.as_bytes())
+        .map_err(|e| format!("state write: {e}"))?;
+    file.sync_all()
+        .map_err(|e| format!("state file sync: {e}"))?;
+    drop(file);
     fs::rename(&tmp, &state_file).map_err(|e| format!("state rename: {e}"))?;
+    fs::set_permissions(&state_file, fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("state file permissions: {e}"))?;
+    fs::File::open(state_dir)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|e| format!("state directory sync: {e}"))?;
     Ok(())
 }
 
-fn mutate_persisted_state<F>(f: F)
+fn mutate_persisted_state<F>(f: F) -> Result<(), String>
 where
     F: FnOnce(&mut PersistedState),
 {
-    if let Ok(mut guard) = persisted_state().lock() {
-        f(&mut guard);
-        let snapshot = guard.clone();
-        drop(guard);
-        let _ = save_persisted_state(&snapshot);
-    }
+    let mut guard = persisted_state()
+        .lock()
+        .map_err(|_| "persisted state lock poisoned".to_string())?;
+    let mut candidate = guard.clone();
+    f(&mut candidate);
+    save_persisted_state(&candidate)?;
+    *guard = candidate;
+    Ok(())
 }
 
 fn set_dt2w(enabled: bool) -> Result<(), String> {
@@ -2784,8 +2763,10 @@ fn set_dt2w(enabled: bool) -> Result<(), String> {
         return Err("touch HAL DT2W mode14 transaction failed".into());
     }
 
+    mutate_persisted_state(|s| s.dt2w = value).inspect_err(|_| {
+        TOUCH_APPLY_ACK.store(0, Ordering::Release);
+    })?;
     TOUCH_APPLY_ACK.store(1, Ordering::Release);
-    mutate_persisted_state(|s| s.dt2w = value);
     Ok(())
 }
 
@@ -2821,8 +2802,10 @@ fn set_expert_gamut(gamut: i32) -> Result<(), String> {
         return Err("display HAL expert gamut transaction failed".into());
     }
 
+    mutate_persisted_state(|s| s.expert_gamut = gamut).inspect_err(|_| {
+        DISPLAY_APPLY_ACK.store(0, Ordering::Release);
+    })?;
     DISPLAY_APPLY_ACK.store(1, Ordering::Release);
-    mutate_persisted_state(|s| s.expert_gamut = gamut);
     Ok(())
 }
 
@@ -2854,8 +2837,10 @@ fn set_expert_channel(channel: i32, value: i32) -> Result<(), String> {
         ));
     }
 
+    mutate_persisted_state(|s| s.expert[(channel - 1) as usize] = value).inspect_err(|_| {
+        DISPLAY_APPLY_ACK.store(0, Ordering::Release);
+    })?;
     DISPLAY_APPLY_ACK.store(1, Ordering::Release);
-    mutate_persisted_state(|s| s.expert[(channel - 1) as usize] = value);
     Ok(())
 }
 
@@ -2884,14 +2869,16 @@ fn reset_expert_display() -> Result<(), String> {
         }
     }
 
-    DISPLAY_APPLY_ACK.store(1, Ordering::Release);
-
     mutate_persisted_state(|s| {
         s.display_color = 0;
         s.display_temp = 2;
         s.expert_gamut = 1;
         s.expert = [255, 255, 255, 0, 0, 0, 50, 262];
-    });
+    })
+    .inspect_err(|_| {
+        DISPLAY_APPLY_ACK.store(0, Ordering::Release);
+    })?;
+    DISPLAY_APPLY_ACK.store(1, Ordering::Release);
 
     Ok(())
 }
@@ -2933,13 +2920,15 @@ fn set_sunlight(enabled: bool) -> Result<(), String> {
             return Err(e);
         }
 
-        DISPLAY_SUNLIGHT_STATE.store(1, Ordering::Release);
-        DISPLAY_APPLY_ACK.store(1, Ordering::Release);
-
         mutate_persisted_state(|s| {
             s.sunlight = 1;
             s.brightness_prev = current;
-        });
+        })
+        .inspect_err(|_| {
+            DISPLAY_APPLY_ACK.store(0, Ordering::Release);
+        })?;
+        DISPLAY_SUNLIGHT_STATE.store(1, Ordering::Release);
+        DISPLAY_APPLY_ACK.store(1, Ordering::Release);
 
         Ok(())
     } else {
@@ -2958,152 +2947,54 @@ fn set_sunlight(enabled: bool) -> Result<(), String> {
             run_settings_command(&["put", "system", "screen_brightness", &previous.to_string()])?;
         }
 
-        DISPLAY_SUNLIGHT_STATE.store(0, Ordering::Release);
-        DISPLAY_APPLY_ACK.store(1, Ordering::Release);
-
         mutate_persisted_state(|s| {
             s.sunlight = 0;
             s.brightness_prev = -1;
-        });
+        })
+        .inspect_err(|_| {
+            DISPLAY_APPLY_ACK.store(0, Ordering::Release);
+        })?;
+        DISPLAY_SUNLIGHT_STATE.store(0, Ordering::Release);
+        DISPLAY_APPLY_ACK.store(1, Ordering::Release);
 
         Ok(())
     }
 }
 
-fn record_successful_command(cmd: &str) {
+fn record_successful_command(cmd: &str) -> Result<(), String> {
     if let Some(arg) = cmd.strip_prefix("SET charging ") {
-        if let Ok(v) = arg.trim().parse::<i32>() {
-            mutate_persisted_state(|s| s.charging = v);
-        }
-        return;
-    }
-
-    if let Some(arg) = cmd.strip_prefix("SET touch ") {
-        if let Ok(v) = arg.trim().parse::<i32>() {
-            TOUCH_APPLY_ACK.store(1, Ordering::Release);
-            mutate_persisted_state(|s| s.touch = v);
-        }
-        return;
-    }
-
-    if let Some(arg) = cmd.strip_prefix("SET display.color ") {
-        if let Ok(v) = arg.trim().parse::<i32>() {
-            DISPLAY_APPLY_ACK.store(1, Ordering::Release);
-            mutate_persisted_state(|s| s.display_color = v);
-        }
-        return;
-    }
-
-    if let Some(arg) = cmd.strip_prefix("SET display.temp ") {
-        if let Ok(v) = arg.trim().parse::<i32>() {
-            DISPLAY_APPLY_ACK.store(1, Ordering::Release);
-            mutate_persisted_state(|s| s.display_temp = v);
-        }
-        return;
-    }
-
-    for (prefix, kind) in [
-        ("SET display.silky ", 1),
-        ("SET display.video ", 2),
-        ("SET display.dolby ", 3),
-    ] {
-        if let Some(arg) = cmd.strip_prefix(prefix) {
-            if let Ok(v) = arg.trim().parse::<i32>() {
-                DISPLAY_APPLY_ACK.store(1, Ordering::Release);
-
-                mutate_persisted_state(|s| match kind {
-                    1 => s.silky = v,
-                    2 => s.video = v,
-                    3 => s.dolby = v,
-                    _ => {}
-                });
-            }
-            return;
-        }
-    }
-
-    if let Some(arg) = cmd.strip_prefix("SET perf ") {
-        if let Ok(v) = arg.trim().parse::<i32>() {
-            PERFORMANCE_STATE.store(v, Ordering::Release);
-        }
-        return;
+        let value = arg
+            .trim()
+            .parse::<i32>()
+            .map_err(|_| "charging persistence parse failed".to_string())?;
+        return mutate_persisted_state(|state| state.charging = value);
     }
 
     if let Some(rest) = cmd.strip_prefix("SET cpu.gov ") {
         let mut parts = rest.split_whitespace();
-        let policy = parts.next().and_then(|v| v.parse::<i32>().ok());
+        let policy = parts
+            .next()
+            .ok_or_else(|| "CPU governor persistence policy missing".to_string())?
+            .parse::<i32>()
+            .map_err(|_| "CPU governor persistence policy invalid".to_string())?;
         let gov = parts.next().unwrap_or("").to_string();
-
-        if let Some(policy) = policy {
-            mutate_persisted_state(|s| match policy {
-                0 => s.cpu0 = gov.clone(),
-                4 => s.cpu4 = gov.clone(),
-                7 => s.cpu7 = gov.clone(),
-                _ => {}
-            });
+        if gov.is_empty() {
+            return Err("CPU governor persistence value missing".into());
         }
-        return;
-    }
-
-    if let Some(rest) = cmd.strip_prefix("SET cpu.min_freq ") {
-        let mut parts = rest.split_whitespace();
-        let policy = parts
-            .next()
-            .and_then(|v| v.parse::<i32>().ok())
-            .unwrap_or(-1);
-        let mhz = parts
-            .next()
-            .and_then(|v| v.parse::<i32>().ok())
-            .unwrap_or(0);
-        mutate_persisted_state(|s| match policy {
-            0 => s.cpu_min_freq0 = mhz,
-            4 => s.cpu_min_freq4 = mhz,
-            7 => s.cpu_min_freq7 = mhz,
+        return mutate_persisted_state(|state| match policy {
+            0 => state.cpu0 = gov.clone(),
+            4 => state.cpu4 = gov.clone(),
+            7 => state.cpu7 = gov.clone(),
             _ => {}
         });
-        return;
-    }
-
-    if let Some(rest) = cmd.strip_prefix("SET cpu.max_freq ") {
-        let mut parts = rest.split_whitespace();
-        let policy = parts
-            .next()
-            .and_then(|v| v.parse::<i32>().ok())
-            .unwrap_or(-1);
-        let mhz = parts
-            .next()
-            .and_then(|v| v.parse::<i32>().ok())
-            .unwrap_or(0);
-        mutate_persisted_state(|s| match policy {
-            0 => s.cpu_max_freq0 = mhz,
-            4 => s.cpu_max_freq4 = mhz,
-            7 => s.cpu_max_freq7 = mhz,
-            _ => {}
-        });
-        return;
-    }
-
-    if let Some(rest) = cmd.strip_prefix("SET cpu.freq_range ") {
-        // The verified range setter persists both limits atomically. Do not
-        // execute the hardware transaction a second time from this recorder.
-        let _ = rest;
-        return;
-    }
-
-    if cmd.starts_with("SET cpu.freq_reset ") {
-        return;
-    }
-
-    if let Some(arg) = cmd.strip_prefix("SET gpu.gov ") {
-        let value = arg.trim().to_string();
-        mutate_persisted_state(|s| s.gpu = value);
-        return;
     }
 
     if let Some(arg) = cmd.strip_prefix("SET io.scheduler ") {
         let value = arg.trim().to_string();
-        mutate_persisted_state(|s| s.io = value);
+        return mutate_persisted_state(|state| state.io = value);
     }
+
+    Ok(())
 }
 
 fn drift_status(desired: &str, actual: &str) -> i32 {
@@ -3375,159 +3266,14 @@ fn apply_display_resolution(
                 state.display_height = height;
                 state.display_density = target_density;
             }
-        });
+        })
+        .inspect_err(|_| {
+            DISPLAY_APPLY_ACK.store(0, Ordering::Release);
+        })?;
     }
 
     DISPLAY_APPLY_ACK.store(1, Ordering::Release);
     Ok(())
-}
-
-fn foreground_package() -> Option<String> {
-    // Avoid dumpsys here. Some Android 16 vendor builds have an MTE bug in
-    // NativeInputEventReceiver::dump; polling ActivityManager's dump path can
-    // therefore crash system_server and look like a random phone restart.
-    // Android already exposes the foreground scheduling group directly.
-    const TOP_APP_PROCS: &[&str] = &[
-        "/dev/cpuset/top-app/cgroup.procs",
-        "/sys/fs/cgroup/top-app/cgroup.procs",
-    ];
-
-    let raw = TOP_APP_PROCS
-        .iter()
-        .find_map(|path| fs::read_to_string(path).ok())?;
-    let mut fallback: Option<(i32, String)> = None;
-
-    for pid in raw.split_whitespace() {
-        if !pid.bytes().all(|byte| byte.is_ascii_digit()) {
-            continue;
-        }
-        let base = format!("/proc/{pid}");
-        let Some(uid) = fs::read_to_string(format!("{base}/status"))
-            .ok()
-            .and_then(|status| {
-                status.lines().find_map(|line| {
-                    line.strip_prefix("Uid:")?
-                        .split_whitespace()
-                        .next()?
-                        .parse::<u32>()
-                        .ok()
-                })
-            })
-        else {
-            continue;
-        };
-        if uid < 10_000 {
-            continue;
-        }
-
-        let Ok(cmdline) = fs::read(format!("{base}/cmdline")) else {
-            continue;
-        };
-        let process = cmdline.split(|byte| *byte == 0).next().unwrap_or_default();
-        let process = String::from_utf8_lossy(process);
-        let package = process.split(':').next().unwrap_or("").trim();
-        if !validate_package_name(package) {
-            continue;
-        }
-
-        let adj = fs::read_to_string(format!("{base}/oom_score_adj"))
-            .ok()
-            .and_then(|value| value.trim().parse::<i32>().ok())
-            .unwrap_or(i32::MAX);
-        if adj == 0 {
-            return Some(package.to_string());
-        }
-        if fallback.as_ref().is_none_or(|(best, _)| adj < *best) {
-            fallback = Some((adj, package.to_string()));
-        }
-    }
-
-    fallback.map(|(_, package)| package)
-}
-
-fn validate_package_name(pkg: &str) -> bool {
-    if pkg.len() < 3 || pkg.len() > 255 || !pkg.contains('.') {
-        return false;
-    }
-
-    pkg.chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-}
-
-fn set_app_profile(pkg: &str, profile: i32) -> Result<(), String> {
-    if !validate_package_name(pkg) {
-        return Err("invalid package name".into());
-    }
-
-    if !matches!(profile, -1..=3) {
-        return Err("invalid per-app profile".into());
-    }
-
-    let package = pkg.to_string();
-
-    mutate_persisted_state(|state| {
-        if profile < 0 {
-            state.app_profiles.remove(&package);
-        } else {
-            state.app_profiles.insert(package.clone(), profile);
-            state.perapp_enabled = 1;
-        }
-    });
-
-    Ok(())
-}
-
-fn installed_packages() -> Result<std::collections::BTreeSet<String>, String> {
-    let output = ProcessCommand::new("/system/bin/pm")
-        .args(["list", "packages"])
-        .output()
-        .map_err(|e| format!("pm list packages spawn: {e}"))?;
-
-    if !output.status.success() {
-        return Err(format!("pm list packages failed status={}", output.status));
-    }
-
-    let mut packages = std::collections::BTreeSet::new();
-
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let pkg = line
-            .trim()
-            .strip_prefix("package:")
-            .unwrap_or(line.trim())
-            .trim();
-
-        if validate_package_name(pkg) {
-            packages.insert(pkg.to_string());
-        }
-    }
-
-    Ok(packages)
-}
-
-fn prune_stale_profiles() -> Result<usize, String> {
-    let installed = installed_packages()?;
-    let mut removed = 0usize;
-
-    mutate_persisted_state(|state| {
-        let before = state.app_profiles.len();
-        state.app_profiles.retain(|pkg, _| installed.contains(pkg));
-        removed = before.saturating_sub(state.app_profiles.len());
-    });
-
-    if removed > 0 {
-        PRUNED_APP_PROFILE_COUNT.fetch_add(removed.min(i32::MAX as usize) as i32, Ordering::AcqRel);
-    }
-
-    Ok(removed)
-}
-
-fn serialize_app_profiles(state: &PersistedState) -> String {
-    state
-        .app_profiles
-        .iter()
-        .map(|(pkg, profile)| format!("{pkg}:{profile}"))
-        .collect::<Vec<String>>()
-        .join(",")
 }
 
 fn screen_is_on() -> Option<bool> {
@@ -3629,58 +3375,6 @@ fn reassert_runtime_state(force_touch: bool) -> Result<(), String> {
     }
 }
 
-fn set_per_app_enabled(enabled: bool) -> Result<(), String> {
-    let value = if enabled { 1 } else { 0 };
-
-    let global_profile = persisted_state()
-        .lock()
-        .ok()
-        .map(|state| state.perf)
-        .unwrap_or(0);
-
-    mutate_persisted_state(|state| state.perapp_enabled = value);
-
-    if enabled {
-        PER_APP_APPLY_ACK.store(-1, Ordering::Release);
-        return Ok(());
-    }
-
-    ACTIVE_PER_APP_PROFILE.store(-1, Ordering::Release);
-    LAST_PER_APP_PROFILE.store(-1, Ordering::Release);
-
-    if (0..=3).contains(&global_profile) {
-        match apply_performance_profile(global_profile) {
-            Ok(()) => {
-                PER_APP_APPLY_ACK.store(1, Ordering::Release);
-                Ok(())
-            }
-            Err(error) => {
-                PER_APP_APPLY_ACK.store(0, Ordering::Release);
-                Err(format!(
-                    "restore global profile after per-app disable: {error}"
-                ))
-            }
-        }
-    } else {
-        PER_APP_APPLY_ACK.store(1, Ordering::Release);
-        Ok(())
-    }
-}
-
-fn assign_last_app_profile(profile: i32) -> Result<(), String> {
-    let pkg = last_external_package()
-        .lock()
-        .ok()
-        .map(|slot| slot.clone())
-        .unwrap_or_default();
-
-    if pkg.is_empty() {
-        return Err("no previous external foreground app captured".into());
-    }
-
-    set_app_profile(&pkg, profile)
-}
-
 fn restore_sunlight(state: &PersistedState) {
     if state.sunlight == 1 {
         if vendor_binder::set_display_feature(12, 1, 255) {
@@ -3688,11 +3382,11 @@ fn restore_sunlight(state: &PersistedState) {
 
             // A saved pre-reboot brightness must not be restored later as if
             // it belonged to the new boot/session. Keep the HAL state only.
-            mutate_persisted_state(|s| s.brightness_prev = -1);
+            let _ = mutate_persisted_state(|s| s.brightness_prev = -1);
         }
     } else if state.sunlight == 0 && vendor_binder::set_display_feature(12, 0, 255) {
         DISPLAY_SUNLIGHT_STATE.store(0, Ordering::Release);
-        mutate_persisted_state(|s| s.brightness_prev = -1);
+        let _ = mutate_persisted_state(|s| s.brightness_prev = -1);
     }
 }
 
@@ -4183,19 +3877,8 @@ fn gaming_dynamic_guard() {
 }
 
 fn maintenance_loop() {
-    let mut last_package = String::new();
-    let mut last_profile: i32 = -99;
-
-    let mut _last_apply = Instant::now()
-        .checked_sub(Duration::from_secs(10))
-        .unwrap_or_else(Instant::now);
-
     let mut last_guard = Instant::now()
         .checked_sub(Duration::from_secs(10))
-        .unwrap_or_else(Instant::now);
-
-    let mut last_packages = Instant::now()
-        .checked_sub(Duration::from_secs(35))
         .unwrap_or_else(Instant::now);
 
     let mut last_screen_check = Instant::now()
@@ -4213,62 +3896,9 @@ fn maintenance_loop() {
     let mut screen_was_on: Option<bool> = None;
 
     loop {
-        let state = persisted_state()
-            .lock()
-            .ok()
-            .map(|guard| guard.clone())
-            .unwrap_or_default();
-
-        if state.perapp_enabled == 1 {
-            let current_pkg = foreground_package();
-            if let Some(pkg) = current_pkg.as_ref()
-                && pkg != "io.github.neeschal.rodinessential"
-                && let Ok(mut slot) = last_external_package().lock()
-            {
-                *slot = pkg.clone();
-            }
-            let package = current_pkg.unwrap_or_default();
-
-            let selected = if package.is_empty() || package == "io.github.neeschal.rodinessential" {
-                state.perf
-            } else {
-                state
-                    .app_profiles
-                    .get(&package)
-                    .copied()
-                    .unwrap_or(state.perf)
-            };
-
-            if package != last_package || selected != last_profile {
-                match apply_performance_profile(selected) {
-                    Ok(()) => {
-                        ACTIVE_PER_APP_PROFILE.store(selected, Ordering::Release);
-                        LAST_PER_APP_PROFILE.store(selected, Ordering::Release);
-                        PER_APP_APPLY_ACK.store(1, Ordering::Release);
-                        last_profile = selected;
-                        last_package = package;
-                        _last_apply = Instant::now();
-                    }
-                    Err(_) => {
-                        PER_APP_APPLY_ACK.store(0, Ordering::Release);
-                    }
-                }
-            }
-        } else {
-            ACTIVE_PER_APP_PROFILE.store(-1, Ordering::Release);
-            LAST_PER_APP_PROFILE.store(-1, Ordering::Release);
-            last_profile = -99;
-            last_package.clear();
-        }
-
         if last_guard.elapsed() >= Duration::from_millis(500) {
             reassert_persisted_governors();
             last_guard = Instant::now();
-        }
-
-        if last_packages.elapsed() >= Duration::from_secs(30) {
-            let _ = prune_stale_profiles();
-            last_packages = Instant::now();
         }
 
         if last_display_refresh.elapsed() >= Duration::from_secs(10) {
@@ -4300,11 +3930,11 @@ fn maintenance_loop() {
 }
 
 pub fn start_background_services() {
+    if std::env::var("RODIN_REVERSE_IPC").as_deref() == Ok("1") {
+        std::thread::spawn(reverse_ipc_loop);
+    }
     let _ = persisted_state();
     refresh_display_info();
-    // Older releases stopped global thermal services for GPU profiles. Keep
-    // vendor CPU and platform thermal management alive in every GPU mode.
-    ensure_vendor_thermal_services_running();
     // Persisted custom touch profiles can be restored below, so the worker
     // must be ready before set_touch_profile() waits for its attachment ACK.
     touch_resampler::start_background();
@@ -4313,6 +3943,15 @@ pub fn start_background_services() {
     std::thread::spawn(maintenance_loop);
     std::thread::spawn(cpu_frequency_guard);
     std::thread::spawn(gaming_dynamic_guard);
+}
+
+fn reverse_ipc_loop() {
+    loop {
+        match connect_stream(REVERSE_SOCKET_NAME) {
+            Ok(stream) => serve_client_with_transport(stream, 2),
+            Err(_) => std::thread::sleep(Duration::from_millis(250)),
+        }
+    }
 }
 
 // ZRAM & MEMORY TUNING HELPERS
@@ -4401,12 +4040,19 @@ fn set_zram_size(size_mb: i32) -> Result<(), String> {
             }
         })
         .unwrap_or_else(|| "lz4".to_string());
-    let _ = fs::write("/sys/block/zram0/comp_algorithm", &target_alg);
+    fs::write("/sys/block/zram0/comp_algorithm", &target_alg)
+        .map_err(|e| format!("zram compression restore failed: {e}"))?;
+    if zram_get_algorithm() != target_alg {
+        return Err(format!(
+            "zram compression verify failed: requested {target_alg}, live {}",
+            zram_get_algorithm()
+        ));
+    }
 
     if size_mb == 0 {
         mutate_persisted_state(|state| {
             state.zram_size_mb = 0;
-        });
+        })?;
         return Ok(());
     }
 
@@ -4414,6 +4060,12 @@ fn set_zram_size(size_mb: i32) -> Result<(), String> {
     let bytes = (size_mb as u64) * 1024 * 1024;
     fs::write("/sys/block/zram0/disksize", bytes.to_string())
         .map_err(|e| format!("zram disksize failed: {e}"))?;
+    if zram_get_disksize_mb() != size_mb {
+        return Err(format!(
+            "zram disksize verify failed: requested {size_mb} MiB, live {} MiB",
+            zram_get_disksize_mb()
+        ));
+    }
 
     // 5. mkswap
     let mkswap_res = ProcessCommand::new("/system/bin/mkswap")
@@ -4428,19 +4080,25 @@ fn set_zram_size(size_mb: i32) -> Result<(), String> {
     // 6. swapon
     let swapon_res = ProcessCommand::new("/system/bin/swapon")
         .args(["-p", "32758", "/dev/block/zram0"])
-        .output();
+        .output()
+        .map_err(|e| format!("swapon failed to start: {e}"))?;
 
-    if let Ok(res) = swapon_res
-        && !res.status.success()
-    {
-        let _ = ProcessCommand::new("/system/bin/swapon")
+    if !swapon_res.status.success() {
+        let fallback = ProcessCommand::new("/system/bin/swapon")
             .arg("/dev/block/zram0")
-            .output();
+            .output()
+            .map_err(|e| format!("swapon fallback failed to start: {e}"))?;
+        if !fallback.status.success() {
+            return Err(format!(
+                "swapon failed: {}",
+                String::from_utf8_lossy(&fallback.stderr).trim()
+            ));
+        }
     }
 
     mutate_persisted_state(|state| {
         state.zram_size_mb = size_mb;
-    });
+    })?;
 
     Ok(())
 }
@@ -4458,25 +4116,52 @@ fn set_zram_algorithm(alg: &str) -> Result<(), String> {
         .arg("/dev/block/zram0")
         .output();
 
-    let _ = fs::write("/sys/block/zram0/reset", "1");
+    fs::write("/sys/block/zram0/reset", "1").map_err(|e| format!("zram reset failed: {e}"))?;
 
     fs::write("/sys/block/zram0/comp_algorithm", alg)
         .map_err(|e| format!("comp_algorithm failed: {e}"))?;
+    if zram_get_algorithm() != alg {
+        return Err(format!(
+            "comp_algorithm verify failed: requested {alg}, live {}",
+            zram_get_algorithm()
+        ));
+    }
 
     if current_size_mb > 0 {
         let bytes = (current_size_mb as u64) * 1024 * 1024;
-        let _ = fs::write("/sys/block/zram0/disksize", bytes.to_string());
-        let _ = ProcessCommand::new("/system/bin/mkswap")
+        fs::write("/sys/block/zram0/disksize", bytes.to_string())
+            .map_err(|e| format!("zram disksize restore failed: {e}"))?;
+        if zram_get_disksize_mb() != current_size_mb {
+            return Err(format!(
+                "zram disksize restore verify failed: requested {current_size_mb} MiB, live {} MiB",
+                zram_get_disksize_mb()
+            ));
+        }
+        let mkswap = ProcessCommand::new("/system/bin/mkswap")
             .arg("/dev/block/zram0")
-            .output();
-        let _ = ProcessCommand::new("/system/bin/swapon")
+            .output()
+            .map_err(|e| format!("mkswap failed to start: {e}"))?;
+        if !mkswap.status.success() {
+            return Err(format!(
+                "mkswap failed: {}",
+                String::from_utf8_lossy(&mkswap.stderr).trim()
+            ));
+        }
+        let swapon = ProcessCommand::new("/system/bin/swapon")
             .args(["-p", "32758", "/dev/block/zram0"])
-            .output();
+            .output()
+            .map_err(|e| format!("swapon failed to start: {e}"))?;
+        if !swapon.status.success() {
+            return Err(format!(
+                "swapon failed: {}",
+                String::from_utf8_lossy(&swapon.stderr).trim()
+            ));
+        }
     }
 
     mutate_persisted_state(|state| {
         state.zram_algorithm = alg.to_string();
-    });
+    })?;
 
     Ok(())
 }
@@ -4488,10 +4173,16 @@ fn set_zram_swappiness(val: i32) -> Result<(), String> {
 
     fs::write("/proc/sys/vm/swappiness", val.to_string())
         .map_err(|e| format!("swappiness write failed: {e}"))?;
+    if zram_get_swappiness() != val {
+        return Err(format!(
+            "swappiness verify failed: requested {val}, live {}",
+            zram_get_swappiness()
+        ));
+    }
 
     mutate_persisted_state(|state| {
         state.zram_swappiness = val;
-    });
+    })?;
 
     Ok(())
 }
@@ -4509,9 +4200,27 @@ fn gpu_read_file(primary: &str, fallback: &str) -> Option<String> {
         .ok()
 }
 
-fn gpu_write_file(primary: &str, fallback: &str, value: &str) {
-    let _ = fs::write(primary, value);
-    let _ = fs::write(fallback, value);
+fn gpu_write_file(primary: &str, fallback: &str, value: &str) -> Result<(), String> {
+    let mut wrote = false;
+    let mut errors = Vec::new();
+
+    for path in [primary, fallback] {
+        if !Path::new(path).exists() {
+            continue;
+        }
+        match fs::write(path, value) {
+            Ok(()) => wrote = true,
+            Err(error) => errors.push(format!("{path}: {error}")),
+        }
+    }
+
+    if wrote {
+        Ok(())
+    } else if errors.is_empty() {
+        Err(format!("GPU control node missing: {primary} or {fallback}"))
+    } else {
+        Err(format!("GPU control write failed: {}", errors.join("; ")))
+    }
 }
 
 fn gpu_read_raw(path: &str) -> Option<String> {
@@ -4799,7 +4508,9 @@ fn gpu_profile_configured(profile: i32) -> bool {
 }
 
 fn set_gpu_min_freq(mhz: i32) -> Result<(), String> {
-    let mhz = mhz.clamp(260, 1300);
+    if !(260..=1300).contains(&mhz) {
+        return Err("GPU minimum frequency must be 260-1300 MHz".into());
+    }
     let hz = (mhz as u64) * 1_000_000;
     let khz = (mhz as u64) * 1_000;
     let opp_boost = ((1300 - mhz) / 26).clamp(0, 40);
@@ -4811,7 +4522,7 @@ fn set_gpu_min_freq(mhz: i32) -> Result<(), String> {
         "/sys/class/devfreq/13000000.mali/min_freq",
         "/sys/class/misc/mali0/device/devfreq/13000000.mali/min_freq",
         &hz.to_string(),
-    );
+    )?;
     let _ = fs::write(
         "/sys/module/ged/parameters/gpu_bottom_freq",
         khz.to_string(),
@@ -4820,17 +4531,25 @@ fn set_gpu_min_freq(mhz: i32) -> Result<(), String> {
         "/sys/module/ged/parameters/gpu_cust_boost_freq",
         khz.to_string(),
     );
+    if gpu_get_min_freq_mhz() != mhz {
+        return Err(format!(
+            "GPU minimum frequency verify failed: requested {mhz} MHz, live {} MHz",
+            gpu_get_min_freq_mhz()
+        ));
+    }
     mutate_persisted_state(|state| {
         state.gpu_min_freq_mhz = mhz;
         if mhz < 1300 {
             state.gpu_uncap = 0;
         }
-    });
+    })?;
     Ok(())
 }
 
 fn set_gpu_max_freq(mhz: i32) -> Result<(), String> {
-    let mhz = mhz.clamp(260, 1300);
+    if !(260..=1300).contains(&mhz) {
+        return Err("GPU maximum frequency must be 260-1300 MHz".into());
+    }
     let hz = (mhz as u64) * 1_000_000;
     let khz = (mhz as u64) * 1_000;
     let opp_upbound = ((1300 - mhz) / 26).clamp(0, 40);
@@ -4842,17 +4561,23 @@ fn set_gpu_max_freq(mhz: i32) -> Result<(), String> {
         "/sys/class/devfreq/13000000.mali/max_freq",
         "/sys/class/misc/mali0/device/devfreq/13000000.mali/max_freq",
         &hz.to_string(),
-    );
+    )?;
     let _ = fs::write(
         "/sys/module/ged/parameters/gpu_cust_upbound_freq",
         khz.to_string(),
     );
+    if gpu_get_max_freq_mhz() != mhz {
+        return Err(format!(
+            "GPU maximum frequency verify failed: requested {mhz} MHz, live {} MHz",
+            gpu_get_max_freq_mhz()
+        ));
+    }
     mutate_persisted_state(|state| {
         state.gpu_max_freq_mhz = mhz;
         if mhz < 1300 {
             state.gpu_uncap = 0;
         }
-    });
+    })?;
     Ok(())
 }
 
@@ -4867,12 +4592,24 @@ fn set_gpu_ged_boost(enable: bool) -> Result<(), String> {
     }
 
     let val = if enable { "1" } else { "0" };
-    let _ = fs::write("/sys/module/ged/parameters/ged_boost_enable", val);
-    let _ = fs::write("/sys/module/ged/parameters/boost_gpu_enable", val);
-    let _ = fs::write("/sys/module/ged/parameters/ged_smart_boost", val);
+    for path in [
+        "/sys/module/ged/parameters/ged_boost_enable",
+        "/sys/module/ged/parameters/boost_gpu_enable",
+        "/sys/module/ged/parameters/ged_smart_boost",
+    ] {
+        let actual = write_verified(Path::new(path), val)?;
+        if actual != val {
+            return Err(format!(
+                "GED boost verify {path}: expected {val}, live {actual}"
+            ));
+        }
+    }
+    if !gpu_boost_pipeline_matches(enable) {
+        return Err("GED boost pipeline did not retain the requested state".into());
+    }
     mutate_persisted_state(|state| {
         state.gpu_ged_boost = if enable { 1 } else { 0 };
-    });
+    })?;
     Ok(())
 }
 
@@ -4883,7 +4620,8 @@ fn set_gpu_uncap(enable: bool) -> Result<(), String> {
         clear_gpu_cooling_cap();
         beast_locked = settle_beast_gpu_lock(60, Duration::from_millis(25));
     } else {
-        let _ = fs::write("/sys/class/misc/mali0/device/power_policy", "coarse_demand");
+        fs::write("/sys/class/misc/mali0/device/power_policy", "coarse_demand")
+            .map_err(|error| format!("GPU power policy write failed: {error}"))?;
         let _ = fs::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "40");
         let _ = fs::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "0");
         let _ = fs::write("/sys/kernel/ged/hal/gpu_boost_level", "0");
@@ -4891,12 +4629,12 @@ fn set_gpu_uncap(enable: bool) -> Result<(), String> {
             "/sys/class/devfreq/13000000.mali/min_freq",
             "/sys/class/misc/mali0/device/devfreq/13000000.mali/min_freq",
             "260000000",
-        );
+        )?;
         gpu_write_file(
             "/sys/class/devfreq/13000000.mali/max_freq",
             "/sys/class/misc/mali0/device/devfreq/13000000.mali/max_freq",
             "1300000000",
-        );
+        )?;
         let _ = fs::write("/sys/module/ged/parameters/gpu_bottom_freq", "260000");
         let _ = fs::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "260000");
         let _ = fs::write(
@@ -4911,7 +4649,16 @@ fn set_gpu_uncap(enable: bool) -> Result<(), String> {
             "/sys/class/devfreq/13000000.mali/governor",
             "/sys/class/misc/mali0/device/devfreq/13000000.mali/governor",
             "simple_ondemand",
-        );
+        )?;
+        if gpu_get_min_freq_mhz() != 260
+            || gpu_get_max_freq_mhz() != 1300
+            || gpu_get_governor() != "simple_ondemand"
+            || gpu_get_power_policy() != "coarse_demand"
+            || gpu_get_dvfs_enabled() != 1
+            || !gpu_boost_pipeline_matches(false)
+        {
+            return Err("GPU dynamic-state reset did not verify".into());
+        }
     }
     mutate_persisted_state(|state| {
         state.gpu_uncap = if enable { 1 } else { 0 };
@@ -4930,7 +4677,7 @@ fn set_gpu_uncap(enable: bool) -> Result<(), String> {
             state.gpu = "simple_ondemand".to_string();
             state.gpu_governor = "simple_ondemand".to_string();
         }
-    });
+    })?;
 
     if enable && !beast_locked {
         Err("Beast OPP 0 is armed and will lock when the GPU becomes active".into())
@@ -4966,10 +4713,17 @@ fn set_gpu_power_policy(policy: &str) -> Result<(), String> {
         "always_on" | "1" => "always_on",
         _ => "coarse_demand",
     };
-    let _ = fs::write("/sys/class/misc/mali0/device/power_policy", valid);
+    fs::write("/sys/class/misc/mali0/device/power_policy", valid)
+        .map_err(|error| format!("GPU power policy write failed: {error}"))?;
+    if gpu_get_power_policy() != valid {
+        return Err(format!(
+            "GPU power policy verify failed: requested {valid}, live {}",
+            gpu_get_power_policy()
+        ));
+    }
     mutate_persisted_state(|state| {
         state.gpu_power_policy = valid.to_string();
-    });
+    })?;
     Ok(())
 }
 
@@ -5057,12 +4811,6 @@ fn snapshot_persistence_fields() -> Vec<String> {
         format!("cpu_drift7={cpu7_drift}"),
         format!("gpu_drift={gpu_drift}"),
         format!("io_drift={io_drift}"),
-        format!("perapp_enabled={}", state.perapp_enabled),
-        format!(
-            "perapp_active={}",
-            ACTIVE_PER_APP_PROFILE.load(Ordering::Acquire)
-        ),
-        format!("perapp_count={}", state.app_profiles.len()),
         format!("display_width={}", DISPLAY_WIDTH.load(Ordering::Acquire)),
         format!("display_height={}", DISPLAY_HEIGHT.load(Ordering::Acquire)),
         format!(
@@ -5088,29 +4836,6 @@ fn snapshot_persistence_fields() -> Vec<String> {
         ),
         format!("display_ack={}", DISPLAY_APPLY_ACK.load(Ordering::Acquire)),
         format!("touch_ack={}", TOUCH_APPLY_ACK.load(Ordering::Acquire)),
-        format!(
-            "perapp_apply_ack={}",
-            PER_APP_APPLY_ACK.load(Ordering::Acquire)
-        ),
-        format!(
-            "perapp_last_profile={}",
-            LAST_PER_APP_PROFILE.load(Ordering::Acquire)
-        ),
-        format!(
-            "perapp_pruned={}",
-            PRUNED_APP_PROFILE_COUNT.load(Ordering::Acquire)
-        ),
-        format!(
-            "perapp_last_pkg={}",
-            sanitize(
-                last_external_package()
-                    .lock()
-                    .ok()
-                    .map(|slot| slot.clone())
-                    .unwrap_or_default()
-            )
-        ),
-        format!("perapp_map={}", serialize_app_profiles(&state)),
         format!("cpu_manual={}", state.cpu_manual),
         format!("cpu_saved_mask={}", state.cpu_online_mask | 0x01),
         format!("cpu_write_ack={}", CPU_WRITE_ACK.load(Ordering::Acquire)),
@@ -5236,6 +4961,14 @@ fn snapshot() -> String {
     };
     let fields = [
         format!("protocol={PROTOCOL_VERSION}"),
+        format!(
+            "app_client_seen={}",
+            APP_CLIENT_SEEN.load(Ordering::Acquire)
+        ),
+        format!(
+            "app_client_transport={}",
+            APP_CLIENT_TRANSPORT.load(Ordering::Acquire)
+        ),
         format!("charging={}", sanitize(charging)),
         format!("cap={}", sanitize(battery("capacity"))),
         format!("temp={}", sanitize(battery("temp"))),
@@ -5345,30 +5078,6 @@ pub fn handle_command(line: &str) -> String {
         set_expert_channel(channel, value)
     } else if cmd == "SET display.expert.reset" {
         reset_expert_display()
-    } else if let Some(arg) = cmd.strip_prefix("SET perapp.enabled ") {
-        match arg.trim() {
-            "1" => set_per_app_enabled(true),
-            "0" => set_per_app_enabled(false),
-            _ => Err("invalid per-app state".into()),
-        }
-    } else if let Some(arg) = cmd.strip_prefix("SET perapp.assign ") {
-        arg.trim()
-            .parse::<i32>()
-            .map_err(|_| "bad per-app profile".to_string())
-            .and_then(assign_last_app_profile)
-    } else if let Some(rest) = cmd.strip_prefix("SET perapp.package ") {
-        let mut parts = rest.split_whitespace();
-        let profile = parts
-            .next()
-            .and_then(|value| value.parse::<i32>().ok())
-            .unwrap_or(i32::MIN);
-        let package = parts.next().unwrap_or("");
-
-        if parts.next().is_some() {
-            Err("too many per-app package arguments".into())
-        } else {
-            set_app_profile(package, profile)
-        }
     } else if let Some(arg) = cmd.strip_prefix("SET display.color ") {
         arg.trim()
             .parse::<i32>()
@@ -5499,11 +5208,6 @@ pub fn handle_command(line: &str) -> String {
             .unwrap_or(0);
 
         apply_display_resolution(width, height, density, true)
-    } else if let Some(arg) = cmd.strip_prefix("OPEN support ") {
-        arg.trim()
-            .parse::<i32>()
-            .map_err(|_| "bad support link".to_string())
-            .and_then(open_support_link)
     } else if let Some(arg) = cmd.strip_prefix("SET zram.size ") {
         arg.trim()
             .parse::<i32>()
@@ -5549,18 +5253,18 @@ pub fn handle_command(line: &str) -> String {
     };
 
     match result {
-        Ok(()) => {
-            record_successful_command(cmd);
-            "OK applied".into()
-        }
+        Ok(()) => match record_successful_command(cmd) {
+            Ok(()) => "OK applied".into(),
+            Err(error) => format!("ERR applied but persistence failed: {error}"),
+        },
         Err(e) => format!("ERR {e}"),
     }
 }
 
-pub fn serve_client(mut stream: UnixStream) {
-    match client_authorized(&stream) {
-        Ok(true) => {}
-        Ok(false) => {
+fn serve_client_with_transport(mut stream: UnixStream, transport: i32) {
+    let peer = match peer_uid(&stream) {
+        Ok(peer) if client_uid_allowed(peer, configured_app_uid_policy()) => peer,
+        Ok(_) => {
             eprintln!("RODIN_ESSENTIALD_PEER_REJECT unauthorized_uid");
             let _ = stream.write_all(b"ERR unauthorized peer\n");
             return;
@@ -5570,7 +5274,8 @@ pub fn serve_client(mut stream: UnixStream) {
             let _ = stream.write_all(b"ERR peer credentials unavailable\n");
             return;
         }
-    }
+    };
+    record_app_client(peer, transport);
 
     let mut buf = [0u8; 4096];
     let Ok(n) = stream.read(&mut buf) else {
@@ -5584,6 +5289,10 @@ pub fn serve_client(mut stream: UnixStream) {
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.write_all(b"\n");
     let _ = stream.flush();
+}
+
+pub fn serve_client(stream: UnixStream) {
+    serve_client_with_transport(stream, 1);
 }
 
 #[cfg(test)]

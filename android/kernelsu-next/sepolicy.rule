@@ -1,3 +1,0 @@
-allow appdomain su unix_stream_socket connectto
-allow appdomain ksu unix_stream_socket connectto
-allow appdomain magisk unix_stream_socket connectto

@@ -2,10 +2,14 @@ service rodin_daemon /product/bin/rodin_daemon
     class late_start
     user root
     group root system input graphics readproc wakelock
-    capabilities DAC_OVERRIDE DAC_READ_SEARCH SYS_ADMIN SYS_NICE SYS_PTRACE
+    capabilities SYS_ADMIN SYS_NICE
     priority -10
     oom_score_adjust -900
     setenv RODIN_STATE_DIR /data/system/rodin-essential
+    # Keep ROM-native operation within compile-time Android SELinux policy:
+    # use TouchFeature plus the labelled input node, never another process's
+    # memory or file descriptors.
+    setenv RODIN_DIRECT_INPUT_ONLY 1
     disabled
     restart_period 2
 

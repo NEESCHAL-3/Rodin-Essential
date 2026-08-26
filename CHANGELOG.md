@@ -2,6 +2,40 @@
 
 All notable changes are documented here.
 
+## 1.18.1
+
+### Fixed
+
+- KernelSU Next and Magisk communication no longer depends on an
+  `untrusted_app` process connecting into a root-manager SELinux domain. The
+  daemon now initiates an authenticated reverse socket to the normal APK, and
+  both sides verify the peer UID with `SO_PEERCRED`.
+- Module Action distinguishes root-only daemon health from a connection that
+  was successfully completed by the Android app.
+- Root-module installation no longer modifies live SELinux policy or depends on
+  root-manager domain names. The script-only package uses no system overlay and
+  therefore requires no KernelSU metamodule.
+- Root-module updates verify the APK version and official signing certificate.
+  A differently signed installed copy is reported clearly and is never removed
+  automatically.
+- Persisted state is committed transactionally with file and directory sync, so
+  an applied command cannot be reported as durable when the state write failed.
+- Touch, display, GPU, CPU, UFS, charging, and ZRAM commands now reject failed
+  or mismatched live readback instead of saving a false success.
+- The unused per-application profile subsystem and its package-query surface
+  have been removed from the daemon, host, manifest, and interface.
+- AOSP integration now preserves an explicit APK signing identity, maps that
+  certificate and package to the dedicated `rodin_app` domain, labels only the
+  exact generic Mali and Goodix sysfs paths, and passes the Android 16 platform
+  neverallow contract check.
+- ROM-native touch calibration uses Xiaomi's public TouchFeature service, and
+  1000 Hz output uses the directly labelled Rodin input event. The native AOSP
+  daemon no longer attempts root-manager-only touch-service memory or file-
+  descriptor access and does not request platform-forbidden `SYS_PTRACE`.
+- Application, module, daemon protocol, documentation, and release metadata
+  are synchronized under a new version so different payloads are no longer
+  distributed under the same release identity.
+
 ## 1.18.0
 
 ### Added
