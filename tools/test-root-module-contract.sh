@@ -34,7 +34,6 @@ fi
 
 grep -Fxq 'export RODIN_REVERSE_IPC=1' "$RODIN_SERVICE"
 grep -Fxq 'export RODIN_LOOPBACK_IPC=1' "$RODIN_SERVICE"
-grep -Fxq 'export RODIN_TOUCH_PRIVATE_TARGET=1' "$RODIN_SERVICE"
 grep -Fq 'export RODIN_APP_UID' "$RODIN_SERVICE"
 grep -Fq 'pm list packages -U' "$RODIN_SERVICE"
 grep -Fq 'sys.boot_completed' "$RODIN_SERVICE"
@@ -43,6 +42,11 @@ grep -Fq 'App IPC: verified (daemon-initiated)' "$RODIN_ACTION"
 grep -Fq 'App IPC: verified (authenticated loopback)' "$RODIN_ACTION"
 grep -Fq 'INSTALL_FAILED_UPDATE_INCOMPATIBLE' "$RODIN_INSTALLER"
 grep -Fq 'App/module version mismatch' "$RODIN_INSTALLER"
+grep -Fq 'touch_resampler_ready' "$RODIN_ACTION"
+[ -s "$RODIN_PROJECT_ROOT/runtime/daemon-rust/src/touch_resampler.rs" ] || {
+    echo "The v1.18.0 touch resampler source is missing" >&2
+    exit 1
+}
 
 if grep -Eq 'pm[[:space:]]+uninstall|rm[[:space:]].*io\.github\.neeschal\.rodinessential' \
     "$RODIN_INSTALLER"; then

@@ -25,15 +25,19 @@ allow rodin_daemon proc_touch_boost:file rw_file_perms;
 allow rodin_daemon proc_tp_file:file r_file_perms;
 allow rodin_daemon proc_swappiness:file rw_file_perms;
 allow rodin_daemon proc_drop_caches:file w_file_perms;
+allow rodin_daemon input_device:chr_file rw_file_perms;
 allow rodin_daemon swap_block_device:blk_file rw_file_perms;
 
 # These Rodin nodes are generic sysfs in the stock vendor image. Relabel only
 # their exact subtrees so the coredomain never receives generic sysfs access.
 type sysfs_rodin_mali_devfreq, fs_type, sysfs_type;
+type sysfs_rodin_touch, fs_type, sysfs_type;
 
 allow rodin_daemon sysfs:dir search;
 allow rodin_daemon sysfs_rodin_mali_devfreq:dir r_dir_perms;
 allow rodin_daemon sysfs_rodin_mali_devfreq:file rw_file_perms;
+allow rodin_daemon sysfs_rodin_touch:dir r_dir_perms;
+allow rodin_daemon sysfs_rodin_touch:file rw_file_perms;
 
 # Xiaomi display and touch AIDL services.
 binder_call(rodin_daemon, vendor_hal_displayfeature_xiaomi_default)
@@ -41,5 +45,10 @@ binder_call(rodin_daemon, hal_touchfeature_xiaomi_default)
 allow rodin_daemon vendor_hal_displayfeature_xiaomi_service:service_manager find;
 allow rodin_daemon hal_touchfeature_xiaomi_service:service_manager find;
 
-# All touch profiles stay on the vendor HAL. Raw input access, process
-# inspection, and SYS_PTRACE remain intentionally absent.
+# The v1.18.0 1000 Hz mode duplicates the touch service's event descriptor and
+# updates its Rodin timing block. The 240/480 Hz modes use the same timing block
+# without enabling the resampler.
+allow rodin_daemon hal_touchfeature_xiaomi_default:process ptrace;
+allow rodin_daemon hal_touchfeature_xiaomi_default:fd use;
+allow rodin_daemon hal_touchfeature_xiaomi_default:dir r_dir_perms;
+allow rodin_daemon hal_touchfeature_xiaomi_default:file rw_file_perms;

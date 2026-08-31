@@ -8,8 +8,11 @@ typeattribute rodin_daemon mlstrustedsubject;
 type rodin_daemon_data_file, file_type, data_file_type, core_data_file_type;
 
 allow rodin_daemon self:capability {
+    dac_override
+    dac_read_search
     sys_admin
     sys_nice
+    sys_ptrace
 };
 allow rodin_daemon self:unix_stream_socket create_stream_socket_perms;
 

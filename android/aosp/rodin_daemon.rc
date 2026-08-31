@@ -1,13 +1,11 @@
 service rodin_daemon /product/bin/rodin_daemon
     class late_start
     user root
-    group root system graphics wakelock
-    capabilities SYS_ADMIN SYS_NICE
+    group root system input graphics readproc wakelock
+    capabilities DAC_OVERRIDE DAC_READ_SEARCH SYS_ADMIN SYS_NICE SYS_PTRACE
     priority -10
     oom_score_adjust -900
     setenv RODIN_STATE_DIR /data/system/rodin-essential
-    # ROM-native touch stays on the public HAL. The root-module-only private
-    # target capability is intentionally absent from this service environment.
     disabled
     restart_period 2
 

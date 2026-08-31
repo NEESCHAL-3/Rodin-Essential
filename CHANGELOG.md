@@ -36,22 +36,17 @@ All notable changes are documented here.
 - TouchFeature setter replies now parse both the AIDL status header and vendor
   result instead of mistaking a delivered Binder transaction for an accepted
   panel command.
-- Touch Response exposes OEM Adaptive as the default plus persistent 240 Hz,
-  480 Hz, and Super Touch choices. A forced choice is applied once when selected
-  and once after the touch service becomes ready on boot; no cadence checker,
-  wake hook, gesture hook, or maintenance timer rewrites it afterward.
-- The previous synthetic 1 ms event scheduler has been removed. The 1000 Hz
-  bursts now come from Xiaomi's hardware Super Touch path, eliminating injected
-  movement events, scroll stalls, and needless input polling.
+- Touch Response retains the proven v1.18.0 250, 500, and 1000 profiles. Native
+  modes use the 240/480 Hz timing blocks, while 1000 keeps the 480 Hz source and
+  restores the verified one-millisecond Android output scheduler.
 - The unused per-application profile subsystem and its package-query surface
   have been removed from the daemon, host, manifest, and interface.
 - AOSP integration now preserves an explicit APK signing identity, maps that
   certificate and package to the dedicated `rodin_app` domain, labels only the
-  required exact generic Mali sysfs paths, and passes the Android 16 platform
-  neverallow contract check.
-- ROM-native touch selection uses Xiaomi's public TouchFeature service only.
-  Boot restoration no longer depends on enumerating the vendor process, so raw
-  input access, process inspection, and `SYS_PTRACE` remain forbidden.
+  required exact generic Mali and Goodix sysfs paths, and keeps the v1.18.0
+  touch permissions isolated to the daemon policy for device-tree review.
+- ROM-native policy again includes the narrowly scoped touch-HAL process and
+  input access required by the v1.18.0 1000 Hz output path.
 - Application, module, daemon protocol, documentation, and release metadata
   are synchronized under a new version so different payloads are no longer
   distributed under the same release identity.

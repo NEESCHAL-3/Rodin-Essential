@@ -90,8 +90,8 @@ grep -Fxq 'export RODIN_LOOPBACK_IPC=1' "$RODIN_STAGE/service.sh" || {
     echo "Missing authenticated loopback IPC activation" >&2
     exit 1
 }
-grep -Fxq 'export RODIN_TOUCH_PRIVATE_TARGET=1' "$RODIN_STAGE/service.sh" || {
-    echo "Missing private THP target activation" >&2
+grep -Fq 'touch_resampler_ready' "$RODIN_STAGE/action.sh" || {
+    echo "Missing v1.18.0 touch-resampler diagnostics" >&2
     exit 1
 }
 grep -Fq 'App IPC: verified (daemon-initiated)' "$RODIN_STAGE/action.sh" || {

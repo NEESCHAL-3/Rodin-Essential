@@ -700,7 +700,10 @@ fn refresh(cache: &Cache) -> Result<(), String> {
         ("touch_instant_rate", 61),
         ("touch_panel", 62),
         ("touch_control_path", 63),
-        ("touch_profile_mask", 64),
+        ("touch_measured_rate_x10", 64),
+        ("touch_resampler_ready", 65),
+        ("touch_measurement_active", 66),
+        ("touch_source_rate_x10", 67),
         ("cpu_live_min0", 68),
         ("cpu_live_max0", 69),
         ("cpu_live_min4", 70),
@@ -712,6 +715,8 @@ fn refresh(cache: &Cache) -> Result<(), String> {
         ("cpu_freq_drift4", 76),
         ("cpu_freq_drift7", 77),
         ("display_native_density", 78),
+        ("touch_resampler_path", 79),
+        ("touch_resampler_error", 80),
     ];
 
     for &(key, index) in extended_fields {
@@ -790,7 +795,7 @@ fn perform(command: Command) -> Result<(), String> {
         Command::Charging(v) if matches!(v, 0 | 8) => {
             request(&format!("SET charging {v}")).map(|_| ())
         }
-        Command::Touch(v) if (0..=3).contains(&v) => request(&format!("SET touch {v}")).map(|_| ()),
+        Command::Touch(v) if (0..=7).contains(&v) => request(&format!("SET touch {v}")).map(|_| ()),
         Command::DisplayColor(v) if (0..=2).contains(&v) => {
             request(&format!("SET display.color {v}")).map(|_| ())
         }

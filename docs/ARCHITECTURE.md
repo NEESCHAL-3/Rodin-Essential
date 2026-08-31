@@ -90,31 +90,29 @@ State updates are transactional. The daemon writes `state.conf.tmp` with mode
 directory before replacing its in-memory state. A command cannot report a
 durable success if that sequence fails. The daemon loads the file once at
 startup, restores the hardware domains it owns after Android boot completes,
-and keeps running independently of the application process. A saved forced
-touch profile is restored once after the vendor service becomes ready and is
-then excluded from wake, cadence, gesture, and periodic reassertion. Removing
-the app from recents or force-stopping it therefore does not stop the active
-backend configuration.
+and keeps running independently of the application process. Removing the app
+from recents or force-stopping it therefore does not stop the active backend
+configuration.
 
 Persisted domains include performance profile, GPU bounds/governor/GED/power
-policy, CPU governors and ranges, online-core mask, UFS scheduler, OEM touch
-state, DT2W, display settings, charging, and ZRAM.
+policy, CPU governors and ranges, online-core mask, UFS scheduler, touch
+profile, DT2W, display settings, charging, and ZRAM.
 
 ## Touch paths
 
-Rodin Essential exposes OEM Adaptive plus 240 Hz, 480 Hz, and Super Touch
-profiles. OEM Adaptive is the fresh-install default and leaves cadence entirely
-to the ROM and panel firmware. The 240 and 480 selections request the matching
-native Rodin calibrations through Xiaomi's `ITouchFeature` AIDL service, which
-abstracts both supported Goodix and FocalTech panels.
+Rodin Essential first uses Xiaomi's vendor `ITouchFeature` AIDL service, which
+abstracts the supported Goodix and FocalTech panels. A Goodix sysfs path is used
+only as a fallback on ports that omit the AIDL service.
 
-The Super Touch selection uses Xiaomi's hardware modes and private THP
-target where the root-module service can verify that vendor layout. ROM-native
-builds use only the public HAL and never inspect another process. No profile
-opens or writes a raw input device, and Rodin never injects or interpolates
-Android movement events. A saved forced profile is applied exactly once after
-boot service readiness; there is no touch cadence monitor, timer, wake hook,
-gesture hook, or foreground-app rewrite.
+- 250 mode requests the native 240 Hz timing block.
+- 500 mode requests the native 480 Hz timing block.
+- 1000 mode keeps the physical source at 480 Hz and emits the v1.18.0 verified
+  one-millisecond Android event stream through a duplicated vendor event
+  descriptor.
+
+The 1000 path needs `SYS_PTRACE`, input-device access, `pidfd_getfd`, and
+narrowly scoped SELinux access to the Rodin touch HAL domain. These permissions
+belong to the daemon only.
 
 ## Performance ownership
 
