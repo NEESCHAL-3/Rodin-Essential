@@ -2,7 +2,3 @@
 # /platform on some vendor ports.
 genfscon sysfs /devices/platform/soc/13000000.mali/devfreq/13000000.mali u:object_r:sysfs_rodin_mali_devfreq:s0
 genfscon sysfs /devices/platform/13000000.mali/devfreq/13000000.mali u:object_r:sysfs_rodin_mali_devfreq:s0
-
-# Goodix-only fallback used by ports that omit the Xiaomi TouchFeature service.
-# FocalTech and other supported Rodin panels use the vendor AIDL service.
-genfscon sysfs /devices/platform/goodix_ts.0/switch_report_rate u:object_r:sysfs_rodin_touch_report_rate:s0

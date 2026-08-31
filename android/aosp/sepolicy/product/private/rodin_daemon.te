@@ -1,5 +1,10 @@
 init_daemon_domain(rodin_daemon)
 
+# rodin_app carries Android's per-user MCS categories while an init daemon
+# runs at s0. Trust only the daemon endpoint so the MLS socket constraint can
+# pass; the explicit connectto rule below remains the sole client allowlist.
+typeattribute rodin_daemon mlstrustedsubject;
+
 type rodin_daemon_data_file, file_type, data_file_type, core_data_file_type;
 
 allow rodin_daemon self:capability {
@@ -21,6 +26,11 @@ userdebug_or_eng(`
 
 binder_use(rodin_daemon)
 binder_call(rodin_daemon, system_server)
+# Framework command clients pass their output pipe to system_server. Permit
+# only that reply direction; without it `cmd window`, `cmd settings`, and
+# `dumpsys` can remain blocked even though the Binder call itself is allowed.
+allow system_server rodin_daemon:fd use;
+allow system_server rodin_daemon:fifo_file write;
 allow rodin_daemon display_service:service_manager find;
 allow rodin_daemon power_service:service_manager find;
 allow rodin_daemon settings_service:service_manager find;
@@ -28,4 +38,4 @@ allow rodin_daemon window_service:service_manager find;
 
 # The backend calls Android command-line clients for settings and diagnostics.
 allow rodin_daemon system_file:file { rx_file_perms execute_no_trans };
-allow rodin_daemon shell_exec:file { rx_file_perms execute_no_trans };
+allow rodin_daemon toolbox_exec:file { rx_file_perms execute_no_trans };

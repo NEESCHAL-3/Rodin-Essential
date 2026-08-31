@@ -33,11 +33,14 @@ if grep -ERq 'magiskpolicy|ksud[[:space:]]+sepolicy|allow[[:space:]]+appdomain' 
 fi
 
 grep -Fxq 'export RODIN_REVERSE_IPC=1' "$RODIN_SERVICE"
+grep -Fxq 'export RODIN_LOOPBACK_IPC=1' "$RODIN_SERVICE"
+grep -Fxq 'export RODIN_TOUCH_PRIVATE_TARGET=1' "$RODIN_SERVICE"
 grep -Fq 'export RODIN_APP_UID' "$RODIN_SERVICE"
 grep -Fq 'pm list packages -U' "$RODIN_SERVICE"
 grep -Fq 'sys.boot_completed' "$RODIN_SERVICE"
 grep -Fq 'rom_native_backend_detected' "$RODIN_SERVICE"
 grep -Fq 'App IPC: verified (daemon-initiated)' "$RODIN_ACTION"
+grep -Fq 'App IPC: verified (authenticated loopback)' "$RODIN_ACTION"
 grep -Fq 'INSTALL_FAILED_UPDATE_INCOMPATIBLE' "$RODIN_INSTALLER"
 grep -Fq 'App/module version mismatch' "$RODIN_INSTALLER"
 

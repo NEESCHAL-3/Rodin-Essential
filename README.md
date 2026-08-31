@@ -7,7 +7,8 @@ Rust host runtime, and a separately privileged Rust daemon.
 
 The APK never runs as root, does not use the system UID, and does not request
 privileged Android permissions. Kernel and vendor controls are owned by the
-daemon and reached through a private abstract Unix socket.
+daemon and reached through authenticated local transports restricted to the
+installed application UID.
 
 ## Supported target
 
@@ -31,13 +32,15 @@ installer and are not supported by the included AOSP policy.
   minimum/maximum or sustained exact-lock controls sourced from the live kernel
   OPP table.
 - UFS scheduler selection across every detected UFS logical unit.
-- Touch profiles for 240 Hz native timing, 480 Hz native timing, and a 1 ms
-  Android output stream generated from the native 480 Hz source.
+- OEM Adaptive touch behavior plus persistent 240 Hz, 480 Hz, and Super Touch
+  choices, using Xiaomi's hardware path with no synthetic input events,
+  gesture-time, wake-time, cadence-driven, or periodic profile rewrite.
 - Xiaomi touch/display AIDL integration, DT2W, color modes, expert calibration,
   sunlight mode, HDR/video controls, resolution, and density controls.
 - ZRAM size, algorithm, swappiness, compaction, charging, and power telemetry.
-- Daemon-owned persistence and background reassertion after boot, screen wake,
-  vendor resets, app force-close, or removal from recents.
+- Daemon-owned persistence for CPU, GPU, display, charging, UFS, ZRAM, and the
+  selected touch mode after boot or app closure. Touch is restored once per
+  boot and excluded from the recurring drift-maintenance loop.
 - Configurable in-app motion timing with native 120 Hz frame pacing.
 
 ## Performance profiles
@@ -164,13 +167,15 @@ Install the ZIP from KernelSU Next Manager or the Magisk app while Android is
 running. The installer registers the bundled APK as an ordinary user app and
 the module runs only the separate hardware daemon as root. No live SELinux
 patch, system overlay, privileged-app conversion, or app-to-root socket rule is
-used. The module always enables a daemon-initiated fallback for ROMs that block
-the direct connection. The app accepts that fallback only from UID 0, while the
-daemon accepts commands only from UID 0 or the UID Android assigned to the
-bundled package. Module Action reports whether an actual app connection has
-completed instead of treating a root-only control-client ping as proof. The
-package uses `skip_mount`; because it overlays no partition files, KernelSU does
-not require a metamodule. Recovery installation is not supported.
+used. The direct Unix transport uses `SO_PEERCRED`. ROMs that block cross-domain
+Unix `connectto` use a root-privileged localhost port instead; the app first
+proves from its own UID/SELinux context that low-port binding is denied, and the
+daemon resolves the accepted client's UID from `/proc/net/tcp` before serving a
+command. A daemon-initiated Unix path remains as a compatibility fallback.
+Module Action reports which authenticated transport completed instead of
+treating a root-only control-client ping as proof. The package uses `skip_mount`;
+because it overlays no partition files, KernelSU does not require a metamodule.
+Recovery installation is not supported.
 
 Keep the signing key for every future module update. Android rejects an APK
 update signed by a different certificate.

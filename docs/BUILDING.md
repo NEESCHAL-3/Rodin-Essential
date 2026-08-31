@@ -150,18 +150,19 @@ RODIN_KEY_PASS='key-password' \
 
 This builds the application and daemon together, then creates one ZIP for
 KernelSU Next Manager and the Magisk app. The build validates module metadata,
-shell syntax, the authenticated reverse-IPC contract, the official APK signing
+shell syntax, the authenticated Unix/loopback IPC contract, the official APK signing
 certificate, package/version/zero-DEX/16 KB alignment, ARM64 daemon binaries,
 Android dynamic linker, archive contents, and checksum. It also rejects any
 SELinux patch payload or system overlay in the resulting ZIP.
 
 The module installs the bundled APK through Android's package manager as a
 normal user application. It does not mount an APK into a system partition, so
-KernelSU does not need a metamodule. The daemon exposes an outward connection
-for policies that block the authenticated direct path; the module neither
-patches live SELinux policy nor converts the APK into a privileged application.
-A policy that already permits the direct connection may use it. Installation
-from recovery is not supported.
+KernelSU does not need a metamodule. Policies that block cross-domain Unix
+sockets use the root-privileged localhost fallback, whose accepted client is
+mapped to the installed package UID through the kernel TCP table. The module
+neither patches live SELinux policy nor converts the APK into a privileged
+application. A policy that already permits the direct connection may use it.
+Installation from recovery is not supported.
 
 The builder requires a persistent `RODIN_KEYSTORE`; it never creates a
 disposable module signing identity. Reuse the same key for all published module

@@ -144,6 +144,13 @@ Production socket access is intentionally limited to:
 rodin_app -> rodin_daemon:unix_stream_socket connectto
 ```
 
+Android assigns the app a per-user MCS category while the init daemon runs at
+`s0`. The daemon is therefore an `mlstrustedsubject`; otherwise the platform's
+MLS stream-socket constraint rejects the connection even when the type-
+enforcement rule above is present. Only the daemon receives this attribute.
+The app remains category-isolated, and the explicit `rodin_app` rule remains
+the client allowlist.
+
 Do not replace it with an `appdomain` or `untrusted_app` allow. That would let
 unrelated applications issue hardware commands. `rodin_ctl` access from the
 shell is compiled only for `userdebug` and `eng` builds.
@@ -154,13 +161,11 @@ Rodin Essential must write:
 ```text
 /sys/devices/platform/soc/13000000.mali/devfreq/13000000.mali
 /sys/devices/platform/13000000.mali/devfreq/13000000.mali
-/sys/devices/platform/goodix_ts.0/switch_report_rate
 ```
 
 The first two cover the Mali devfreq layouts seen across Rodin vendor bases.
-The Goodix path is a fallback for ROMs that omit Xiaomi's TouchFeature AIDL
-service. FocalTech and other supported Rodin panels use the vendor AIDL path;
-they do not depend on the Goodix sysfs node.
+All touch calibration, including Xiaomi's Super Touch path, uses the
+vendor AIDL service and requires no panel-specific sysfs or raw-input label.
 
 Never grant the coredomain generic `sysfs:file` write access. If the target
 device tree already labels one of these exact paths, reconcile the duplicate
@@ -220,14 +225,14 @@ belong only to `rodin_daemon`.
 
 ### Touch policy
 
-Native 240/480 Hz timing uses Xiaomi's public TouchFeature AIDL service. The
-1000 Hz output path keeps that native calibration and opens the detected Rodin
-multitouch event directly with the daemon's narrow `input_device` permission.
-The AOSP init service sets `RODIN_DIRECT_INPUT_ONLY=1`, which also prevents the
-daemon from inspecting touch-service memory or duplicating another process's
-file descriptors. Do not add `SYS_PTRACE` or touch-HAL process access. Android
-16 reserves that capability for a fixed set of platform diagnostics, and the
-supplied neverallow contract intentionally rejects it.
+OEM Adaptive is the default. Native 240/480 Hz calibration and Xiaomi's
+hardware Super Touch path use the public TouchFeature AIDL service, which
+covers both Rodin panel families.
+The ROM-native init service intentionally does not set the root-module-only
+`RODIN_TOUCH_PRIVATE_TARGET=1` capability, so the daemon never inspects touch-
+service memory. No profile opens a raw input device or injects Android movement
+events. Do not add `input_device`, `SYS_PTRACE`, process tracing, or touch-HAL
+process access.
 
 ## 6. Build and policy validation
 
@@ -269,9 +274,10 @@ At `post-fs-data`, init creates and labels:
 ```
 
 After `sys.boot_completed=1`, init starts `rodin_daemon` and restarts it after
-an unexpected exit. The daemon loads its saved state, reapplies every persisted
-domain after framework and vendor services settle, and continuously corrects
-owned settings that drift.
+an unexpected exit. The daemon loads its saved state and restores hardware
+domains after framework and vendor services settle. A forced touch choice is
+applied once after TouchFeature becomes ready and is intentionally excluded
+from the recurring wake and drift-maintenance paths.
 
 The UI process is not the owner of active settings. Swiping it from recents,
 force-stopping it, or restarting System UI does not stop the daemon. Normal OTA
@@ -288,6 +294,7 @@ On a freshly flashed `userdebug` build:
 ```bash
 adb root
 adb shell getenforce
+adb shell ls -lZ /product/bin/rodin_daemon
 adb shell ps -AZ | grep -E 'rodin_(app|daemon)|rodin_daemon'
 adb shell /product/bin/rodin_ctl PING
 adb shell /product/bin/rodin_ctl GET snapshot
@@ -300,8 +307,9 @@ Expected results:
 
 - SELinux is `Enforcing`.
 - App domain is `u:r:rodin_app:s0` with an ordinary `_app` UID.
+- Daemon executable type is `u:object_r:rodin_daemon_exec:s0`.
 - Daemon domain is `u:r:rodin_daemon:s0` and daemon UID is root.
-- Ping returns `OK PONG 13.4`.
+- Ping returns `OK PONG 13.5`.
 - State directory type is `rodin_daemon_data_file`.
 
 Verify the installed APK remains zero-DEX:
