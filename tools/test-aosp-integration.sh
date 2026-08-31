@@ -66,11 +66,22 @@ grep -Fq 'untrusted_app_domain(rodin_app)' "$RODIN_PRODUCT_PRIVATE/rodin_app.te"
 grep -Fq 'typeattribute rodin_app coredomain;' "$RODIN_PRODUCT_PRIVATE/rodin_app.te"
 grep -Fq 'allow rodin_app rodin_daemon:unix_stream_socket connectto;' \
     "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
+grep -Fq 'typeattribute rodin_daemon mlstrustedsubject;' \
+    "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
 grep -Fq 'settings_service:service_manager find;' \
     "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
 grep -Fq 'window_service:service_manager find;' \
     "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
+grep -Fq 'allow system_server rodin_daemon:fd use;' \
+    "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
+grep -Fq 'allow system_server rodin_daemon:fifo_file write;' \
+    "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
+grep -Fq 'toolbox_exec:file' "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
 grep -Fq 'execute_no_trans' "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
+if grep -Fq 'shell_exec:file' "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"; then
+    echo "AOSP daemon must call cmd directly instead of executing shell wrappers" >&2
+    exit 1
+fi
 if grep -Eq 'allow[[:space:]]+(appdomain|untrusted_app)[[:space:]]+rodin_daemon' \
     "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"; then
     echo "AOSP socket access must remain restricted to rodin_app" >&2
@@ -84,18 +95,27 @@ if grep -Eq '(^|[[:space:]])permissive[[:space:]]+rodin_daemon|sysfs_batteryinfo
 fi
 
 grep -Fq 'type sysfs_rodin_mali_devfreq, fs_type, sysfs_type;' "$RODIN_VENDOR_POLICY"
-grep -Fq 'type sysfs_rodin_touch_report_rate, fs_type, sysfs_type;' "$RODIN_VENDOR_POLICY"
 grep -Fq 'allow rodin_daemon sysfs_battery_supply:file r_file_perms;' "$RODIN_VENDOR_POLICY"
 grep -Fq 'allow rodin_daemon vendor_sysfs_displayfeature:file r_file_perms;' "$RODIN_VENDOR_POLICY"
 grep -Fq '/devices/platform/soc/13000000.mali/devfreq/13000000.mali' "$RODIN_GENFS"
-grep -Fq '/devices/platform/goodix_ts.0/switch_report_rate' "$RODIN_GENFS"
 
 grep -Fq 'user root' "$RODIN_AOSP/rodin_daemon.rc"
 grep -Fq 'setenv RODIN_STATE_DIR /data/system/rodin-essential' "$RODIN_AOSP/rodin_daemon.rc"
-grep -Fq 'setenv RODIN_DIRECT_INPUT_ONLY 1' "$RODIN_AOSP/rodin_daemon.rc"
+if grep -Fq 'setenv RODIN_TOUCH_PRIVATE_TARGET 1' "$RODIN_AOSP/rodin_daemon.rc"; then
+    echo "ROM-native touch must not enable the root-module private target" >&2
+    exit 1
+fi
+if grep -Eq '^[[:space:]]*group.*(input|readproc)' "$RODIN_AOSP/rodin_daemon.rc"; then
+    echo "ROM-native hardware touch must not request raw-input or process groups" >&2
+    exit 1
+fi
+if grep -Fq 'input_device:chr_file' "$RODIN_VENDOR_POLICY"; then
+    echo "ROM-native hardware touch must not grant raw input-device access" >&2
+    exit 1
+fi
 grep -Fq 'fn touch_thp_memory_control_enabled()' \
     "$RODIN_PROJECT_ROOT/runtime/daemon-rust/src/lib.rs"
-grep -Fq 'std::env::var("RODIN_DIRECT_INPUT_ONLY")' \
+grep -Fq 'std::env::var("RODIN_TOUCH_PRIVATE_TARGET")' \
     "$RODIN_PROJECT_ROOT/runtime/daemon-rust/src/lib.rs"
 grep -Fq 'on property:sys.boot_completed=1' "$RODIN_AOSP/rodin_daemon.rc"
 if grep -Eq 'DAC_OVERRIDE|DAC_READ_SEARCH|SYS_PTRACE' "$RODIN_AOSP/rodin_daemon.rc"; then

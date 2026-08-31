@@ -86,8 +86,20 @@ grep -Fxq 'export RODIN_REVERSE_IPC=1' "$RODIN_STAGE/service.sh" || {
     echo "Missing authenticated reverse IPC activation" >&2
     exit 1
 }
+grep -Fxq 'export RODIN_LOOPBACK_IPC=1' "$RODIN_STAGE/service.sh" || {
+    echo "Missing authenticated loopback IPC activation" >&2
+    exit 1
+}
+grep -Fxq 'export RODIN_TOUCH_PRIVATE_TARGET=1' "$RODIN_STAGE/service.sh" || {
+    echo "Missing private THP target activation" >&2
+    exit 1
+}
 grep -Fq 'App IPC: verified (daemon-initiated)' "$RODIN_STAGE/action.sh" || {
     echo "Module Action does not verify the Android app transport" >&2
+    exit 1
+}
+grep -Fq 'App IPC: verified (authenticated loopback)' "$RODIN_STAGE/action.sh" || {
+    echo "Module Action does not report the authenticated loopback transport" >&2
     exit 1
 }
 
@@ -202,7 +214,9 @@ RODIN_ZIP_APK_SHA="$(unzip -p "$RODIN_ZIP" app/RodinEssential.apk | sha256sum | 
 }
 
 cp -f "$RODIN_ZIP" "$RODIN_STABLE_ZIP"
-sha256sum "$RODIN_ZIP" | tee "$RODIN_ZIP.sha256"
+RODIN_ZIP_SHA256="$(sha256sum "$RODIN_ZIP" | awk '{print $1}')"
+printf '%s  %s\n' "$RODIN_ZIP_SHA256" "${RODIN_ZIP##*/}" \
+    | tee "$RODIN_ZIP.sha256"
 
 echo "ROOT_MODULE=PASS"
 echo "MANAGERS=KernelSU Next, Magisk"

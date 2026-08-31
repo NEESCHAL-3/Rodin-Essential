@@ -25,18 +25,15 @@ allow rodin_daemon proc_touch_boost:file rw_file_perms;
 allow rodin_daemon proc_tp_file:file r_file_perms;
 allow rodin_daemon proc_swappiness:file rw_file_perms;
 allow rodin_daemon proc_drop_caches:file w_file_perms;
-allow rodin_daemon input_device:chr_file rw_file_perms;
 allow rodin_daemon swap_block_device:blk_file rw_file_perms;
 
 # These Rodin nodes are generic sysfs in the stock vendor image. Relabel only
 # their exact subtrees so the coredomain never receives generic sysfs access.
 type sysfs_rodin_mali_devfreq, fs_type, sysfs_type;
-type sysfs_rodin_touch_report_rate, fs_type, sysfs_type;
 
 allow rodin_daemon sysfs:dir search;
 allow rodin_daemon sysfs_rodin_mali_devfreq:dir r_dir_perms;
 allow rodin_daemon sysfs_rodin_mali_devfreq:file rw_file_perms;
-allow rodin_daemon sysfs_rodin_touch_report_rate:file rw_file_perms;
 
 # Xiaomi display and touch AIDL services.
 binder_call(rodin_daemon, vendor_hal_displayfeature_xiaomi_default)
@@ -44,6 +41,5 @@ binder_call(rodin_daemon, hal_touchfeature_xiaomi_default)
 allow rodin_daemon vendor_hal_displayfeature_xiaomi_service:service_manager find;
 allow rodin_daemon hal_touchfeature_xiaomi_service:service_manager find;
 
-# ROM-native 1000 Hz uses the directly labelled input device. The product init
-# service selects that path so Android's CAP_SYS_PTRACE neverallow remains
-# intact; no touch-HAL process inspection is granted here.
+# All touch profiles stay on the vendor HAL. Raw input access, process
+# inspection, and SYS_PTRACE remain intentionally absent.

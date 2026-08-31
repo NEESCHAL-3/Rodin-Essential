@@ -14,6 +14,8 @@ RODIN_PACKAGE=io.github.neeschal.rodinessential
 
 export RODIN_STATE_DIR="$RODIN_ROOT"
 export RODIN_REVERSE_IPC=1
+export RODIN_LOOPBACK_IPC=1
+export RODIN_TOUCH_PRIVATE_TARGET=1
 
 umask 077
 mkdir -p "$RODIN_ROOT"
@@ -131,8 +133,9 @@ while [ "$(getprop sys.boot_completed 2>/dev/null)" != "1" ]; do
 done
 
 # Pin the daemon to the UID Android assigned to this exact APK. The daemon
-# initiates the connection to the app, so no app-to-root SELinux relaxation is
-# required and no other ordinary application can issue hardware commands.
+# validates Unix peers with SO_PEERCRED and privileged-loopback peers against
+# the kernel TCP table, so no app-to-root SELinux relaxation is required and no
+# other ordinary application can issue hardware commands.
 RODIN_UID_WAIT_LOGGED=0
 while true; do
     RODIN_APP_UID="$(rodin_resolve_app_uid)"

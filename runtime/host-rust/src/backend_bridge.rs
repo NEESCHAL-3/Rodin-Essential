@@ -1,5 +1,6 @@
 use std::ffi::c_void;
 use std::io::{Read, Write};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering};
@@ -11,8 +12,10 @@ const SOCK_STREAM: i32 = 1;
 const SOCK_CLOEXEC: i32 = 0x80000;
 const SOL_SOCKET: i32 = 1;
 const SO_PEERCRED: i32 = 17;
-const SOCKET_NAME: &str = "rodin_essentiald_v14";
-const REVERSE_SOCKET_NAME: &str = "rodin_essential_app_v14";
+const SOCKET_NAME: &str = "rodin_essentiald_v15";
+const REVERSE_SOCKET_NAME: &str = "rodin_essential_app_v15";
+const LOOPBACK_PORT: u16 = 732;
+const LOOPBACK_PRIVILEGE_PROBE_PORT: u16 = 731;
 const EXTENDED_VALUE_COUNT: usize = 81;
 
 #[repr(C)]
@@ -292,24 +295,108 @@ fn ensure_daemon_running() {
     }
 }
 
-fn configure_daemon_stream(stream: UnixStream) -> UnixStream {
+trait DaemonStream: Read + Write {}
+
+impl<T: Read + Write> DaemonStream for T {}
+
+fn configure_unix_stream(stream: UnixStream) -> Box<dyn DaemonStream> {
     // Super Touch's vendor first-frame transaction may wait up to two seconds
     // for the panel pipeline. Keep the UI asynchronous, but allow that verified
     // HAL transaction to finish instead of reporting a false timeout.
     let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
-    stream
+    Box::new(stream)
 }
 
-fn connect_daemon() -> Result<UnixStream, String> {
-    if IPC_TRANSPORT.load(Ordering::Acquire) == 2 {
-        return match take_reverse_connection() {
-            Ok(stream) => Ok(configure_daemon_stream(stream)),
-            Err(error) => {
-                ensure_daemon_running();
-                Err(error)
+fn connect_loopback() -> Result<Box<dyn DaemonStream>, String> {
+    // Prove the boundary from the app's real SELinux/UID context instead of
+    // reading a proc sysctl that some production ROMs hide from applications.
+    // A normal app must receive EACCES when it attempts to bind a neighbouring
+    // low port. If it can bind, or the result is ambiguous, fail closed.
+    let probe_address = SocketAddr::V4(SocketAddrV4::new(
+        Ipv4Addr::LOCALHOST,
+        LOOPBACK_PRIVILEGE_PROBE_PORT,
+    ));
+    match TcpListener::bind(probe_address) {
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+        Ok(listener) => {
+            drop(listener);
+            return Err("ordinary app context can bind the loopback privilege probe".into());
+        }
+        Err(error) => {
+            return Err(format!(
+                "unable to prove the loopback privilege boundary: {error}"
+            ));
+        }
+    }
+
+    let address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, LOOPBACK_PORT));
+    let stream = TcpStream::connect_timeout(&address, Duration::from_millis(400))
+        .map_err(|error| format!("privileged loopback: {error}"))?;
+    let _ = stream.set_nodelay(true);
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
+    Ok(Box::new(stream))
+}
+
+fn fallback_daemon_stream(direct_error: &str) -> Result<Box<dyn DaemonStream>, String> {
+    match connect_loopback() {
+        Ok(stream) => {
+            IPC_TRANSPORT.store(3, Ordering::Release);
+            Ok(stream)
+        }
+        Err(loopback_error) => match take_reverse_connection() {
+            Ok(stream) => {
+                IPC_TRANSPORT.store(2, Ordering::Release);
+                Ok(configure_unix_stream(stream))
             }
-        };
+            Err(reverse_error) => {
+                ensure_daemon_running();
+                Err(format!("{direct_error}; {loopback_error}; {reverse_error}"))
+            }
+        },
+    }
+}
+
+fn connect_daemon() -> Result<Box<dyn DaemonStream>, String> {
+    if IPC_TRANSPORT.load(Ordering::Acquire) == 2 {
+        match take_reverse_connection() {
+            Ok(stream) => return Ok(configure_unix_stream(stream)),
+            Err(reverse_error) => {
+                // A root-manager policy or daemon restart can invalidate a
+                // transport that worked earlier in this app process. Do not
+                // pin the worker Offline until the process is relaunched.
+                IPC_TRANSPORT.store(0, Ordering::Release);
+                return match connect_loopback() {
+                    Ok(stream) => {
+                        IPC_TRANSPORT.store(3, Ordering::Release);
+                        Ok(stream)
+                    }
+                    Err(loopback_error) => {
+                        ensure_daemon_running();
+                        Err(format!("{reverse_error}; {loopback_error}"))
+                    }
+                };
+            }
+        }
+    }
+    if IPC_TRANSPORT.load(Ordering::Acquire) == 3 {
+        match connect_loopback() {
+            Ok(stream) => return Ok(stream),
+            Err(loopback_error) => {
+                IPC_TRANSPORT.store(0, Ordering::Release);
+                return match take_reverse_connection() {
+                    Ok(stream) => {
+                        IPC_TRANSPORT.store(2, Ordering::Release);
+                        Ok(configure_unix_stream(stream))
+                    }
+                    Err(reverse_error) => {
+                        ensure_daemon_running();
+                        Err(format!("{loopback_error}; {reverse_error}"))
+                    }
+                };
+            }
+        }
     }
 
     let (addr, len) = abstract_addr(SOCKET_NAME).ok_or("invalid socket name")?;
@@ -320,33 +407,15 @@ fn connect_daemon() -> Result<UnixStream, String> {
     if unsafe { connect(fd, &addr as *const _ as *const c_void, len) } != 0 {
         let e = std::io::Error::last_os_error();
         unsafe { close(fd) };
-        match take_reverse_connection() {
-            Ok(stream) => {
-                IPC_TRANSPORT.store(2, Ordering::Release);
-                return Ok(configure_daemon_stream(stream));
-            }
-            Err(reverse_error) => {
-                ensure_daemon_running();
-                return Err(format!("direct connect: {e}; {reverse_error}"));
-            }
-        }
+        return fallback_daemon_stream(&format!("direct connect: {e}"));
     }
     let stream = unsafe { UnixStream::from_raw_fd(fd) };
     if peer_uid(&stream) != Ok(0) {
         drop(stream);
-        return match take_reverse_connection() {
-            Ok(stream) => {
-                IPC_TRANSPORT.store(2, Ordering::Release);
-                Ok(configure_daemon_stream(stream))
-            }
-            Err(reverse_error) => {
-                ensure_daemon_running();
-                Err(format!("direct daemon peer is not UID 0; {reverse_error}"))
-            }
-        };
+        return fallback_daemon_stream("direct daemon peer is not UID 0");
     }
     IPC_TRANSPORT.store(1, Ordering::Release);
-    Ok(configure_daemon_stream(stream))
+    Ok(configure_unix_stream(stream))
 }
 
 fn request(command: &str) -> Result<String, String> {
@@ -478,7 +547,7 @@ fn refresh(cache: &Cache) -> Result<(), String> {
             map.insert(k.to_string(), v.to_string());
         }
     }
-    if map.get("protocol").map(String::as_str) != Some("13.4") {
+    if map.get("protocol").map(String::as_str) != Some("13.5") {
         return Err("protocol mismatch".into());
     }
 
@@ -631,10 +700,7 @@ fn refresh(cache: &Cache) -> Result<(), String> {
         ("touch_instant_rate", 61),
         ("touch_panel", 62),
         ("touch_control_path", 63),
-        ("touch_measured_rate_x10", 64),
-        ("touch_resampler_ready", 65),
-        ("touch_measurement_active", 66),
-        ("touch_source_rate_x10", 67),
+        ("touch_profile_mask", 64),
         ("cpu_live_min0", 68),
         ("cpu_live_max0", 69),
         ("cpu_live_min4", 70),
@@ -646,8 +712,6 @@ fn refresh(cache: &Cache) -> Result<(), String> {
         ("cpu_freq_drift4", 76),
         ("cpu_freq_drift7", 77),
         ("display_native_density", 78),
-        ("touch_resampler_path", 79),
-        ("touch_resampler_error", 80),
     ];
 
     for &(key, index) in extended_fields {
@@ -726,7 +790,7 @@ fn perform(command: Command) -> Result<(), String> {
         Command::Charging(v) if matches!(v, 0 | 8) => {
             request(&format!("SET charging {v}")).map(|_| ())
         }
-        Command::Touch(v) if (0..=7).contains(&v) => request(&format!("SET touch {v}")).map(|_| ()),
+        Command::Touch(v) if (0..=3).contains(&v) => request(&format!("SET touch {v}")).map(|_| ()),
         Command::DisplayColor(v) if (0..=2).contains(&v) => {
             request(&format!("SET display.color {v}")).map(|_| ())
         }
@@ -991,7 +1055,7 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
                     match refresh(&cache) {
                         Ok(()) => {
                             if !logged_pass {
-                                app_log(b"RODIN_BACKEND_APP=PASS protocol=13.4\0");
+                                app_log(b"RODIN_BACKEND_APP=PASS protocol=13.5\0");
                                 logged_pass = true;
                             }
                             logged_fail = false;
@@ -1071,7 +1135,7 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
             match refresh(&cache) {
                 Ok(()) => {
                     if !logged_pass {
-                        app_log(b"RODIN_BACKEND_APP=PASS protocol=13.4\0");
+                        app_log(b"RODIN_BACKEND_APP=PASS protocol=13.5\0");
                         logged_pass = true;
                     }
                     logged_fail = false;

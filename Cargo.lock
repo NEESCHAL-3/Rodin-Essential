@@ -106,11 +106,11 @@ dependencies = [
 
 [[package]]
 name = "rodin-essential-daemon"
-version = "1.18.1"
+version = "1.18.2"
 
 [[package]]
 name = "rodin-essential-host"
-version = "1.18.1"
+version = "1.18.2"
 dependencies = [
  "jni",
 ]

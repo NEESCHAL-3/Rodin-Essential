@@ -2,7 +2,7 @@
 
 All notable changes are documented here.
 
-## 1.18.1
+## 1.18.2
 
 ### Fixed
 
@@ -12,6 +12,12 @@ All notable changes are documented here.
   both sides verify the peer UID with `SO_PEERCRED`.
 - Module Action distinguishes root-only daemon health from a connection that
   was successfully completed by the Android app.
+- Root modules now provide an authenticated privileged-loopback transport for
+  ROMs whose SELinux policy blocks Unix `connectto` in either direction. The
+  app proves the privileged-port boundary from its own sandbox, and the daemon
+  resolves the accepted client's exact package UID from `/proc/net/tcp` before
+  serving hardware commands. Cached transports and a temporarily occupied
+  listener port recover automatically without relaunching the app or rebooting.
 - Root-module installation no longer modifies live SELinux policy or depends on
   root-manager domain names. The script-only package uses no system overlay and
   therefore requires no KernelSU metamodule.
@@ -20,18 +26,32 @@ All notable changes are documented here.
   automatically.
 - Persisted state is committed transactionally with file and directory sync, so
   an applied command cannot be reported as durable when the state write failed.
-- Touch, display, GPU, CPU, UFS, charging, and ZRAM commands now reject failed
-  or mismatched live readback instead of saving a false success.
+- The native daemon binds its socket and enters the accept loop before any
+  framework telemetry or restore command can wait on `system_server`. Framework
+  command execution is bounded, and SELinux permits only the required reply-pipe
+  direction, preventing a healthy native service from appearing Offline.
+- Display, GPU, CPU, UFS, charging, and ZRAM commands now reject failed or
+  mismatched live readback instead of saving a false success. Touch commands
+  require an accepted vendor transaction before persistence is committed.
+- TouchFeature setter replies now parse both the AIDL status header and vendor
+  result instead of mistaking a delivered Binder transaction for an accepted
+  panel command.
+- Touch Response exposes OEM Adaptive as the default plus persistent 240 Hz,
+  480 Hz, and Super Touch choices. A forced choice is applied once when selected
+  and once after the touch service becomes ready on boot; no cadence checker,
+  wake hook, gesture hook, or maintenance timer rewrites it afterward.
+- The previous synthetic 1 ms event scheduler has been removed. The 1000 Hz
+  bursts now come from Xiaomi's hardware Super Touch path, eliminating injected
+  movement events, scroll stalls, and needless input polling.
 - The unused per-application profile subsystem and its package-query surface
   have been removed from the daemon, host, manifest, and interface.
 - AOSP integration now preserves an explicit APK signing identity, maps that
   certificate and package to the dedicated `rodin_app` domain, labels only the
-  exact generic Mali and Goodix sysfs paths, and passes the Android 16 platform
+  required exact generic Mali sysfs paths, and passes the Android 16 platform
   neverallow contract check.
-- ROM-native touch calibration uses Xiaomi's public TouchFeature service, and
-  1000 Hz output uses the directly labelled Rodin input event. The native AOSP
-  daemon no longer attempts root-manager-only touch-service memory or file-
-  descriptor access and does not request platform-forbidden `SYS_PTRACE`.
+- ROM-native touch selection uses Xiaomi's public TouchFeature service only.
+  Boot restoration no longer depends on enumerating the vendor process, so raw
+  input access, process inspection, and `SYS_PTRACE` remain forbidden.
 - Application, module, daemon protocol, documentation, and release metadata
   are synchronized under a new version so different payloads are no longer
   distributed under the same release identity.

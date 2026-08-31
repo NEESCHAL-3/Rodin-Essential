@@ -43,6 +43,7 @@ RODIN_APP_CLIENT_TRANSPORT="$(printf '%s\n' "$RODIN_SNAPSHOT" | tr ';' '\n' \
     | sed -n 's/^app_client_transport=//p' | head -n 1)"
 if [ "$RODIN_APP_CLIENT_SEEN" = "1" ]; then
     case "$RODIN_APP_CLIENT_TRANSPORT" in
+        3) echo "App IPC: verified (authenticated loopback)" ;;
         2) echo "App IPC: verified (daemon-initiated)" ;;
         1) echo "App IPC: verified (direct policy)" ;;
         *) echo "App IPC: verified" ;;
@@ -51,4 +52,4 @@ else
     echo "App IPC: not verified yet; open Rodin Essential once"
 fi
 
-echo "$RODIN_SNAPSHOT" | tr ';' '\n' | grep -E '^(io|touch|touch_ack|touch_resampler_ready|perf)=' 2>/dev/null
+echo "$RODIN_SNAPSHOT" | tr ';' '\n' | grep -E '^(io|touch|touch_ack|touch_profile_mask|perf)=' 2>/dev/null

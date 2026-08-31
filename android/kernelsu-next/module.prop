@@ -1,6 +1,6 @@
 id=nees_rodin_essential_backend
 name=Rodin Essential
-version=v1.18.1
-versionCode=11801
+version=v1.18.2
+versionCode=11802
 author=NEESCHAL-3
 description=KernelSU Next and Magisk package for Rodin Essential. Keeps the Android app non-root and runs hardware controls through an authenticated root daemon.

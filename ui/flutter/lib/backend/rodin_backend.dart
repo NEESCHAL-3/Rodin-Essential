@@ -434,12 +434,11 @@ final class RodinBackend {
   bool setChargingBoost(bool enabled) =>
       _queue(_setChargingModeNative(enabled ? 8 : 0));
   bool setTouchProfile(int profile) {
-    if (profile < 0 || profile > 7) return false;
+    if (profile < 0 || profile > 3) return false;
     return _queue(_setTouchStateNative(profile));
   }
 
-  // Kept for older call sites outside the Flutter screen bundle. Enabled maps
-  // to Rodin's sustained 480 Hz profile; disabled restores OEM Dynamic.
+  // Compatibility entry point for older UI call sites.
   bool setTouchBoost(bool enabled) => setTouchProfile(enabled ? 2 : 0);
   bool setDisplayColor(int mode) => _queue(_setDisplayColorNative(mode));
   bool setDisplayTemperature(int mode) => _queue(_setDisplayTempNative(mode));

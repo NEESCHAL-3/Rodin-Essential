@@ -2812,12 +2812,7 @@ class _LiveOverviewGrid extends StatelessWidget {
           _ => 'Vivid',
         };
 
-        final String touch = switch (snapshot.touchState) {
-          1 => '250 Hz',
-          2 => '500 Hz',
-          3 => '1000 Hz',
-          _ => '250 Hz',
-        };
+        final String touch = _rodinTouchLabel(snapshot.touchState);
 
         final int zramDiskMb = backend.extendedValue(39) > 0
             ? backend.extendedValue(39)
@@ -3208,6 +3203,15 @@ String _rodinPerformanceLabel(int profile) {
   };
 }
 
+String _rodinTouchLabel(int profile) {
+  return switch (profile) {
+    1 => '240 Hz',
+    2 => '480 Hz',
+    3 => 'Super Touch',
+    _ => 'OEM Adaptive',
+  };
+}
+
 class HubsScreen extends StatelessWidget {
   const HubsScreen({required this.onOpen, super.key});
 
@@ -3224,7 +3228,7 @@ class HubsScreen extends StatelessWidget {
     _HubSpec(
       RodinScreen.touchBoost,
       'Touch Response',
-      '250 default · 500 native · 1000 output',
+      'OEM adaptive · 240 · 480 · Super Touch',
       Icons.bolt_rounded,
       Color(0xFF41C98A),
     ),
@@ -3470,7 +3474,7 @@ class SupportScreen extends StatelessWidget {
                           runSpacing: 4,
                           children: <Widget>[
                             StatusPill(
-                              label: 'v1.18.1',
+                              label: 'v1.18.2',
                               accent: colors.primary,
                             ),
                             StatusPill(
@@ -4337,31 +4341,31 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
   }
 
   String _profileTitle(int profile) => switch (profile) {
-    1 => '250 Hz Mode',
-    2 => '500 Hz Mode',
-    3 => '1000 Hz Output',
-    _ => '250 Hz Mode',
+    1 => '240 Hz Mode',
+    2 => '480 Hz Mode',
+    3 => 'Super Touch',
+    _ => 'OEM Adaptive',
   };
 
   String _profileRate(int profile) => switch (profile) {
-    1 => '240 Hz native timing · simple testers display about 250',
-    2 => '480 Hz native timing · simple testers display about 500',
-    3 => 'Precise 1 ms Android output · native source remains 480 Hz',
-    _ => '240 Hz native timing · simple testers display about 250',
+    1 => '240 Hz Xiaomi THP report target',
+    2 => '480 Hz Xiaomi THP report target',
+    3 => '480 Hz native target · 1 ms historical bursts',
+    _ => 'ROM and panel firmware manage the response rate',
   };
 
   Color _profileAccent(int profile) => switch (profile) {
     1 => const Color(0xFFFFB84D),
     2 => const Color(0xFFFF6B57),
     3 => const Color(0xFFE95CFF),
-    _ => const Color(0xFFFFB84D),
+    _ => const Color(0xFF4EA8DE),
   };
 
   IconData _profileIcon(int profile) => switch (profile) {
     1 => Icons.sports_esports_rounded,
     2 => Icons.speed_rounded,
     3 => Icons.whatshot_rounded,
-    _ => Icons.sports_esports_rounded,
+    _ => Icons.auto_mode_rounded,
   };
 
   @override
@@ -4371,12 +4375,15 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
         final RodinBackend backend = RodinBackend.instance;
         final int dt2w = RodinBackend.instance.extendedValue(1);
         final int savedProfile =
-            (1 <= snapshot.touchState && snapshot.touchState <= 3)
+            (0 <= snapshot.touchState && snapshot.touchState <= 3)
             ? snapshot.touchState
-            : 1;
+            : 0;
         final int activeProfile = _pendingProfile ?? savedProfile;
         final Color accent = _profileAccent(activeProfile);
         final int touchAck = backend.extendedValue(29);
+        final int profileMask = backend.extendedValue(64) >= 0
+            ? backend.extendedValue(64)
+            : 1;
         final int panelCode = backend.extendedValue(62);
         final int controlPath = backend.extendedValue(63);
         final String panel = switch (panelCode) {
@@ -4386,8 +4393,8 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
         };
         final String engine = switch (controlPath) {
           1 => 'Vendor HAL',
-          2 => 'Direct driver fallback',
-          3 => 'Rodin 1 ms output scheduler',
+          2 => 'Direct panel path',
+          3 => 'Verified native THP target',
           _ => snapshot.touchHal == 1 ? 'Vendor HAL ready' : 'Unavailable',
         };
         final bool applying =
@@ -4400,7 +4407,7 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
             DetailHeader(title: 'Touch Response', onBack: widget.onBack),
             const SizedBox(height: 4),
             Text(
-              'Only 250, 500, and 1000 — 250 is the default',
+              'Choose OEM behavior or one fixed native report profile',
               style: TextStyle(
                 fontSize: 13.5,
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -4413,12 +4420,13 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
               title: _profileTitle(activeProfile),
               subtitle: snapshot.touchHal == 1
                   ? '${_profileRate(activeProfile)} · $panel · $engine'
-                  : 'Rodin touch engine unavailable on this vendor stack',
+                  : 'Rodin TouchFeature service is unavailable on this vendor stack',
             ),
             const SizedBox(height: 12),
             _TouchProfileGrid(
               selectedProfile: activeProfile,
               enabled: controlsEnabled,
+              supportedMask: profileMask,
               onSelected: _selectProfile,
             ),
             const SizedBox(height: 12),
@@ -4442,8 +4450,10 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
                       children: <Widget>[
                         Text(
                           !applying && touchAck == 1
-                              ? 'Profile persisted'
-                              : 'Applying touch pipeline',
+                              ? activeProfile == 0
+                                    ? 'OEM behavior active'
+                                    : '${_profileTitle(activeProfile)} applied'
+                              : 'Applying touch profile',
                           style: const TextStyle(
                             fontSize: 14.5,
                             fontWeight: FontWeight.w700,
@@ -4452,8 +4462,10 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
                         const SizedBox(height: 3),
                         Text(
                           !applying && touchAck == 1
-                              ? 'Reasserted after boot, screen wake, and vendor resets'
-                              : 'Waiting for the panel HAL to confirm every required mode',
+                              ? activeProfile == 0
+                                    ? 'Default ROM policy · no fixed rate and no background rewrite'
+                                    : 'Saved across reboot · restored after boot or a real touch-service restart'
+                              : 'Waiting for the vendor touch service to confirm the hardware request',
                           style: TextStyle(
                             fontSize: 11.5,
                             height: 1.25,
@@ -4482,9 +4494,9 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
             const SizedBox(height: 12),
             const SurfaceCard(
               child: _InfoBlock(
-                title: 'Tester values',
+                title: 'How it behaves',
                 text:
-                    '250 uses the native 240 Hz panel target and 500 uses the native 480 Hz target; simple tester apps round those values to about 250 and 500. The 1000 option delivers a one-millisecond Android event stream from the 480 Hz native source. No Adaptive mode or instant-boost mode is applied.',
+                    'OEM Adaptive leaves timing to the ROM. The fixed modes configure Xiaomi’s native THP report engine at 240 or 480 Hz. Super Touch keeps the supported 480 Hz target and enables Xiaomi’s own 1 ms historical bursts. Android can batch those points, so a tester’s callback average or alternating 142/1000 rows is not a sustained physical 1000 Hz rate. Rodin injects no input events and never rewrites a profile from cadence readings, screen wake, or gestures.',
               ),
             ),
           ],
@@ -4498,11 +4510,13 @@ class _TouchProfileGrid extends StatelessWidget {
   const _TouchProfileGrid({
     required this.selectedProfile,
     required this.enabled,
+    required this.supportedMask,
     required this.onSelected,
   });
 
   final int selectedProfile;
   final bool enabled;
+  final int supportedMask;
   final bool Function(int) onSelected;
 
   @override
@@ -4511,7 +4525,7 @@ class _TouchProfileGrid extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Text(
-          'TOUCH MODES',
+          'TOUCH MODE',
           style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w800,
@@ -4520,18 +4534,30 @@ class _TouchProfileGrid extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 9),
+        _TouchProfileTile(
+          profile: 0,
+          title: 'OEM Adaptive',
+          rate: 'ROM and panel managed',
+          detail: 'Default · no forced rate',
+          icon: Icons.auto_mode_rounded,
+          accent: const Color(0xFF4EA8DE),
+          selected: selectedProfile == 0,
+          enabled: enabled && (supportedMask & (1 << 0)) != 0,
+          onSelected: onSelected,
+        ),
+        const SizedBox(height: 10),
         Row(
           children: <Widget>[
             Expanded(
               child: _TouchProfileTile(
                 profile: 1,
-                title: '250 Hz',
-                rate: '240 Hz native target',
-                detail: 'Tester display ≈250',
+                title: '240 Hz',
+                rate: 'Native THP target',
+                detail: 'Some testers round ≈250',
                 icon: Icons.sports_esports_rounded,
                 accent: const Color(0xFFFFB84D),
                 selected: selectedProfile == 1,
-                enabled: enabled,
+                enabled: enabled && (supportedMask & (1 << 1)) != 0,
                 onSelected: onSelected,
               ),
             ),
@@ -4539,13 +4565,13 @@ class _TouchProfileGrid extends StatelessWidget {
             Expanded(
               child: _TouchProfileTile(
                 profile: 2,
-                title: '500 Hz',
-                rate: '480 Hz native target',
-                detail: 'Tester display ≈500',
+                title: '480 Hz',
+                rate: 'Native THP target',
+                detail: 'Some testers round ≈500',
                 icon: Icons.speed_rounded,
                 accent: const Color(0xFFFF6B57),
                 selected: selectedProfile == 2,
-                enabled: enabled,
+                enabled: enabled && (supportedMask & (1 << 2)) != 0,
                 onSelected: onSelected,
               ),
             ),
@@ -4554,13 +4580,13 @@ class _TouchProfileGrid extends StatelessWidget {
         const SizedBox(height: 10),
         _TouchProfileTile(
           profile: 3,
-          title: '1000 Hz',
-          rate: '1 ms Android event output',
-          detail: 'Resampled from the native 480 Hz source',
+          title: 'Super Touch',
+          rate: '480 Hz native pipeline',
+          detail: 'Xiaomi 1 ms history bursts',
           icon: Icons.whatshot_rounded,
           accent: const Color(0xFFE95CFF),
           selected: selectedProfile == 3,
-          enabled: enabled,
+          enabled: enabled && (supportedMask & (1 << 3)) != 0,
           onSelected: onSelected,
         ),
       ],
@@ -12317,13 +12343,7 @@ class LiveDashboardHero extends StatelessWidget {
         final String temp = snapshot.batteryTempC == null
             ? '—'
             : '${snapshot.batteryTempC!.toStringAsFixed(1)}°C';
-        final String touch = switch (snapshot.touchState) {
-          1 => '250 Hz',
-          2 => '500 Hz',
-          3 => '1000 Hz',
-          0 => '250 Hz',
-          _ => '—',
-        };
+        final String touch = _rodinTouchLabel(snapshot.touchState);
         final RodinAppearanceConfig appearance = RodinAppearanceScope.of(
           context,
         );

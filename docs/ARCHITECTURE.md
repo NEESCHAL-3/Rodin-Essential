@@ -11,7 +11,7 @@ Flutter AOT interface
         │ Dart FFI
         ▼
 Rust NativeActivity host
-        │ authenticated Unix socket, protocol 13.4
+        │ authenticated local IPC, protocol 13.5
         ▼
 Rust rodin_daemon
         ├── sysfs / procfs / block controls
@@ -66,15 +66,16 @@ The daemon listens on a Linux abstract Unix socket. In an AOSP build, SELinux
 allows only the dedicated `rodin_app` domain to connect in production. The
 `rodin_ctl` client is allowed only on `userdebug` and `eng` builds.
 
-The KernelSU Next/Magisk daemon initiates a second authenticated socket path to
-the normal Android app, avoiding an app-to-root SELinux transition. Both peers
-validate Linux credentials with `SO_PEERCRED`: the app accepts only UID 0, and
-the daemon accepts only UID 0 or the exact UID Android assigned to Rodin
-Essential. The root module does not patch SELinux and never depends on the
-direct path. If the installed policy already permits the authenticated direct
-connection, the host can use it; otherwise it latches onto the daemon-initiated
-path. AOSP builds use the direct path with a certificate-bound dedicated
-`rodin_app` SELinux domain.
+Unix peers validate Linux credentials with `SO_PEERCRED`: the app accepts only
+UID 0, and the daemon accepts only UID 0 or the exact UID Android assigned to
+Rodin Essential. Some root-manager SELinux domains block Unix `connectto` in
+both directions, so the module also binds a root-privileged IPv4 loopback port.
+The app refuses that path unless a neighbouring low-port bind is denied from
+its own UID/SELinux sandbox, and the daemon maps the live client tuple through
+`/proc/net/tcp` to the package UID before accepting a command. A daemon-initiated
+Unix path remains as a compatibility fallback. The root module never patches
+SELinux. AOSP builds use the direct path with a certificate-bound dedicated
+`rodin_app` domain and do not enable the module-only loopback listener.
 
 ## Persistence
 
@@ -88,30 +89,32 @@ State updates are transactional. The daemon writes `state.conf.tmp` with mode
 0600, synchronizes it, renames it over `state.conf`, and synchronizes the state
 directory before replacing its in-memory state. A command cannot report a
 durable success if that sequence fails. The daemon loads the file once at
-startup, reapplies it after Android boot completes, and keeps running
-independently of the application process. Removing the app from recents or
-force-stopping it therefore does not stop the active backend configuration.
+startup, restores the hardware domains it owns after Android boot completes,
+and keeps running independently of the application process. A saved forced
+touch profile is restored once after the vendor service becomes ready and is
+then excluded from wake, cadence, gesture, and periodic reassertion. Removing
+the app from recents or force-stopping it therefore does not stop the active
+backend configuration.
 
 Persisted domains include performance profile, GPU bounds/governor/GED/power
-policy, CPU governors and ranges, online-core mask, UFS scheduler, touch profile,
-DT2W, display settings, charging, and ZRAM.
+policy, CPU governors and ranges, online-core mask, UFS scheduler, OEM touch
+state, DT2W, display settings, charging, and ZRAM.
 
 ## Touch paths
 
-Rodin Essential first uses Xiaomi's vendor `ITouchFeature` AIDL service, which
-abstracts the supported Goodix and FocalTech panels. A Goodix sysfs path is used
-only as a fallback on ports that omit the AIDL service.
+Rodin Essential exposes OEM Adaptive plus 240 Hz, 480 Hz, and Super Touch
+profiles. OEM Adaptive is the fresh-install default and leaves cadence entirely
+to the ROM and panel firmware. The 240 and 480 selections request the matching
+native Rodin calibrations through Xiaomi's `ITouchFeature` AIDL service, which
+abstracts both supported Goodix and FocalTech panels.
 
-- 250 mode requests the native 240 Hz timing block.
-- 500 mode requests the native 480 Hz timing block.
-- 1000 mode keeps the physical source at 480 Hz and emits a verified 1 ms
-  Android event stream through the panel input event.
-
-In a root-module deployment, the daemon first tries `pidfd_getfd` on Xiaomi's
-touch service handle and falls back to opening the detected multitouch event
-directly. The AOSP deployment selects the direct input path explicitly. This
-keeps Android's platform `SYS_PTRACE` neverallow intact while granting only the
-daemon access to `input_device`.
+The Super Touch selection uses Xiaomi's hardware modes and private THP
+target where the root-module service can verify that vendor layout. ROM-native
+builds use only the public HAL and never inspect another process. No profile
+opens or writes a raw input device, and Rodin never injects or interpolates
+Android movement events. A saved forced profile is applied exactly once after
+boot service readiness; there is no touch cadence monitor, timer, wake hook,
+gesture hook, or foreground-app rewrite.
 
 ## Performance ownership
 

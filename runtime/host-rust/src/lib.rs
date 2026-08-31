@@ -1715,44 +1715,20 @@ fn pixel_ratio(activity: *mut ANativeActivity) -> f64 {
 }
 
 fn pixel_ratio_for_window(width: usize, _height: usize, activity: *mut ANativeActivity) -> f64 {
-    if let Ok(output) = std::process::Command::new("/system/bin/wm")
-        .arg("density")
-        .output()
-    {
-        let text = String::from_utf8_lossy(&output.stdout);
-        let parse_density = |line: &str| {
-            line.split_once(':')
-                .and_then(|(_, value)| value.trim().parse::<f64>().ok())
-                .filter(|value| (120.0..=800.0).contains(value))
-        };
-        let mut physical_density = None;
-        let mut override_density = None;
-
-        for line in text.lines() {
-            if line.contains("Override density:") {
-                override_density = parse_density(line);
-            } else if line.contains("Physical density:") {
-                physical_density = parse_density(line);
-            }
-        }
-
-        if let Some(density) = override_density {
-            return density / 160.0;
-        }
-
-        if let Some(density) = physical_density {
-            if width > 0 && width != 1220 {
-                return (density * (width as f64) / 1220.0) / 160.0;
-            }
-            return density / 160.0;
-        }
+    // Android already publishes the active logical density through the native
+    // configuration, including a `wm density` override. Querying the shell
+    // wrapper here would block first-frame setup and is forbidden to a normal
+    // application domain on enforcing builds.
+    let configured_ratio = pixel_ratio(activity);
+    if configured_ratio > 1.0 {
+        return configured_ratio;
     }
 
     if width > 0 {
         return (width as f64) / 375.3846;
     }
 
-    pixel_ratio(activity)
+    configured_ratio
 }
 
 unsafe fn symbol(handle: *mut c_void, name: &'static [u8]) -> Result<*const u8, String> {
