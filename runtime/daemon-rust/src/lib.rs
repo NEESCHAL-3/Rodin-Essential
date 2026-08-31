@@ -7,9 +7,11 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Output as ProcessOutput, Stdio};
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+
+mod touch_resampler;
 
 pub const SOCKET_NAME: &str = "rodin_essentiald_v15";
 pub const REVERSE_SOCKET_NAME: &str = "rodin_essential_app_v15";
@@ -1788,7 +1790,6 @@ struct TouchThpLayout {
     pid: u32,
     configured_rate_addr: u64,
     current_rate_addr: u64,
-    report_timer_enabled_addr: u64,
 }
 
 fn touch_service_pid() -> Option<u32> {
@@ -1837,18 +1838,14 @@ fn find_touch_thp_config_offset(bytes: &[u8]) -> Option<usize> {
         return None;
     }
 
-    for offset in (0x58..=bytes.len() - 0x38).step_by(2) {
+    for offset in (0..=bytes.len() - 0x38).step_by(2) {
         let configured_super_rate = read_u16_from_slice(bytes, offset + 0x28)?;
-        let current_rate = read_u16_from_slice(bytes, offset + 0x30)?;
-        let timer_enabled = bytes[offset - 0x58];
         if read_u16_from_slice(bytes, offset) == Some(135)
             && read_u16_from_slice(bytes, offset + 0x04) == Some(135)
             && read_u16_from_slice(bytes, offset + 0x18) == Some(240)
             && read_u16_from_slice(bytes, offset + 0x1c) == Some(240)
             && read_u16_from_slice(bytes, offset + 0x24) == Some(240)
             && matches!(configured_super_rate, 240 | 480 | 500 | 600 | 650 | 1000)
-            && matches!(current_rate, 0 | 135 | 240 | 480 | 500 | 600 | 650 | 1000)
-            && matches!(timer_enabled, 0 | 1)
         {
             return Some(offset);
         }
@@ -1894,18 +1891,11 @@ fn locate_touch_thp_layout() -> Result<TouchThpLayout, String> {
             continue;
         }
         if let Some(offset) = find_touch_thp_config_offset(&bytes) {
-            if offset < 0x58 {
-                continue;
-            }
             let block_addr = start + offset as u64;
             return Ok(TouchThpLayout {
                 pid,
                 configured_rate_addr: block_addr + 0x28,
                 current_rate_addr: block_addr + 0x30,
-                // Xiaomi keeps the live report-engine latch immediately
-                // before the report-rate configuration block. Mode 27 owns
-                // this byte for both Rodin Goodix and FocalTech layouts.
-                report_timer_enabled_addr: block_addr - 0x58,
             });
         }
     }
@@ -1928,23 +1918,8 @@ fn read_touch_thp_rate(layout: TouchThpLayout, address: u64) -> Result<u16, Stri
     Ok(u16::from_le_bytes(raw))
 }
 
-fn read_touch_thp_flag(layout: TouchThpLayout, address: u64) -> Result<u8, String> {
-    let mut memory = fs::OpenOptions::new()
-        .read(true)
-        .open(format!("/proc/{}/mem", layout.pid))
-        .map_err(|e| format!("touch service memory: {e}"))?;
-    memory
-        .seek(SeekFrom::Start(address))
-        .map_err(|e| format!("touch flag seek: {e}"))?;
-    let mut raw = [0u8; 1];
-    memory
-        .read_exact(&mut raw)
-        .map_err(|e| format!("touch flag read: {e}"))?;
-    Ok(raw[0])
-}
-
 fn write_touch_thp_rate(rate: u16) -> Result<TouchThpLayout, String> {
-    if !matches!(rate, 240 | 480 | 1000) {
+    if !matches!(rate, 240 | 480) {
         return Err(format!("unsupported Rodin THP rate {rate}"));
     }
 
@@ -1973,47 +1948,43 @@ fn write_touch_thp_rate(rate: u16) -> Result<TouchThpLayout, String> {
 
 fn touch_profile_locked_rate(profile: i32) -> Option<u16> {
     match profile {
-        // Restore the vendor configuration as well as disabling the timer.
-        // Both Rodin panel INIs ship with a 480 Hz game-super target.
-        0 => Some(480),
         1 => Some(240),
-        2 => Some(480),
-        3 => Some(1000),
+        2 | 3 => Some(480),
         _ => None,
     }
 }
 
 fn touch_profile_rates(profile: i32) -> (i32, i32) {
     match profile {
-        0 => (0, 0),   // OEM adaptive; the ROM owns the cadence.
-        1 => (240, 0), // Native 240 Hz; whole-ms testers show about 250.
-        2 => (480, 0), // Native 480 Hz; whole-ms testers show about 500.
-        3 => (1000, 0),
+        1 => (240, 0),  // Native 240 Hz; whole-ms testers show about 250.
+        2 => (480, 0),  // Native 480 Hz; whole-ms testers show about 500.
+        3 => (1000, 0), // One-millisecond Android output cadence.
         _ => (-1, -1),
     }
 }
 
-fn touch_thp_memory_control_enabled() -> bool {
-    // This is an explicit root-module capability, never an implicit default.
-    // Android platform policy correctly forbids a ROM coredomain from tracing
-    // another service, so ROM-native builds stay on the public TouchFeature
-    // contract unless their vendor stack provides an equivalent native hook.
-    std::env::var("RODIN_TOUCH_PRIVATE_TARGET").as_deref() == Ok("1")
-}
-
-fn touch_profile_mask_for_private_target(private_target: bool) -> i32 {
-    let _ = private_target;
-    0b1111
-}
-
-fn touch_profile_mask() -> i32 {
-    // Rodin's stock Goodix and FocalTech vendor configurations expose normal
-    // 240, game-super 480, and Xiaomi Super Touch over that 480 Hz target.
-    touch_profile_mask_for_private_target(touch_thp_memory_control_enabled())
-}
-
-fn touch_profile_supported(profile: i32) -> bool {
-    (0..=3).contains(&profile) && touch_profile_mask() & (1 << profile) != 0
+fn touch_profile_is_live(profile: i32) -> bool {
+    let Some(expected_rate) = touch_profile_locked_rate(profile) else {
+        return false;
+    };
+    let native_matches = if vendor_binder::touch_available() {
+        locate_touch_thp_layout()
+            .and_then(|layout| read_touch_thp_rate(layout, layout.current_rate_addr))
+            .map(|rate| rate == expected_rate)
+            .unwrap_or(false)
+    } else if touch_panel_code() == 1 {
+        fs::read_to_string("/sys/devices/platform/goodix_ts.0/switch_report_rate")
+            .map(|raw| raw.trim() == if expected_rate == 240 { "0" } else { "1" })
+            .unwrap_or(false)
+    } else {
+        false
+    };
+    let resampler_matches = if profile == 3 {
+        touch_resampler::ready_hz() == 1000
+    } else {
+        touch_resampler::ready_hz() == 0
+    };
+    native_matches && resampler_matches
 }
 
 type TouchHalStep = (i32, i32, bool);
@@ -2047,9 +2018,6 @@ fn touch_hal_profile_sequence(profile: i32) -> Result<&'static [TouchHalStep], S
             (5, 2, false),
             (6, 2, false),
             (7, 0, false),
-            // Restore the vendor report engine to its normal driver-owned
-            // path after leaving a fixed Rodin profile.
-            (27, 0, true),
         ],
         1 => &[
             (10001, 0, false),
@@ -2065,12 +2033,12 @@ fn touch_hal_profile_sequence(profile: i32) -> Result<&'static [TouchHalStep], S
             (6, 0, false),
             (7, 0, false),
             (202, 1, true),
-            // Mode 27 is Xiaomi's native THP report-engine switch. The rate
-            // controls above only configure its target; this final command
-            // starts the vendor timer/interpolation pipeline.
-            (27, 1, true),
         ],
         2 => &[
+            (10001, 0, false),
+            (10002, 0, false),
+            (10003, 0, false),
+            (10004, 0, false),
             (0, 1, true),
             (1, 1, true),
             (2, 4, false),
@@ -2079,16 +2047,7 @@ fn touch_hal_profile_sequence(profile: i32) -> Result<&'static [TouchHalStep], S
             (5, 4, false),
             (6, 0, false),
             (7, 0, false),
-            // Rodin's native 480 Hz report path depends on the complete
-            // Xiaomi SMotion pipeline. Clearing Super Chip/Algo here leaves
-            // the service configured for 480 while the kernel stream falls
-            // back to roughly 240 Hz in uneven batches.
-            (10002, 1, false),
-            (10003, 1, false),
-            (10004, 2, false),
             (202, 1, true),
-            (10001, 1, true),
-            (27, 1, true),
         ],
         3 => &[
             (0, 1, true),
@@ -2104,7 +2063,6 @@ fn touch_hal_profile_sequence(profile: i32) -> Result<&'static [TouchHalStep], S
             (10004, 2, false),
             (202, 1, true),
             (10001, 1, true),
-            (27, 1, true),
         ],
         _ => return Err("invalid touch profile".into()),
     };
@@ -2132,107 +2090,92 @@ fn apply_touch_hal_profile(profile: i32) -> Result<(), String> {
     }
 }
 
-fn set_touch_profile(profile: i32) -> Result<(), String> {
-    if !(0..=3).contains(&profile) {
-        return Err("invalid touch profile".into());
+fn apply_touch_driver_fallback(profile: i32, panel: i32) -> Result<(), String> {
+    // The generic HAL is the all-panel route. This fallback keeps 240/480
+    // control available on Goodix-based ported ROMs that omit the HAL service.
+    // FocalTech does not expose an equivalent writable report-rate sysfs node.
+    if profile == 0 {
+        return Ok(());
     }
 
-    // The apply lock serializes a direct user choice with the service-lifecycle
-    // restore. Persistence is committed only after the native transaction and
-    // readback have succeeded.
+    if panel != 1 {
+        return Err("Rodin TouchFeature HAL unavailable for this panel".into());
+    }
+
+    if !matches!(profile, 1 | 2) {
+        return Err("this touch profile requires the Rodin vendor touch HAL".into());
+    }
+
+    let value = if profile == 1 { "0" } else { "1" };
+    fs::write(
+        "/sys/devices/platform/goodix_ts.0/switch_report_rate",
+        value,
+    )
+    .map_err(|e| format!("Goodix report-rate fallback: {e}"))
+}
+
+fn set_touch_profile(profile: i32) -> Result<(), String> {
+    if !(1..=3).contains(&profile) {
+        return Err("invalid touch profile".into());
+    }
     let _guard = touch_profile_apply_lock()
         .lock()
         .map_err(|_| "touch profile apply lock poisoned".to_string())?;
-    set_touch_profile_locked(profile, true)
-}
-
-fn set_touch_profile_locked(profile: i32, persist: bool) -> Result<(), String> {
-    if !(0..=3).contains(&profile) {
-        return Err("invalid touch profile".into());
-    }
-    if !touch_profile_supported(profile) {
-        return Err("touch profile is unavailable on this backend".into());
-    }
 
     TOUCH_APPLY_ACK.store(0, Ordering::Release);
-
+    // Stop custom output while the Xiaomi pipeline is being reconfigured.
+    // The worker closes only Rodin's duplicated writer; the vendor service and
+    // physical touch path continue normally.
+    let _ = touch_resampler::set_target_hz(0);
     let panel = touch_panel_code();
-    if !vendor_binder::touch_available() {
-        if profile == 0 {
-            // With no Xiaomi service available, leaving the panel untouched is
-            // the only correct OEM-adaptive behavior.
-            if persist {
-                mutate_persisted_state(|state| state.touch = profile)?;
+    let control_path = if vendor_binder::touch_available() {
+        let resampled = profile == 3;
+        let vendor_profile = if resampled { 2 } else { profile };
+        let locked_rate = touch_profile_locked_rate(profile);
+        let layout_and_expected_rate = locked_rate
+            .map(write_touch_thp_rate)
+            .transpose()?
+            .map(|layout| (layout, locked_rate.unwrap_or_default()));
+        apply_touch_hal_profile(vendor_profile)?;
+
+        if let Some((layout, expected_rate)) = layout_and_expected_rate {
+            let mut actual = 0u16;
+            for attempt in 0..3 {
+                std::thread::sleep(Duration::from_millis(25));
+                actual = read_touch_thp_rate(layout, layout.current_rate_addr)?;
+                if actual == expected_rate {
+                    break;
+                }
+                if attempt < 2 {
+                    apply_touch_hal_profile(vendor_profile)?;
+                }
             }
-            TOUCH_STATE.store(profile, Ordering::Release);
-            TOUCH_SUSTAINED_RATE.store(0, Ordering::Release);
-            TOUCH_INSTANT_RATE.store(0, Ordering::Release);
-            TOUCH_PANEL.store(panel, Ordering::Release);
-            TOUCH_CONTROL_PATH.store(0, Ordering::Release);
-            TOUCH_APPLY_ACK.store(1, Ordering::Release);
-            TOUCH_APPLIED_SERVICE_PID.store(0, Ordering::Release);
-            return Ok(());
+            if actual != expected_rate {
+                return Err(format!(
+                    "THP runtime verify failed: requested {expected_rate}, active {actual}"
+                ));
+            }
         }
-        return Err("Rodin TouchFeature HAL unavailable".into());
-    }
 
-    // Root-module builds update the vendor service's own native target once.
-    // Failing this step must fail the selection: accepting the HAL sequence
-    // alone could leave a stale target from an older or modified service.
-    // ROM integrations use their device-tree vendor implementation and stay
-    // on the public TouchFeature contract.
-    let private_target = if touch_thp_memory_control_enabled() {
-        let requested_rate = touch_profile_locked_rate(profile)
-            .ok_or_else(|| format!("missing native touch target for profile {profile}"))?;
-        Some((write_touch_thp_rate(requested_rate)?, requested_rate))
-    } else {
-        None
-    };
-
-    // Exactly one HAL transaction sequence is issued per selection/boot. No
-    // timer, wake event, gesture, cadence check, or foreground change rewrites
-    // it afterward.
-    apply_touch_hal_profile(profile)?;
-
-    if let Some((layout, requested_rate)) = private_target {
-        // Verify both the selected target and Xiaomi's native timer latch once.
-        // This is validation, not a corrective polling loop.
-        std::thread::sleep(Duration::from_millis(25));
-        let active_rate = read_touch_thp_rate(layout, layout.current_rate_addr)?;
-        let timer_enabled = read_touch_thp_flag(layout, layout.report_timer_enabled_addr)?;
-        let expected_timer = u8::from(profile != 0);
-        eprintln!(
-            "RODIN_TOUCH_NATIVE_APPLY requested={} active={} timer={}",
-            requested_rate, active_rate, timer_enabled
-        );
-        // In OEM mode the timer is intentionally stopped, so current_rate is
-        // allowed to reflect the ROM's normal/game state. The configured
-        // super target was already verified by write_touch_thp_rate().
-        if (profile != 0 && active_rate != requested_rate) || timer_enabled != expected_timer {
-            return Err(format!(
-                "native touch verify failed: requested {requested_rate}, active {active_rate}, timer {timer_enabled}, expected timer {expected_timer}"
-            ));
+        if resampled {
+            // Keep the native Xiaomi path at 480 Hz and deliver a precise
+            // one-millisecond Android event stream through the same handle.
+            touch_resampler::set_target_hz(1000)?;
+            3
+        } else {
+            1
         }
-    }
-
-    // Every mode stays on Xiaomi's hardware pipeline. Super Touch uses the
-    // vendor 480 Hz target and its native history processing; Rodin never
-    // injects Android events.
-    let control_path = if private_target.is_some() && profile != 0 {
-        3
     } else {
-        1
+        apply_touch_driver_fallback(profile, panel)?;
+        2
     };
 
     let (sustained_rate, instant_rate) = touch_profile_rates(profile);
-    let _ = fs::write(
-        "/proc/touch_boost/enable",
-        if profile == 0 { "0" } else { "1" },
-    );
+    let _ = fs::write("/proc/touch_boost/enable", "1");
 
-    if persist {
-        mutate_persisted_state(|state| state.touch = profile)?;
-    }
+    mutate_persisted_state(|s| s.touch = profile).inspect_err(|_| {
+        TOUCH_APPLY_ACK.store(0, Ordering::Release);
+    })?;
 
     TOUCH_STATE.store(profile, Ordering::Release);
     TOUCH_SUSTAINED_RATE.store(sustained_rate, Ordering::Release);
@@ -2240,17 +2183,6 @@ fn set_touch_profile_locked(profile: i32, persist: bool) -> Result<(), String> {
     TOUCH_PANEL.store(panel, Ordering::Release);
     TOUCH_CONTROL_PATH.store(control_path, Ordering::Release);
     TOUCH_APPLY_ACK.store(1, Ordering::Release);
-
-    if profile == 0 {
-        TOUCH_APPLIED_SERVICE_PID.store(0, Ordering::Release);
-    } else if let Some((layout, _)) = private_target {
-        TOUCH_APPLIED_SERVICE_PID.store(layout.pid, Ordering::Release);
-    } else {
-        // ROM-native policy intentionally does not permit process inspection.
-        // Mark the successful public-HAL generation without requiring /proc.
-        TOUCH_APPLIED_SERVICE_PID.store(TOUCH_PUBLIC_SERVICE_MARKER, Ordering::Release);
-    }
-
     Ok(())
 }
 
@@ -2318,9 +2250,6 @@ static CPU_FREQ_WRITE_ACK: AtomicI32 = AtomicI32::new(-1);
 static CPU_THERMAL_MODE_ACK: AtomicI32 = AtomicI32::new(-1);
 static CORE_CTL_NODE_COUNT: AtomicI32 = AtomicI32::new(0);
 static TOUCH_PROFILE_APPLY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-static TOUCH_APPLIED_SERVICE_PID: AtomicU32 = AtomicU32::new(0);
-static TOUCH_DT2W_APPLIED_SERVICE_PID: AtomicU32 = AtomicU32::new(0);
-const TOUCH_PUBLIC_SERVICE_MARKER: u32 = u32::MAX;
 static GPU_PROFILE_APPLY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 static DISPLAY_WIDTH: AtomicI32 = AtomicI32::new(-1);
@@ -2386,7 +2315,7 @@ impl Default for PersistedState {
     fn default() -> Self {
         Self {
             charging: 0,
-            touch: 0,
+            touch: 1,
             dt2w: 1,
             display_color: 1,
             display_temp: 2,
@@ -2754,10 +2683,8 @@ fn load_persisted_state() -> PersistedState {
         }
     }
 
-    // OEM Adaptive is the fresh-install default. Explicit 240 Hz, 480 Hz, and
-    // Super Touch choices remain valid across daemon restarts and reboots.
-    if !(0..=3).contains(&state.touch) {
-        state.touch = 0;
+    if !(1..=3).contains(&state.touch) {
+        state.touch = 1;
     }
     if state.dt2w < 0 {
         state.dt2w = 1;
@@ -2902,20 +2829,7 @@ fn set_dt2w(enabled: bool) -> Result<(), String> {
     mutate_persisted_state(|s| s.dt2w = value).inspect_err(|_| {
         TOUCH_APPLY_ACK.store(0, Ordering::Release);
     })?;
-    let generation = if touch_thp_memory_control_enabled() {
-        touch_service_pid().unwrap_or(0)
-    } else {
-        TOUCH_PUBLIC_SERVICE_MARKER
-    };
-    TOUCH_DT2W_APPLIED_SERVICE_PID.store(generation, Ordering::Release);
-    let selected_profile = persisted_state()
-        .lock()
-        .ok()
-        .map(|state| state.touch)
-        .unwrap_or(0);
-    if selected_profile == 0 || TOUCH_APPLIED_SERVICE_PID.load(Ordering::Acquire) == generation {
-        TOUCH_APPLY_ACK.store(1, Ordering::Release);
-    }
+    TOUCH_APPLY_ACK.store(1, Ordering::Release);
     Ok(())
 }
 
@@ -3549,7 +3463,7 @@ fn screen_is_on() -> Option<bool> {
     }
 }
 
-fn reassert_runtime_state() -> Result<(), String> {
+fn reassert_runtime_state(force_touch: bool) -> Result<(), String> {
     // NOTE: Refresh rate is NOT touched here. The system's own
     // DisplayModeDirector / PRIORITY_MIUI_REFRESH_RATE / thermal voter
     // handles refresh rate based on the user's choice in Settings.
@@ -3574,6 +3488,26 @@ fn reassert_runtime_state() -> Result<(), String> {
         .is_ok()
         {
             applied += 1;
+        }
+    }
+
+    if (1..=3).contains(&state.touch) {
+        attempted += 1;
+        let touch_matches = TOUCH_STATE.load(Ordering::Acquire) == state.touch
+            && TOUCH_APPLY_ACK.load(Ordering::Acquire) == 1
+            && touch_profile_is_live(state.touch);
+        if (!force_touch && touch_matches) || set_touch_profile(state.touch).is_ok() {
+            applied += 1;
+        }
+    }
+
+    if matches!(state.dt2w, 0 | 1) {
+        attempted += 1;
+        if vendor_binder::set_touch_mode(0, 14, state.dt2w) {
+            TOUCH_APPLY_ACK.store(1, Ordering::Release);
+            applied += 1;
+        } else {
+            TOUCH_APPLY_ACK.store(0, Ordering::Release);
         }
     }
 
@@ -3607,185 +3541,6 @@ fn restore_sunlight(state: &PersistedState) {
     }
 }
 
-fn initialize_touch_state_from_persistence() {
-    let stored_profile = persisted_state()
-        .lock()
-        .ok()
-        .map(|state| state.touch)
-        .filter(|profile| (0..=3).contains(profile))
-        .unwrap_or(0);
-    let profile = if touch_profile_supported(stored_profile) {
-        stored_profile
-    } else {
-        // A state file can move from a root-module build to a ROM-native
-        // integration. Never display or restore a private-only profile that
-        // the active backend cannot actually apply.
-        let _ = mutate_persisted_state(|state| state.touch = 0);
-        0
-    };
-    let (sustained_rate, instant_rate) = touch_profile_rates(profile);
-
-    TOUCH_STATE.store(profile, Ordering::Release);
-    TOUCH_SUSTAINED_RATE.store(sustained_rate, Ordering::Release);
-    TOUCH_INSTANT_RATE.store(instant_rate, Ordering::Release);
-    TOUCH_PANEL.store(touch_panel_code(), Ordering::Release);
-    TOUCH_CONTROL_PATH.store(0, Ordering::Release);
-    TOUCH_APPLY_ACK.store(if profile == 0 { 1 } else { 0 }, Ordering::Release);
-    TOUCH_APPLIED_SERVICE_PID.store(0, Ordering::Release);
-    TOUCH_DT2W_APPLIED_SERVICE_PID.store(0, Ordering::Release);
-}
-
-fn touch_service_lifecycle_loop() {
-    let private_target = touch_thp_memory_control_enabled();
-    let mut public_service_seen = false;
-    let mut failed_profile_generation = 0u32;
-    let mut failed_profile_attempts = 0u8;
-    let mut failed_dt2w_generation = 0u32;
-    let mut failed_dt2w_attempts = 0u8;
-
-    loop {
-        let state = persisted_state()
-            .lock()
-            .ok()
-            .map(|state| state.clone())
-            .unwrap_or_default();
-        let profile = if touch_profile_supported(state.touch) {
-            state.touch
-        } else {
-            0
-        };
-        let dt2w = state.dt2w;
-
-        if !vendor_binder::touch_available() {
-            if profile != 0 || matches!(dt2w, 0 | 1) {
-                TOUCH_APPLY_ACK.store(0, Ordering::Release);
-            }
-            if !private_target {
-                public_service_seen = false;
-                TOUCH_APPLIED_SERVICE_PID.store(0, Ordering::Release);
-                TOUCH_DT2W_APPLIED_SERVICE_PID.store(0, Ordering::Release);
-                failed_profile_generation = 0;
-                failed_profile_attempts = 0;
-                failed_dt2w_generation = 0;
-                failed_dt2w_attempts = 0;
-            }
-            std::thread::sleep(Duration::from_millis(500));
-            continue;
-        }
-
-        let generation = if private_target {
-            let Some(pid) = touch_service_pid() else {
-                TOUCH_APPLY_ACK.store(0, Ordering::Release);
-                std::thread::sleep(Duration::from_millis(500));
-                continue;
-            };
-            pid
-        } else {
-            // AOSP intentionally cannot enumerate another process. Treat the
-            // public service's unavailable -> available transition as its
-            // generation and apply the saved choice once for that generation.
-            if !public_service_seen {
-                public_service_seen = true;
-                // A direct user selection may already have completed before
-                // this worker observed the service. Preserve successful direct
-                // markers so the same setting is not written a second time.
-                if TOUCH_APPLIED_SERVICE_PID.load(Ordering::Acquire) != TOUCH_PUBLIC_SERVICE_MARKER
-                {
-                    TOUCH_APPLIED_SERVICE_PID.store(0, Ordering::Release);
-                    failed_profile_generation = 0;
-                    failed_profile_attempts = 0;
-                }
-                if TOUCH_DT2W_APPLIED_SERVICE_PID.load(Ordering::Acquire)
-                    != TOUCH_PUBLIC_SERVICE_MARKER
-                {
-                    TOUCH_DT2W_APPLIED_SERVICE_PID.store(0, Ordering::Release);
-                    failed_dt2w_generation = 0;
-                    failed_dt2w_attempts = 0;
-                }
-            }
-            TOUCH_PUBLIC_SERVICE_MARKER
-        };
-
-        let profile_pending = profile != 0
-            && TOUCH_APPLIED_SERVICE_PID.load(Ordering::Acquire) != generation
-            && !(failed_profile_generation == generation && failed_profile_attempts >= 3);
-        let dt2w_pending = matches!(dt2w, 0 | 1)
-            && TOUCH_DT2W_APPLIED_SERVICE_PID.load(Ordering::Acquire) != generation
-            && !(failed_dt2w_generation == generation && failed_dt2w_attempts >= 3);
-        if !profile_pending && !dt2w_pending {
-            std::thread::sleep(Duration::from_secs(5));
-            continue;
-        }
-
-        let Ok(_guard) = touch_profile_apply_lock().lock() else {
-            TOUCH_APPLY_ACK.store(0, Ordering::Release);
-            return;
-        };
-        let current_state = persisted_state()
-            .lock()
-            .ok()
-            .map(|state| state.clone())
-            .unwrap_or_default();
-        let same_generation = if private_target {
-            touch_service_pid() == Some(generation)
-        } else {
-            vendor_binder::touch_available()
-        };
-        if current_state.touch != profile || current_state.dt2w != dt2w || !same_generation {
-            continue;
-        }
-
-        if profile_pending {
-            match set_touch_profile_locked(profile, false) {
-                Ok(()) => {
-                    failed_profile_generation = 0;
-                    failed_profile_attempts = 0;
-                    eprintln!(
-                        "RODIN_TOUCH_SERVICE_RESTORE profile={profile} generation={generation} ok=1"
-                    );
-                }
-                Err(error) => {
-                    TOUCH_APPLY_ACK.store(0, Ordering::Release);
-                    if failed_profile_generation == generation {
-                        failed_profile_attempts = failed_profile_attempts.saturating_add(1);
-                    } else {
-                        failed_profile_generation = generation;
-                        failed_profile_attempts = 1;
-                    }
-                    eprintln!(
-                        "RODIN_TOUCH_SERVICE_RESTORE profile={profile} generation={generation} ok=0 attempt={failed_profile_attempts} error={error}"
-                    );
-                }
-            }
-        }
-
-        if dt2w_pending {
-            if vendor_binder::set_touch_mode(0, 14, dt2w) {
-                TOUCH_DT2W_APPLIED_SERVICE_PID.store(generation, Ordering::Release);
-                if profile == 0 || TOUCH_APPLIED_SERVICE_PID.load(Ordering::Acquire) == generation {
-                    TOUCH_APPLY_ACK.store(1, Ordering::Release);
-                }
-                failed_dt2w_generation = 0;
-                failed_dt2w_attempts = 0;
-                eprintln!("RODIN_TOUCH_DT2W_RESTORE value={dt2w} generation={generation} ok=1");
-            } else {
-                TOUCH_APPLY_ACK.store(0, Ordering::Release);
-                if failed_dt2w_generation == generation {
-                    failed_dt2w_attempts = failed_dt2w_attempts.saturating_add(1);
-                } else {
-                    failed_dt2w_generation = generation;
-                    failed_dt2w_attempts = 1;
-                }
-                eprintln!(
-                    "RODIN_TOUCH_DT2W_RESTORE value={dt2w} generation={generation} ok=0 attempt={failed_dt2w_attempts}"
-                );
-            }
-        }
-
-        std::thread::sleep(Duration::from_millis(500));
-    }
-}
-
 fn restore_persisted_state() {
     restore_cpu_state();
 
@@ -3816,6 +3571,14 @@ fn restore_persisted_state() {
             &charging_path(),
             if state.charging == 8 { "8" } else { "0" },
         );
+    }
+
+    if (1..=3).contains(&state.touch) {
+        let _ = set_touch_profile(state.touch);
+    }
+
+    if matches!(state.dt2w, 0 | 1) {
+        let _ = vendor_binder::set_touch_mode(0, 14, state.dt2w);
     }
 
     if (0..=2).contains(&state.display_color) {
@@ -4001,12 +3764,12 @@ fn restore_persisted_state() {
 
 fn late_boot_restore_loop() {
     // Framework and vendor power services can publish defaults after a root
-    // module starts. Repeat only Rodin-owned state across that settling window;
-    // OEM touch cadence is initialized once and excluded from this loop.
+    // module starts. Repeat Rodin-owned state across that settling window,
+    // including the selected v1.18.0 touch timing profile.
     for (attempt, delay_seconds) in [2u64, 4, 8].into_iter().enumerate() {
         std::thread::sleep(Duration::from_secs(delay_seconds));
         restore_persisted_state();
-        let runtime_result = reassert_runtime_state();
+        let runtime_result = reassert_runtime_state(true);
         reassert_persisted_governors();
         eprintln!(
             "RODIN_BOOT_RESTORE attempt={} runtime_ack={} runtime_ok={}",
@@ -4304,10 +4067,10 @@ fn maintenance_loop() {
 
                 if woke {
                     std::thread::sleep(Duration::from_millis(300));
-                    let _ = reassert_runtime_state();
+                    let _ = reassert_runtime_state(true);
                     last_keepalive = Instant::now();
                 } else if screen_on && last_keepalive.elapsed() >= Duration::from_secs(60) {
-                    let _ = reassert_runtime_state();
+                    let _ = reassert_runtime_state(false);
                     last_keepalive = Instant::now();
                 }
 
@@ -4329,13 +4092,14 @@ pub fn start_background_services() {
         std::thread::spawn(loopback_ipc_loop);
     }
     let _ = persisted_state();
-    initialize_touch_state_from_persistence();
+    // The v1.18.0 1000 Hz profile waits for this worker to attach to the
+    // TouchFeature event stream, so it must be ready before state restoration.
+    touch_resampler::start_background();
 
     // Start every independent guard before invoking Android framework CLI
     // clients. On some vendor ROMs `wm`/`cmd` can wait indefinitely during
     // early boot; IPC and direct kernel/HAL persistence must remain available
     // even when that framework query is unhealthy.
-    std::thread::spawn(touch_service_lifecycle_loop);
     std::thread::spawn(late_boot_restore_loop);
     std::thread::spawn(maintenance_loop);
     std::thread::spawn(cpu_frequency_guard);
@@ -5343,13 +5107,40 @@ fn snapshot_persistence_fields() -> Vec<String> {
             "touch_control_path={}",
             TOUCH_CONTROL_PATH.load(Ordering::Acquire)
         ),
-        format!("touch_profile_mask={}", touch_profile_mask()),
+        format!(
+            "touch_measured_rate_x10={}",
+            touch_resampler::measured_hz_x10()
+        ),
+        format!(
+            "touch_source_rate_x10={}",
+            touch_resampler::source_measured_hz_x10()
+        ),
+        format!(
+            "touch_measurement_active={}",
+            touch_resampler::measurement_active()
+        ),
+        format!("touch_resampler_ready={}", touch_resampler::ready_hz()),
+        format!(
+            "touch_resampler_path={}",
+            touch_resampler::attachment_path()
+        ),
+        format!("touch_resampler_error={}", touch_resampler::last_error()),
+        format!(
+            "touch_physical_frames={}",
+            touch_resampler::physical_frames()
+        ),
+        format!(
+            "touch_injected_frames={}",
+            touch_resampler::injected_frames()
+        ),
     ]
 }
 
 fn snapshot() -> String {
     let charging = read_trimmed(charging_path()).unwrap_or_else(|_| "NA".into());
-    let touch_hal = if vendor_binder::touch_available() {
+    let touch_hal = if vendor_binder::touch_available()
+        || Path::new("/sys/devices/platform/goodix_ts.0/switch_report_rate").exists()
+    {
         1
     } else {
         0
@@ -5719,7 +5510,6 @@ mod tests {
         normalize_mi_thermal_config_mode, parse_cpu_frequency_table, parse_cpu_time_in_state,
         parse_ged_current_frequency_mhz, persisted_cpu_ranges_active, profile_uses_ged_boost,
         scaled_display_density, tcp_client_uid_from_table, touch_hal_profile_sequence,
-        touch_profile_locked_rate, touch_profile_mask_for_private_target, touch_profile_rates,
         valid_mi_thermal_config_mode, validate_cpu_frequency_range_against,
     };
 
@@ -5822,54 +5612,33 @@ mod tests {
 
     #[test]
     fn finds_rodin_thp_timing_block_without_a_fixed_address() {
-        let mut bytes = vec![0u8; 0xc0];
-        let offset = 0x60;
+        let mut bytes = vec![0u8; 0x80];
+        let offset = 0x10;
         put_u16(&mut bytes, offset, 135);
         put_u16(&mut bytes, offset + 0x04, 135);
         put_u16(&mut bytes, offset + 0x18, 240);
         put_u16(&mut bytes, offset + 0x1c, 240);
         put_u16(&mut bytes, offset + 0x24, 240);
         put_u16(&mut bytes, offset + 0x28, 650);
-        put_u16(&mut bytes, offset + 0x30, 240);
-        bytes[offset - 0x58] = 1;
 
         assert_eq!(find_touch_thp_config_offset(&bytes), Some(offset));
     }
 
     #[test]
-    fn exposes_oem_and_three_explicit_touch_profiles() {
-        let oem = touch_hal_profile_sequence(0).unwrap();
+    fn keeps_native_touch_profiles_on_distinct_vendor_calibrations() {
         let native_240 = touch_hal_profile_sequence(1).unwrap();
         let native_480 = touch_hal_profile_sequence(2).unwrap();
-        let super_touch = touch_hal_profile_sequence(3).unwrap();
 
-        assert!(oem.contains(&(202, 0, true)));
-        assert!(oem.contains(&(0, 0, true)));
-        assert_eq!(oem.last(), Some(&(27, 0, true)));
         assert!(native_240.contains(&(2, 99, true)));
         assert!(!native_240.contains(&(2, 4, false)));
         assert!(native_480.contains(&(2, 4, false)));
+        assert!(
+            !native_480
+                .iter()
+                .any(|&(mode, value, _)| mode == 2 && value == 99)
+        );
         assert!(native_240.contains(&(202, 1, true)));
         assert!(native_480.contains(&(202, 1, true)));
-        assert!(native_480.contains(&(10002, 1, false)));
-        assert!(native_480.contains(&(10003, 1, false)));
-        assert!(native_480.contains(&(10001, 1, true)));
-        assert_eq!(native_240.last(), Some(&(27, 1, true)));
-        assert_eq!(native_480.last(), Some(&(27, 1, true)));
-        assert!(super_touch.contains(&(10001, 1, true)));
-        assert!(super_touch.contains(&(202, 1, true)));
-        assert_eq!(super_touch.last(), Some(&(27, 1, true)));
-        assert_eq!(touch_profile_rates(0), (0, 0));
-        assert_eq!(touch_profile_rates(1), (240, 0));
-        assert_eq!(touch_profile_rates(2), (480, 0));
-        assert_eq!(touch_profile_rates(3), (1000, 0));
-        assert_eq!(touch_profile_locked_rate(0), Some(480));
-        assert_eq!(touch_profile_locked_rate(1), Some(240));
-        assert_eq!(touch_profile_locked_rate(2), Some(480));
-        assert_eq!(touch_profile_locked_rate(3), Some(1000));
-        assert_eq!(touch_profile_mask_for_private_target(false), 0b1111);
-        assert_eq!(touch_profile_mask_for_private_target(true), 0b1111);
-        assert!(touch_hal_profile_sequence(4).is_err());
     }
 
     #[test]

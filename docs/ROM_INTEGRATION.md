@@ -161,11 +161,12 @@ Rodin Essential must write:
 ```text
 /sys/devices/platform/soc/13000000.mali/devfreq/13000000.mali
 /sys/devices/platform/13000000.mali/devfreq/13000000.mali
+/sys/devices/platform/goodix_ts.0
 ```
 
 The first two cover the Mali devfreq layouts seen across Rodin vendor bases.
-All touch calibration, including Xiaomi's Super Touch path, uses the
-vendor AIDL service and requires no panel-specific sysfs or raw-input label.
+The last path is the Goodix fallback used only when a port omits Xiaomi's touch
+AIDL service.
 
 Never grant the coredomain generic `sysfs:file` write access. If the target
 device tree already labels one of these exact paths, reconcile the duplicate
@@ -223,16 +224,17 @@ uses OEM mode 6 only while a custom CPU range exists and restores the previous
 mode after the last reset. Thermal daemons remain running; these permissions
 belong only to `rodin_daemon`.
 
-### Touch policy
+### 1000 Hz touch policy
 
-OEM Adaptive is the default. Native 240/480 Hz calibration and Xiaomi's
-hardware Super Touch path use the public TouchFeature AIDL service, which
-covers both Rodin panel families.
-The ROM-native init service intentionally does not set the root-module-only
-`RODIN_TOUCH_PRIVATE_TARGET=1` capability, so the daemon never inspects touch-
-service memory. No profile opens a raw input device or injects Android movement
-events. Do not add `input_device`, `SYS_PTRACE`, process tracing, or touch-HAL
-process access.
+The native 240/480 Hz paths use the touch AIDL service. The v1.18.0 1000 Hz
+output path also reads the touch-service timing block and duplicates its event
+descriptor, so it requires the narrowly scoped `process ptrace`, `fd use`, and
+input-device rules included in the vendor template.
+
+If the ROM has an additional neverallow for this daemon domain, review the
+integration with the device security maintainer. Removing the 1000 Hz policy
+block leaves native 240/480 Hz available but intentionally makes the 1000 Hz
+command fail instead of reporting a false success.
 
 ## 6. Build and policy validation
 

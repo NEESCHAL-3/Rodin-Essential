@@ -32,15 +32,14 @@ installer and are not supported by the included AOSP policy.
   minimum/maximum or sustained exact-lock controls sourced from the live kernel
   OPP table.
 - UFS scheduler selection across every detected UFS logical unit.
-- OEM Adaptive touch behavior plus persistent 240 Hz, 480 Hz, and Super Touch
-  choices, using Xiaomi's hardware path with no synthetic input events,
-  gesture-time, wake-time, cadence-driven, or periodic profile rewrite.
+- Touch profiles for 240 Hz native timing, 480 Hz native timing, and the
+  original v1.18.0 one-millisecond Android output stream generated from the
+  native 480 Hz source.
 - Xiaomi touch/display AIDL integration, DT2W, color modes, expert calibration,
   sunlight mode, HDR/video controls, resolution, and density controls.
 - ZRAM size, algorithm, swappiness, compaction, charging, and power telemetry.
-- Daemon-owned persistence for CPU, GPU, display, charging, UFS, ZRAM, and the
-  selected touch mode after boot or app closure. Touch is restored once per
-  boot and excluded from the recurring drift-maintenance loop.
+- Daemon-owned persistence and background reassertion after boot, screen wake,
+  vendor resets, app force-close, or removal from recents.
 - Configurable in-app motion timing with native 120 Hz frame pacing.
 
 ## Performance profiles

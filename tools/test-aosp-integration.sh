@@ -88,40 +88,28 @@ if grep -Eq 'allow[[:space:]]+(appdomain|untrusted_app)[[:space:]]+rodin_daemon'
     exit 1
 fi
 
-if grep -Eq '(^|[[:space:]])permissive[[:space:]]+rodin_daemon|sysfs_batteryinfo|allow[[:space:]]+rodin_daemon[[:space:]]+sysfs:file|package_service|ctl_(start|stop)_prop|dac_override|dac_read_search|sys_ptrace|:process[[:space:]]+ptrace' \
+if grep -Eq '(^|[[:space:]])permissive[[:space:]]+rodin_daemon|sysfs_batteryinfo|allow[[:space:]]+rodin_daemon[[:space:]]+sysfs:file|package_service|ctl_(start|stop)_prop' \
     "$RODIN_AOSP"/sepolicy/{product/private,product/public,vendor}/*; then
     echo "AOSP policy contains an unsafe or obsolete grant" >&2
     exit 1
 fi
 
 grep -Fq 'type sysfs_rodin_mali_devfreq, fs_type, sysfs_type;' "$RODIN_VENDOR_POLICY"
+grep -Fq 'type sysfs_rodin_touch, fs_type, sysfs_type;' "$RODIN_VENDOR_POLICY"
 grep -Fq 'allow rodin_daemon sysfs_battery_supply:file r_file_perms;' "$RODIN_VENDOR_POLICY"
 grep -Fq 'allow rodin_daemon vendor_sysfs_displayfeature:file r_file_perms;' "$RODIN_VENDOR_POLICY"
+grep -Fq 'allow rodin_daemon input_device:chr_file rw_file_perms;' "$RODIN_VENDOR_POLICY"
+grep -Fq 'allow rodin_daemon hal_touchfeature_xiaomi_default:process ptrace;' "$RODIN_VENDOR_POLICY"
 grep -Fq '/devices/platform/soc/13000000.mali/devfreq/13000000.mali' "$RODIN_GENFS"
+grep -Fq '/devices/platform/goodix_ts.0' "$RODIN_GENFS"
 
 grep -Fq 'user root' "$RODIN_AOSP/rodin_daemon.rc"
 grep -Fq 'setenv RODIN_STATE_DIR /data/system/rodin-essential' "$RODIN_AOSP/rodin_daemon.rc"
-if grep -Fq 'setenv RODIN_TOUCH_PRIVATE_TARGET 1' "$RODIN_AOSP/rodin_daemon.rc"; then
-    echo "ROM-native touch must not enable the root-module private target" >&2
-    exit 1
-fi
-if grep -Eq '^[[:space:]]*group.*(input|readproc)' "$RODIN_AOSP/rodin_daemon.rc"; then
-    echo "ROM-native hardware touch must not request raw-input or process groups" >&2
-    exit 1
-fi
-if grep -Fq 'input_device:chr_file' "$RODIN_VENDOR_POLICY"; then
-    echo "ROM-native hardware touch must not grant raw input-device access" >&2
-    exit 1
-fi
-grep -Fq 'fn touch_thp_memory_control_enabled()' \
-    "$RODIN_PROJECT_ROOT/runtime/daemon-rust/src/lib.rs"
-grep -Fq 'std::env::var("RODIN_TOUCH_PRIVATE_TARGET")' \
-    "$RODIN_PROJECT_ROOT/runtime/daemon-rust/src/lib.rs"
+grep -Eq '^[[:space:]]*group.*input.*readproc' "$RODIN_AOSP/rodin_daemon.rc"
+grep -Fq 'capabilities DAC_OVERRIDE DAC_READ_SEARCH SYS_ADMIN SYS_NICE SYS_PTRACE' \
+    "$RODIN_AOSP/rodin_daemon.rc"
+grep -Fq 'mod touch_resampler;' "$RODIN_PROJECT_ROOT/runtime/daemon-rust/src/lib.rs"
 grep -Fq 'on property:sys.boot_completed=1' "$RODIN_AOSP/rodin_daemon.rc"
-if grep -Eq 'DAC_OVERRIDE|DAC_READ_SEARCH|SYS_PTRACE' "$RODIN_AOSP/rodin_daemon.rc"; then
-    echo "AOSP daemon requests a platform-forbidden capability" >&2
-    exit 1
-fi
 
 RODIN_PLAT_CIL="${RODIN_PLAT_SEPOLICY_CIL:-}"
 if [ -n "$RODIN_PLAT_CIL" ]; then

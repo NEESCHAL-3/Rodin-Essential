@@ -15,7 +15,6 @@ RODIN_PACKAGE=io.github.neeschal.rodinessential
 export RODIN_STATE_DIR="$RODIN_ROOT"
 export RODIN_REVERSE_IPC=1
 export RODIN_LOOPBACK_IPC=1
-export RODIN_TOUCH_PRIVATE_TARGET=1
 
 umask 077
 mkdir -p "$RODIN_ROOT"

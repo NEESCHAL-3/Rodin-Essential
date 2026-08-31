@@ -52,4 +52,4 @@ else
     echo "App IPC: not verified yet; open Rodin Essential once"
 fi
 
-echo "$RODIN_SNAPSHOT" | tr ';' '\n' | grep -E '^(io|touch|touch_ack|touch_profile_mask|perf)=' 2>/dev/null
+echo "$RODIN_SNAPSHOT" | tr ';' '\n' | grep -E '^(io|touch|touch_ack|touch_resampler_ready|perf)=' 2>/dev/null
