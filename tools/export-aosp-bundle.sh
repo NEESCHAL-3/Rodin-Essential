@@ -7,6 +7,9 @@ RODIN_DESTINATION="${1:-$RODIN_ROOT/dist/aosp/RodinEssential-$RODIN_STAMP}"
 RODIN_BUILD_DIR="$RODIN_ROOT/out/aosp-export/$RODIN_STAMP/build"
 RODIN_TEMPLATE="$RODIN_ROOT/android/aosp"
 RODIN_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
+RODIN_NDK_VERSION="$(find "$RODIN_SDK_ROOT/ndk" -mindepth 1 -maxdepth 1 \
+    -type d -printf '%f\n' | sort -V | tail -1)"
+RODIN_STRIP="$RODIN_SDK_ROOT/ndk/$RODIN_NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
 
 [ -n "${RODIN_KEYSTORE:-}" ] || {
     echo "RODIN_KEYSTORE is required for a reproducibly signed AOSP bundle." >&2
@@ -24,8 +27,13 @@ for RODIN_TOOL in openssl readelf sha256sum unzip; do
         exit 1
     }
 done
+[ -x "$RODIN_STRIP" ] || {
+    echo "Missing Android LLVM strip tool: $RODIN_STRIP" >&2
+    exit 1
+}
 
 "$RODIN_ROOT/tools/test-aosp-integration.sh"
+"$RODIN_ROOT/tools/test-release-sync.sh"
 
 if [ -e "$RODIN_DESTINATION" ]; then
     echo "Destination already exists: $RODIN_DESTINATION" >&2
@@ -65,6 +73,8 @@ cp -a "$RODIN_ROOT/docs/ROM_INTEGRATION.md" "$RODIN_DESTINATION/docs/ROM_INTEGRA
 install -m 0644 "$RODIN_APK" "$RODIN_DESTINATION/prebuilt/RodinEssential.apk"
 install -m 0755 "$RODIN_DAEMON" "$RODIN_DESTINATION/prebuilt/rodin_daemon"
 install -m 0755 "$RODIN_CTL" "$RODIN_DESTINATION/prebuilt/rodin_ctl"
+"$RODIN_STRIP" --strip-unneeded "$RODIN_DESTINATION/prebuilt/rodin_daemon"
+"$RODIN_STRIP" --strip-unneeded "$RODIN_DESTINATION/prebuilt/rodin_ctl"
 
 "$RODIN_APKSIGNER" verify --print-certs-pem "$RODIN_APK" 2>/dev/null \
     | sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' \

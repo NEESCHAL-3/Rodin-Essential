@@ -38,6 +38,7 @@ done
 
 "$RODIN_PROJECT_ROOT/tools/test-kernelsu-watchdog-lock.sh"
 "$RODIN_PROJECT_ROOT/tools/test-root-module-contract.sh"
+"$RODIN_PROJECT_ROOT/tools/test-release-sync.sh"
 
 mkdir -p "$RODIN_STAGE/bin" "$RODIN_STAGE/app"
 

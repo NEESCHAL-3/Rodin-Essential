@@ -45,10 +45,5 @@ binder_call(rodin_daemon, hal_touchfeature_xiaomi_default)
 allow rodin_daemon vendor_hal_displayfeature_xiaomi_service:service_manager find;
 allow rodin_daemon hal_touchfeature_xiaomi_service:service_manager find;
 
-# The v1.18.0 1000 Hz mode duplicates the touch service's event descriptor and
-# updates its Rodin timing block. The 240/480 Hz modes use the same timing block
-# without enabling the resampler.
-allow rodin_daemon hal_touchfeature_xiaomi_default:process ptrace;
-allow rodin_daemon hal_touchfeature_xiaomi_default:fd use;
-allow rodin_daemon hal_touchfeature_xiaomi_default:dir r_dir_perms;
-allow rodin_daemon hal_touchfeature_xiaomi_default:file rw_file_perms;
+# ROM-native 1000 Hz output opens the SELinux-labelled Rodin input event
+# directly. It does not inspect or trace the touch service process.

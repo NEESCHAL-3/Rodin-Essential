@@ -2,6 +2,27 @@
 
 All notable changes are documented here.
 
+## 1.18.3
+
+### Fixed
+
+- Restored the complete v1.18.0 Touch Response pipeline: native 240/480 Hz
+  timing for the 250/500 profiles and the verified one-millisecond Android
+  output scheduler for the 1000 profile.
+- Preserved the authenticated reverse and privileged-loopback transports,
+  bounded framework startup, transactional persistence, and daemon-first boot
+  ordering that prevent a healthy KernelSU Next or Magisk backend from
+  appearing Offline.
+- ROM-native 1000 Hz output now opens the dedicated Rodin input device directly
+  and no longer requests `SYS_PTRACE`, `DAC_OVERRIDE`, or `DAC_READ_SEARCH`.
+  This removes the Android 17 platform-neverallow conflicts without granting
+  the application root or privileged Android identity.
+- AOSP policy validation now distinguishes pre-existing OEM platform-policy
+  diagnostics from violations introduced by the Rodin integration while still
+  rejecting any Rodin neverallow failure.
+- Application, Rust workspace, KernelSU/Magisk module, manifest, interface, and
+  release metadata are synchronized at version 1.18.3 / code 11803.
+
 ## 1.18.2
 
 ### Fixed

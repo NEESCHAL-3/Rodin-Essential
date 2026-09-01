@@ -125,18 +125,21 @@ RODIN_KEY_PASS='key-password' \
 The export fails rather than replacing an existing destination. Pass a new
 absolute or relative destination as its first argument when required.
 
-To build and stage the integration directly in an AOSP checkout:
+To build, stage, and wire the integration directly in an AOSP checkout:
 
 ```bash
 RODIN_KEYSTORE=/absolute/path/rom-app.jks \
 RODIN_KEY_ALIAS=rodin-essential \
 RODIN_KEYSTORE_PASS='store-password' \
 RODIN_KEY_PASS='key-password' \
-  ./tools/integrate-aosp-rom.sh /absolute/path/to/aosp
+  ./tools/integrate-aosp-rom.sh /absolute/path/to/aosp \
+    device/xiaomi/rodin/device.mk \
+    device/xiaomi/rodin/BoardConfig.mk
 ```
 
-The helper does not modify existing device or product makefiles. It prints the
-two required include lines after staging succeeds.
+The helper adds the exact product and BoardConfig includes idempotently and
+refuses files outside the selected tree. Pass only the AOSP root for stage-only
+operation with no device-tree edits.
 
 ## KernelSU Next and Magisk module
 

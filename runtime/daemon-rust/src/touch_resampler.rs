@@ -368,6 +368,15 @@ mod android {
     }
 
     fn output_handle() -> Result<(File, PathBuf, i32, Option<u32>), i32> {
+        // A ROM-native daemon has direct, narrowly labelled input-device
+        // access. Prefer that path when requested so product SELinux policy
+        // never needs cross-domain process tracing or /proc fd inspection.
+        // Root modules leave this unset and retain the v1.18.0 service-fd
+        // path with the existing direct-device compatibility fallback.
+        if std::env::var("RODIN_TOUCH_DIRECT_INPUT").as_deref() == Ok("1") {
+            return direct_output_handle().map(|(file, path)| (file, path, 2, None));
+        }
+
         if let Some(pid) = touch_service_pid()
             && let Ok((file, path)) = service_output_handle(pid)
         {

@@ -136,19 +136,23 @@ SELinux policy, the APK public certificate used by the dedicated app-domain
 mapping, and checksums. Keep the same private key for every ROM update; the
 private key is never copied into the bundle.
 
-To build and stage the integration directly in an existing ROM source tree:
+To build, stage, and wire the integration into an existing ROM source tree in
+one command, provide the Rodin product makefile and BoardConfig path:
 
 ```bash
 RODIN_KEYSTORE=/absolute/path/rom-app.jks \
 RODIN_KEY_ALIAS=rodin-essential \
 RODIN_KEYSTORE_PASS='store-password' \
 RODIN_KEY_PASS='key-password' \
-  ./tools/integrate-aosp-rom.sh /absolute/path/to/aosp
+  ./tools/integrate-aosp-rom.sh /absolute/path/to/aosp \
+    device/xiaomi/rodin/device.mk \
+    device/xiaomi/rodin/BoardConfig.mk
 ```
 
-The helper creates `vendor/rodin-essential` and prints the product and
-BoardConfig include lines. It does not overwrite an existing integration or
-edit device-tree files automatically.
+The helper creates `vendor/rodin-essential`, verifies the complete build, and
+adds the two exact include lines only when absent. It refuses paths outside the
+selected source tree and never replaces an existing integration directory.
+Passing only the AOSP root keeps the previous stage-only behavior.
 
 ## KernelSU Next and Magisk module
 

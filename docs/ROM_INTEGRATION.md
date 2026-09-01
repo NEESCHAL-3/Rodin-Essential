@@ -86,27 +86,32 @@ openssl x509 -in prebuilt/RodinEssential.x509.pem -noout -fingerprint -sha256
 
 ## 3. Stage the bundle in the ROM tree
 
-The helper can build, verify, and stage the bundle in one command:
+The helper can build, verify, stage, and wire the bundle in one command:
 
 ```bash
 RODIN_KEYSTORE=/absolute/path/rom-app.jks \
 RODIN_KEY_ALIAS=rodin-essential \
 RODIN_KEYSTORE_PASS='store-password' \
 RODIN_KEY_PASS='key-password' \
-  ./tools/integrate-aosp-rom.sh /absolute/path/to/aosp
+  ./tools/integrate-aosp-rom.sh /absolute/path/to/aosp \
+    device/xiaomi/rodin/device.mk \
+    device/xiaomi/rodin/BoardConfig.mk
 ```
 
 It creates `vendor/rodin-essential`, refuses to replace an existing directory,
-and does not edit the device tree automatically. For manual integration, copy
-the complete exported directory to the same path.
+validates that both device-tree files are inside the selected checkout, and
+adds each exact include only if missing. Pass only the AOSP root for stage-only
+operation. For manual integration, copy the complete exported directory to the
+same path.
 
-Add the product fragment to the Rodin product makefile:
+The automated form adds this product fragment to the selected Rodin product
+makefile:
 
 ```makefile
 $(call inherit-product, vendor/rodin-essential/rodin-essential.mk)
 ```
 
-Add the policy fragment to `device/xiaomi/rodin/BoardConfig.mk`:
+It adds this policy fragment to the selected BoardConfig:
 
 ```makefile
 include vendor/rodin-essential/BoardConfigRodinEssential.mk
@@ -227,14 +232,12 @@ belong only to `rodin_daemon`.
 ### 1000 Hz touch policy
 
 The native 240/480 Hz paths use the touch AIDL service. The v1.18.0 1000 Hz
-output path also reads the touch-service timing block and duplicates its event
-descriptor, so it requires the narrowly scoped `process ptrace`, `fd use`, and
-input-device rules included in the vendor template.
-
-If the ROM has an additional neverallow for this daemon domain, review the
-integration with the device security maintainer. Removing the 1000 Hz policy
-block leaves native 240/480 Hz available but intentionally makes the 1000 Hz
-command fail instead of reporting a false success.
+output path uses the daemon's narrowly labelled Rodin input-device access. The
+ROM init service sets `RODIN_TOUCH_DIRECT_INPUT=1`, so the daemon never inspects
+the touch-service process or duplicates its descriptors. The AOSP policy does
+not request `SYS_PTRACE`, `DAC_OVERRIDE`, or `DAC_READ_SEARCH`, avoiding the
+corresponding modern platform neverallows while keeping input access confined
+to `rodin_daemon`.
 
 ## 6. Build and policy validation
 
@@ -277,9 +280,9 @@ At `post-fs-data`, init creates and labels:
 
 After `sys.boot_completed=1`, init starts `rodin_daemon` and restarts it after
 an unexpected exit. The daemon loads its saved state and restores hardware
-domains after framework and vendor services settle. A forced touch choice is
-applied once after TouchFeature becomes ready and is intentionally excluded
-from the recurring wake and drift-maintenance paths.
+domains after framework and vendor services settle. Saved touch state follows
+the same daemon-owned boot, wake, and live-readback restoration as the other
+persisted hardware domains.
 
 The UI process is not the owner of active settings. Swiping it from recents,
 force-stopping it, or restarting System UI does not stop the daemon. Normal OTA

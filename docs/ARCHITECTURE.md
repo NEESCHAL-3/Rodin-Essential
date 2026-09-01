@@ -107,12 +107,13 @@ only as a fallback on ports that omit the AIDL service.
 - 250 mode requests the native 240 Hz timing block.
 - 500 mode requests the native 480 Hz timing block.
 - 1000 mode keeps the physical source at 480 Hz and emits the v1.18.0 verified
-  one-millisecond Android event stream through a duplicated vendor event
-  descriptor.
+  one-millisecond Android event stream. Root modules prefer the duplicated
+  vendor event descriptor and retain the direct-device fallback; ROM-native
+  integration uses its dedicated input-device label directly.
 
-The 1000 path needs `SYS_PTRACE`, input-device access, `pidfd_getfd`, and
-narrowly scoped SELinux access to the Rodin touch HAL domain. These permissions
-belong to the daemon only.
+The ROM-native path does not trace or inspect the touch HAL and therefore does
+not require `SYS_PTRACE`, `DAC_OVERRIDE`, or `DAC_READ_SEARCH`. Raw input access
+remains restricted to the dedicated daemon domain.
 
 ## Performance ownership
 
