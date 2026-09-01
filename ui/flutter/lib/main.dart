@@ -3474,7 +3474,7 @@ class SupportScreen extends StatelessWidget {
                           runSpacing: 4,
                           children: <Widget>[
                             StatusPill(
-                              label: 'v1.18.2',
+                              label: 'v1.18.3',
                               accent: colors.primary,
                             ),
                             StatusPill(

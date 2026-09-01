@@ -13,9 +13,10 @@ certificate, while the private key remains with the ROM maintainer.
 See `docs/ROM_INTEGRATION.md` for complete build, signing, policy, validation,
 and OTA instructions.
 
-For a checked-out ROM tree, `tools/integrate-aosp-rom.sh <aosp-root>` builds and
-stages the bundle under `vendor/rodin-essential`. It prints the two makefile
-include lines required by the device tree and does not modify existing product
-files automatically. Both helpers require the `RODIN_KEYSTORE`,
+For a checked-out ROM tree,
+`tools/integrate-aosp-rom.sh <aosp-root> <product-makefile> <boardconfig>` builds,
+stages, and idempotently wires the bundle under `vendor/rodin-essential`.
+Passing only `<aosp-root>` performs stage-only integration and prints the two
+required lines. Both helpers require the `RODIN_KEYSTORE`,
 `RODIN_KEY_ALIAS`, `RODIN_KEYSTORE_PASS`, and `RODIN_KEY_PASS` environment used
 for that ROM's future updates.

@@ -50,7 +50,7 @@
 (typeattributeset hal_service_type (rodin_hal_service_release_probe))
 
 (allow rodin_daemon_release_probe self (capability
-    (dac_override dac_read_search sys_admin sys_nice sys_ptrace)))
+    (sys_admin sys_nice)))
 (allow rodin_daemon_release_probe self (unix_stream_socket
     (create ioctl read getattr write setattr lock append bind connect listen
      accept getopt setopt shutdown map)))
@@ -86,11 +86,6 @@
 (allow rodin_touch_hal_release_probe rodin_daemon_release_probe
     (binder (transfer)))
 (allow rodin_daemon_release_probe rodin_touch_hal_release_probe (fd (use)))
-(allow rodin_daemon_release_probe rodin_touch_hal_release_probe (process (ptrace)))
-(allow rodin_daemon_release_probe rodin_touch_hal_release_probe
-    (dir (getattr ioctl lock open read search)))
-(allow rodin_daemon_release_probe rodin_touch_hal_release_probe
-    (file (append create getattr ioctl lock map open read rename setattr unlink write)))
 
 (allow rodin_daemon_release_probe rodin_display_hal_release_probe
     (binder (call transfer)))
