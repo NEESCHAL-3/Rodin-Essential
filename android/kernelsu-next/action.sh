@@ -6,6 +6,13 @@ RODIN_CTL="$MODDIR/bin/rodin_ctl"
 echo "Rodin Essential"
 echo ""
 
+if [ -f "$MODDIR/rom-native-mode" ]; then
+    echo "Backend mode: ROM-native update layer"
+    echo "Native init service: $(getprop init.svc.rodin_daemon 2>/dev/null)"
+else
+    echo "Backend mode: standalone root module"
+fi
+
 if /system/bin/pm path io.github.neeschal.rodinessential >/dev/null 2>&1; then
     echo "App: installed"
 else
