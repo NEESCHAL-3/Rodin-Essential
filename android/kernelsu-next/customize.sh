@@ -35,10 +35,34 @@ esac
 [ -f "$MODPATH/app/RodinEssential.apk" ] || abort "! Missing Rodin Essential APK"
 [ -x /system/bin/pm ] || abort "! Android package manager is unavailable"
 
-if [ -x /product/bin/rodin_daemon ] \
-    || [ -x /system_ext/bin/rodin_daemon ] \
-    || [ -n "$(getprop init.svc.rodin_daemon 2>/dev/null)" ]; then
-    abort "! ROM-native Rodin Essential detected; do not install the root module too"
+rodin_native_backend_present() {
+    for RODIN_NATIVE_BINARY in \
+        /product/bin/rodin_daemon \
+        /system_ext/bin/rodin_daemon \
+        /system/bin/rodin_daemon \
+        /vendor/bin/rodin_daemon \
+        /odm/bin/rodin_daemon; do
+        [ -x "$RODIN_NATIVE_BINARY" ] && return 0
+    done
+
+    for RODIN_NATIVE_SERVICE in rodin_daemon rodin_essentiald; do
+        [ -n "$(getprop "init.svc.$RODIN_NATIVE_SERVICE" 2>/dev/null)" ] && return 0
+    done
+
+    RODIN_PACKAGE_PATHS="$(/system/bin/pm path io.github.neeschal.rodinessential 2>/dev/null)"
+    case "$RODIN_PACKAGE_PATHS" in
+        *package:/product/*|*package:/system_ext/*|*package:/system/*|\
+        *package:/vendor/*|*package:/odm/*) return 0 ;;
+    esac
+    return 1
+}
+
+RODIN_NATIVE_MODE=0
+if rodin_native_backend_present; then
+    RODIN_NATIVE_MODE=1
+    touch "$MODPATH/rom-native-mode"
+else
+    rm -f "$MODPATH/rom-native-mode"
 fi
 
 # The module changes no system partition files, so KernelSU does not need a
@@ -52,16 +76,28 @@ set_perm "$MODPATH/customize.sh" 0 0 0755
 set_perm "$MODPATH/service.sh" 0 0 0755
 set_perm "$MODPATH/action.sh" 0 0 0755
 set_perm "$MODPATH/uninstall.sh" 0 0 0755
+[ "$RODIN_NATIVE_MODE" -eq 0 ] || set_perm "$MODPATH/rom-native-mode" 0 0 0644
 
-ui_print "- Installing the unprivileged Android app"
+if [ "$RODIN_NATIVE_MODE" -eq 1 ]; then
+    ui_print "- Compatible ROM-native installation detected"
+    ui_print "- Installing the signed application update without clearing data"
+else
+    ui_print "- Installing the unprivileged Android app"
+fi
 RODIN_INSTALL_RESULT="$(/system/bin/pm install --user 0 -r "$MODPATH/app/RodinEssential.apk" 2>&1)"
 case "$RODIN_INSTALL_RESULT" in
     *Success*) ;;
     *INSTALL_FAILED_UPDATE_INCOMPATIBLE*)
         ui_print "$RODIN_INSTALL_RESULT"
-        ui_print "! A differently signed testing/ROM copy is installed"
-        ui_print "! Uninstall that app once, then flash this same ZIP again"
-        ui_print "! Rodin daemon settings under /data/adb are not deleted"
+        if [ "$RODIN_NATIVE_MODE" -eq 1 ]; then
+            ui_print "! The ROM-native APK uses a different signing certificate"
+            ui_print "! Android cannot safely update it with the public module APK"
+            ui_print "! Update that ROM build with its original signing key"
+        else
+            ui_print "! A differently signed testing copy is installed"
+            ui_print "! Uninstall that app once, then flash this same ZIP again"
+            ui_print "! Rodin daemon settings under /data/adb are not deleted"
+        fi
         abort "! Android correctly refused a cross-signature update"
         ;;
     *)
@@ -82,8 +118,16 @@ RODIN_INSTALLED_VERSION_CODE="$(/system/bin/dumpsys package io.github.neeschal.r
 
 ui_print "- Device: $RODIN_PRODUCT"
 ui_print "- Root manager: $RODIN_MANAGER $RODIN_MANAGER_VERSION"
-ui_print "- App: installed as a normal Android application"
-ui_print "- Daemon: isolated privileged module service"
+if [ "$RODIN_NATIVE_MODE" -eq 1 ]; then
+    ui_print "- Mode: update layer over the ROM-native installation"
+    ui_print "- App: signature-compatible update; existing data retained"
+    ui_print "- Daemon: module service takes over after native init stops"
+    ui_print "- State: shared with the ROM-native backend"
+    ui_print "- Removal: restores the ROM APK and native init service"
+else
+    ui_print "- App: installed as a normal Android application"
+    ui_print "- Daemon: isolated privileged module service"
+fi
 ui_print "- IPC: authenticated Unix and privileged-loopback transports"
 ui_print "- System overlay: none; no KernelSU metamodule required"
 ui_print "- Reboot once when you are ready to activate the daemon"

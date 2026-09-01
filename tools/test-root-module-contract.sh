@@ -37,7 +37,13 @@ grep -Fxq 'export RODIN_LOOPBACK_IPC=1' "$RODIN_SERVICE"
 grep -Fq 'export RODIN_APP_UID' "$RODIN_SERVICE"
 grep -Fq 'pm list packages -U' "$RODIN_SERVICE"
 grep -Fq 'sys.boot_completed' "$RODIN_SERVICE"
-grep -Fq 'rom_native_backend_detected' "$RODIN_SERVICE"
+grep -Fq 'RODIN_NATIVE_STATE_ROOT=/data/system/rodin-essential' "$RODIN_SERVICE"
+grep -Fq 'RODIN_MODULE_MODE rom_native_update' "$RODIN_SERVICE"
+grep -Fq 'ctl.stop' "$RODIN_SERVICE"
+grep -Fq 'rom-native-mode' "$RODIN_INSTALLER"
+grep -Fq 'update layer over the ROM-native installation' "$RODIN_INSTALLER"
+grep -Fq 'uninstall-system-updates "$RODIN_PACKAGE"' "$RODIN_MODULE/uninstall.sh"
+grep -Fq 'ctl.start' "$RODIN_MODULE/uninstall.sh"
 grep -Fq 'App IPC: verified (daemon-initiated)' "$RODIN_ACTION"
 grep -Fq 'App IPC: verified (authenticated loopback)' "$RODIN_ACTION"
 grep -Fq 'INSTALL_FAILED_UPDATE_INCOMPATIBLE' "$RODIN_INSTALLER"
@@ -51,6 +57,11 @@ grep -Fq 'touch_resampler_ready' "$RODIN_ACTION"
 if grep -Eq 'pm[[:space:]]+uninstall|rm[[:space:]].*io\.github\.neeschal\.rodinessential' \
     "$RODIN_INSTALLER"; then
     echo "Installer must never remove an existing app or its data automatically" >&2
+    exit 1
+fi
+
+if grep -Fq 'ROM-native Rodin Essential detected; do not install' "$RODIN_INSTALLER"; then
+    echo "Installer still rejects ROM-native updates" >&2
     exit 1
 fi
 

@@ -183,6 +183,15 @@ Recovery installation is not supported.
 Keep the signing key for every future module update. Android rejects an APK
 update signed by a different certificate.
 
+The same ZIP can also act as a temporary update layer over a ROM-native Rodin
+Essential installation when that ROM APK uses the same signing certificate as
+the release APK. The installer updates the app without clearing its data, the
+module daemon reuses `/data/system/rodin-essential`, and native init is stopped
+before the module daemon starts. Removing the module rolls the app back to the
+ROM copy and restarts the native service. A differently signed ROM build is
+rejected without uninstalling the app or deleting its data; that build must be
+updated through its maintainer's OTA or original signing key.
+
 ## Repository layout
 
 ```text

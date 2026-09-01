@@ -22,6 +22,11 @@ All notable changes are documented here.
   rejecting any Rodin neverallow failure.
 - Application, Rust workspace, KernelSU/Magisk module, manifest, interface, and
   release metadata are synchronized at version 1.18.3 / code 11803.
+- The KernelSU/Magisk installer now supports signature-compatible ROM-native
+  installations as a reversible update layer. It preserves native state, stops
+  the init-owned daemon before module takeover, and restores the ROM APK and
+  native service when the module is removed. Cross-signature updates still fail
+  safely without deleting application data.
 
 ## 1.18.2
 

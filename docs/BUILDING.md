@@ -167,6 +167,15 @@ neither patches live SELinux policy nor converts the APK into a privileged
 application. A policy that already permits the direct connection may use it.
 Installation from recovery is not supported.
 
+On a ROM with native Rodin Essential integration, the module becomes an update
+layer only when Android accepts the bundled APK as a signature-compatible
+system-app update. At boot it stops the native init service, shares the native
+state directory, and then starts the module daemon. Module removal uses
+Android's targeted `uninstall-system-updates` command and restarts native init.
+No partition file is replaced. Cross-signature native updates remain rejected
+because bypassing Android's package identity would either fail package scanning
+or require destructive app removal.
+
 The builder requires a persistent `RODIN_KEYSTORE`; it never creates a
 disposable module signing identity. Reuse the same key for all published module
 versions so Android can update the bundled application without removing user

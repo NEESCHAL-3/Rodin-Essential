@@ -103,6 +103,14 @@ grep -Fq 'App IPC: verified (authenticated loopback)' "$RODIN_STAGE/action.sh" |
     echo "Module Action does not report the authenticated loopback transport" >&2
     exit 1
 }
+grep -Fq 'RODIN_MODULE_MODE rom_native_update' "$RODIN_STAGE/service.sh" || {
+    echo "Missing ROM-native daemon takeover path" >&2
+    exit 1
+}
+grep -Fq 'uninstall-system-updates "$RODIN_PACKAGE"' "$RODIN_STAGE/uninstall.sh" || {
+    echo "Missing ROM-native application rollback path" >&2
+    exit 1
+}
 
 RODIN_MODID="$(sed -n 's/^id=//p' "$RODIN_STAGE/module.prop")"
 RODIN_VERSION_CODE="$(sed -n 's/^versionCode=//p' "$RODIN_STAGE/module.prop")"

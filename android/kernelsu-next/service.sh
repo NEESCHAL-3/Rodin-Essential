@@ -2,6 +2,7 @@
 
 MODDIR=${0%/*}
 RODIN_ROOT=/data/adb/rodin-essential
+RODIN_NATIVE_STATE_ROOT=/data/system/rodin-essential
 RODIN_DAEMON="$MODDIR/bin/rodin_daemon"
 RODIN_LOG="$RODIN_ROOT/backend.log"
 RODIN_LOG_OLD="$RODIN_ROOT/backend.log.1"
@@ -12,21 +13,43 @@ RODIN_SERVICE_PATH="$MODDIR/service.sh"
 RODIN_CURRENT_BOOT_ID="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
 RODIN_PACKAGE=io.github.neeschal.rodinessential
 
-export RODIN_STATE_DIR="$RODIN_ROOT"
 export RODIN_REVERSE_IPC=1
 export RODIN_LOOPBACK_IPC=1
+
+rodin_native_backend_present() {
+    [ -f "$MODDIR/rom-native-mode" ] && return 0
+
+    for RODIN_NATIVE_BINARY in \
+        /product/bin/rodin_daemon \
+        /system_ext/bin/rodin_daemon \
+        /system/bin/rodin_daemon \
+        /vendor/bin/rodin_daemon \
+        /odm/bin/rodin_daemon; do
+        [ -x "$RODIN_NATIVE_BINARY" ] && return 0
+    done
+
+    for RODIN_NATIVE_SERVICE in rodin_daemon rodin_essentiald; do
+        [ -n "$(getprop "init.svc.$RODIN_NATIVE_SERVICE" 2>/dev/null)" ] && return 0
+    done
+    return 1
+}
+
+RODIN_NATIVE_MODE=0
+if rodin_native_backend_present; then
+    RODIN_NATIVE_MODE=1
+    export RODIN_STATE_DIR="$RODIN_NATIVE_STATE_ROOT"
+else
+    export RODIN_STATE_DIR="$RODIN_ROOT"
+fi
 
 umask 077
 mkdir -p "$RODIN_ROOT"
 chmod 0700 "$RODIN_ROOT" 2>/dev/null
-
-# A ROM update can add the native backend after this module was installed.
-# Never start a second supervisor or kill the ROM-owned daemon in that case.
-if [ -x /product/bin/rodin_daemon ] \
-    || [ -x /system_ext/bin/rodin_daemon ] \
-    || [ -n "$(getprop init.svc.rodin_daemon 2>/dev/null)" ]; then
-    echo "RODIN_MODULE_DISABLED rom_native_backend_detected" >>"$RODIN_LOG"
-    exit 0
+if [ "$RODIN_NATIVE_MODE" -eq 1 ]; then
+    mkdir -p "$RODIN_NATIVE_STATE_ROOT"
+    chmod 0700 "$RODIN_NATIVE_STATE_ROOT" 2>/dev/null
+    /system/bin/restorecon -RF "$RODIN_NATIVE_STATE_ROOT" 2>/dev/null || \
+        /system/bin/restorecon -R "$RODIN_NATIVE_STATE_ROOT" 2>/dev/null || true
 fi
 
 RODIN_LOG_BYTES=0
@@ -78,15 +101,6 @@ for RODIN_PROC in /proc/[0-9]*; do
     esac
 done
 
-# Start the daemon shipped by this module, never an old copied binary.
-for RODIN_PID in $(pidof rodin_daemon 2>/dev/null); do
-    kill "$RODIN_PID" 2>/dev/null
-done
-sleep 1
-for RODIN_PID in $(pidof rodin_daemon 2>/dev/null); do
-    kill -9 "$RODIN_PID" 2>/dev/null
-done
-
 rodin_cleanup() {
     RODIN_OWNER="$(cat "$RODIN_WATCHDOG_LOCK/pid" 2>/dev/null)"
     if [ "$RODIN_OWNER" = "$$" ]; then
@@ -97,6 +111,47 @@ rodin_cleanup() {
 
 trap rodin_cleanup EXIT
 trap 'exit 0' HUP INT TERM
+
+rodin_stop_native_services() {
+    [ "$RODIN_NATIVE_MODE" -eq 1 ] || return 0
+
+    for RODIN_NATIVE_SERVICE in rodin_daemon rodin_essentiald; do
+        RODIN_NATIVE_STATE="$(getprop "init.svc.$RODIN_NATIVE_SERVICE" 2>/dev/null)"
+        case "$RODIN_NATIVE_STATE" in
+            ''|stopped) ;;
+            *) /system/bin/setprop ctl.stop "$RODIN_NATIVE_SERVICE" 2>/dev/null || true ;;
+        esac
+    done
+
+    RODIN_STOP_ATTEMPT=0
+    while [ "$RODIN_STOP_ATTEMPT" -lt 10 ]; do
+        RODIN_NATIVE_RUNNING=0
+        for RODIN_NATIVE_SERVICE in rodin_daemon rodin_essentiald; do
+            RODIN_NATIVE_STATE="$(getprop "init.svc.$RODIN_NATIVE_SERVICE" 2>/dev/null)"
+            case "$RODIN_NATIVE_STATE" in
+                starting|running|restarting|stopping) RODIN_NATIVE_RUNNING=1 ;;
+            esac
+        done
+        [ "$RODIN_NATIVE_RUNNING" -eq 1 ] || return 0
+        RODIN_STOP_ATTEMPT=$((RODIN_STOP_ATTEMPT + 1))
+        sleep 1
+    done
+    return 1
+}
+
+rodin_kill_existing_daemons() {
+    for RODIN_PROCESS_NAME in rodin_daemon rodin_essentiald; do
+        for RODIN_PID in $(pidof "$RODIN_PROCESS_NAME" 2>/dev/null); do
+            kill "$RODIN_PID" 2>/dev/null
+        done
+    done
+    sleep 1
+    for RODIN_PROCESS_NAME in rodin_daemon rodin_essentiald; do
+        for RODIN_PID in $(pidof "$RODIN_PROCESS_NAME" 2>/dev/null); do
+            kill -9 "$RODIN_PID" 2>/dev/null
+        done
+    done
+}
 
 rodin_resolve_app_uid() {
     RODIN_PACKAGE_ENTRY="$(/system/bin/pm list packages -U "$RODIN_PACKAGE" 2>/dev/null \
@@ -131,6 +186,21 @@ while [ "$(getprop sys.boot_completed 2>/dev/null)" != "1" ]; do
     sleep 1
 done
 
+if [ "$RODIN_NATIVE_MODE" -eq 1 ]; then
+    echo "RODIN_MODULE_MODE rom_native_update state_dir=$RODIN_STATE_DIR" >>"$RODIN_LOG"
+    while ! rodin_stop_native_services; do
+        echo "RODIN_NATIVE_TAKEOVER_WAIT init_service_still_running" >>"$RODIN_LOG"
+        sleep 2
+    done
+    echo "RODIN_NATIVE_TAKEOVER_READY init_service=stopped" >>"$RODIN_LOG"
+else
+    echo "RODIN_MODULE_MODE standalone state_dir=$RODIN_STATE_DIR" >>"$RODIN_LOG"
+fi
+
+# Start the daemon shipped by this module, never an old module or init-owned
+# binary. Native init is stopped first so it cannot restart a competing daemon.
+rodin_kill_existing_daemons
+
 # Pin the daemon to the UID Android assigned to this exact APK. The daemon
 # validates Unix peers with SO_PEERCRED and privileged-loopback peers against
 # the kernel TCP table, so no app-to-root SELinux relaxation is required and no
@@ -151,6 +221,11 @@ export RODIN_APP_UID
 echo "RODIN_MODULE_APP_UID uid=$RODIN_APP_UID" >>"$RODIN_LOG"
 
 while true; do
+    if [ "$RODIN_NATIVE_MODE" -eq 1 ] && ! rodin_stop_native_services; then
+        echo "RODIN_NATIVE_TAKEOVER_WAIT init_service_restarted" >>"$RODIN_LOG"
+        sleep 2
+        continue
+    fi
     if [ -x "$RODIN_DAEMON" ] && ! pidof rodin_daemon >/dev/null 2>&1; then
         echo "RODIN_MODULE_DAEMON_START path=$RODIN_DAEMON" >>"$RODIN_LOG"
         "$RODIN_DAEMON" >>"$RODIN_LOG" 2>&1

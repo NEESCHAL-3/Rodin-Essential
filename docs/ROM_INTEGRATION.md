@@ -288,9 +288,19 @@ The UI process is not the owner of active settings. Swiping it from recents,
 force-stopping it, or restarting System UI does not stop the daemon. Normal OTA
 updates retain the state file because it lives on `/data`.
 
-Do not ship or install the KernelSU/Magisk module on a ROM with the native
-integration. Two supervisors would compete for the socket and hardware state;
-the module installer intentionally rejects a detected ROM-native daemon.
+The public KernelSU/Magisk ZIP can temporarily update a native installation
+only when the ROM APK and release APK have the same signing certificate. The
+module installs an Android system-app update under `/data`, stops
+`rodin_daemon` through init before starting its own supervisor, and uses this
+same native state directory. Removing the module rolls the package-manager
+update back to the `/product` APK and starts native init again. It never overlays
+or rewrites a partition file, and two daemons are never allowed to run together.
+
+Bundles exported with a ROM-owned key can be updated only by that ROM
+maintainer. The public module cannot and must not bypass Android's signature
+check. ROMs that want public-module update compatibility must ship the exact
+release-signed APK and its matching public certificate; the release private key
+is not distributed.
 
 ## 8. Device verification
 
