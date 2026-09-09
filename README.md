@@ -50,30 +50,37 @@ installer and are not supported by the included AOSP policy.
 The redesigned interface groups live device telemetry and hardware tuning into
 focused panels for each subsystem.
 
-| Home | Control Hubs |
-| --- | --- |
-| <a href="docs/screenshots/home-redesigned.jpg"><img src="docs/screenshots/home-redesigned.jpg" alt="Home dashboard" width="140"></a> | <a href="docs/screenshots/control-hubs-redesigned.jpg"><img src="docs/screenshots/control-hubs-redesigned.jpg" alt="Control hubs" width="140"></a> |
-| Device Pulse, active profile, and quick controls. | Central entry point for performance, display, power, memory, and diagnostics. |
+<p align="center">
+  <a href="docs/screenshots/home-redesigned.jpg"><img src="docs/screenshots/home-redesigned.jpg" alt="Home dashboard" width="150"></a>
+  &nbsp;&nbsp;
+  <a href="docs/screenshots/control-hubs-redesigned.jpg"><img src="docs/screenshots/control-hubs-redesigned.jpg" alt="Control hubs" width="150"></a>
+</p>
+<p align="center"><sub><b>Home</b> - Device Pulse and quick controls&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Control Hubs</b> - Hardware subsystem navigation</sub></p>
 
-| CPU | GPU |
-| --- | --- |
-| <a href="docs/screenshots/cpu.jpg"><img src="docs/screenshots/cpu.jpg" alt="CPU controls" width="140"></a> | <a href="docs/screenshots/gpu.jpg"><img src="docs/screenshots/gpu.jpg" alt="GPU controls" width="140"></a> |
-| Tune cluster policies, frequencies, and core state. | Configure GPU profiles, governors, and performance limits. |
+<p align="center">
+  <a href="docs/screenshots/cpu.jpg"><img src="docs/screenshots/cpu.jpg" alt="CPU controls" width="150"></a>
+  &nbsp;&nbsp;
+  <a href="docs/screenshots/gpu.jpg"><img src="docs/screenshots/gpu.jpg" alt="GPU controls" width="150"></a>
+  &nbsp;&nbsp;
+  <a href="docs/screenshots/touch.jpg"><img src="docs/screenshots/touch.jpg" alt="Touch controls" width="150"></a>
+</p>
+<p align="center"><sub><b>CPU</b> - Core and frequency control&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>GPU</b> - Mali profiles and GED&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Touch</b> - Response profiles</sub></p>
 
-| Touch | Display |
-| --- | --- |
-| <a href="docs/screenshots/touch.jpg"><img src="docs/screenshots/touch.jpg" alt="Touch controls" width="140"></a> | <a href="docs/screenshots/display.jpg"><img src="docs/screenshots/display.jpg" alt="Display controls" width="140"></a> |
-| Select touch timing profiles and response behavior. | Adjust display modes, resolution, density, and vendor controls. |
+<p align="center">
+  <a href="docs/screenshots/display.jpg"><img src="docs/screenshots/display.jpg" alt="Display controls" width="150"></a>
+  &nbsp;&nbsp;
+  <a href="docs/screenshots/battery.jpg"><img src="docs/screenshots/battery.jpg" alt="Battery controls" width="150"></a>
+  &nbsp;&nbsp;
+  <a href="docs/screenshots/zram.jpg"><img src="docs/screenshots/zram.jpg" alt="ZRAM controls" width="150"></a>
+</p>
+<p align="center"><sub><b>Display</b> - Color and HDR tuning&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Battery</b> - Charging telemetry&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>ZRAM</b> - Memory compression</sub></p>
 
-| Battery | ZRAM |
-| --- | --- |
-| <a href="docs/screenshots/battery.jpg"><img src="docs/screenshots/battery.jpg" alt="Battery controls" width="140"></a> | <a href="docs/screenshots/zram.jpg"><img src="docs/screenshots/zram.jpg" alt="ZRAM controls" width="140"></a> |
-| Monitor charging behavior and power telemetry. | Configure compressed-memory size, algorithm, and policy. |
-
-| Diagnostics | Support |
-| --- | --- |
-| <a href="docs/screenshots/diagnostics.jpg"><img src="docs/screenshots/diagnostics.jpg" alt="Diagnostics" width="140"></a> | <a href="docs/screenshots/support.jpg"><img src="docs/screenshots/support.jpg" alt="Support and project information" width="140"></a> |
-| Inspect connection status, capabilities, and runtime health. | Find project links, community support, and hardware safety notes. |
+<p align="center">
+  <a href="docs/screenshots/diagnostics.jpg"><img src="docs/screenshots/diagnostics.jpg" alt="Diagnostics" width="150"></a>
+  &nbsp;&nbsp;
+  <a href="docs/screenshots/support.jpg"><img src="docs/screenshots/support.jpg" alt="Support and project information" width="150"></a>
+</p>
+<p align="center"><sub><b>Diagnostics</b> - Runtime health checks&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Support</b> - Community and safety information</sub></p>
 
 ## Performance profiles
 
