@@ -82,6 +82,15 @@ focused panels for each subsystem.
 </p>
 <p align="center"><sub><b>Diagnostics</b> - Runtime health checks&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Support</b> - Community and safety information</sub></p>
 
+<p align="center">
+  <a href="docs/screenshots/system-colors.jpg"><img src="docs/screenshots/system-colors.jpg" alt="System Colors" width="150"></a>
+  &nbsp;&nbsp;
+  <a href="docs/screenshots/advanced-configuration.jpg"><img src="docs/screenshots/advanced-configuration.jpg" alt="Advanced Configuration" width="150"></a>
+  &nbsp;&nbsp;
+  <a href="docs/screenshots/resolution.jpg"><img src="docs/screenshots/resolution.jpg" alt="Resolution controls" width="150"></a>
+</p>
+<p align="center"><sub><b>System Colors</b> - Material You palette control&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Advanced Configuration</b> - CPU governors and device tuning&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Resolution</b> - Canvas, density, and refresh settings</sub></p>
+
 ## Performance profiles
 
 | Profile | GPU range and governor | GED / power policy | CPU behavior |
