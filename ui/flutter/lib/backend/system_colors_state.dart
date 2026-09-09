@@ -17,6 +17,15 @@ final class RodinSystemColorsState {
     this.outcome = 0,
     this.error = 0,
     this.revision = 0,
+    this.contrastOperationState = 0,
+    this.contrastSupported = false,
+    this.contrast = 0,
+    this.lightContainer = -1,
+    this.lightOnContainer = -1,
+    this.darkContainer = -1,
+    this.darkOnContainer = -1,
+    this.contrastError = 0,
+    this.contrastRevision = 0,
   });
 
   factory RodinSystemColorsState.fromNative(int Function(int) read) {
@@ -36,6 +45,15 @@ final class RodinSystemColorsState {
       error: read(93),
       revision: read(94),
       supported: read(95) == 1,
+      contrastOperationState: read(96),
+      contrastSupported: read(97) == 1,
+      contrast: read(98),
+      lightContainer: read(99),
+      lightOnContainer: read(100),
+      darkContainer: read(101),
+      darkOnContainer: read(102),
+      contrastError: read(103),
+      contrastRevision: read(104),
     );
   }
 
@@ -57,10 +75,32 @@ final class RodinSystemColorsState {
   final int outcome;
   final int error;
   final int revision;
+  final int contrastOperationState;
+  final bool contrastSupported;
+  final int contrast;
+  final int lightContainer;
+  final int lightOnContainer;
+  final int darkContainer;
+  final int darkOnContainer;
+  final int contrastError;
+  final int contrastRevision;
 
   bool get busy => operationState == 1;
   bool get ready => operationState == 2;
   bool get failed => operationState == -1;
+  bool get contrastBusy => contrastOperationState == 1;
+  bool get contrastReady => contrastOperationState == 2;
+  bool get contrastFailed => contrastOperationState == -1;
+  List<int> get nativeRoleColors => <int>[
+    lightContainer,
+    lightOnContainer,
+    darkContainer,
+    darkOnContainer,
+  ];
+  bool get hasNativeRoles =>
+      contrastRevision > 0 &&
+      contrastSupported &&
+      nativeRoleColors.every((int rgb) => rgb >= 0 && rgb <= 0xffffff);
   List<int> get nativeColors => <int>[
     primary,
     secondary,

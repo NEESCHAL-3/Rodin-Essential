@@ -32,6 +32,8 @@ class _SystemColorsScreenState extends State<SystemColorsScreen>
           _connection != RodinConnectionState.online && snapshot.ready;
       if (next.revision != _palette.revision ||
           next.operationState != _palette.operationState ||
+          next.contrastRevision != _palette.contrastRevision ||
+          next.contrastOperationState != _palette.contrastOperationState ||
           snapshot.connection != _connection ||
           selection != _selection) {
         setState(() {
@@ -41,10 +43,14 @@ class _SystemColorsScreenState extends State<SystemColorsScreen>
         });
       }
       if (connected && !next.busy) _backend.refreshSystemColors();
+      if (connected && !next.contrastBusy)
+        _backend.refreshSystemColorContrast();
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && !_backend.systemColors.busy)
+      if (mounted && !_backend.systemColors.busy) {
         _backend.refreshSystemColors();
+        _backend.refreshSystemColorContrast();
+      }
     });
   }
 
@@ -52,6 +58,7 @@ class _SystemColorsScreenState extends State<SystemColorsScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && !_backend.systemColors.busy) {
       _backend.refreshSystemColors();
+      _backend.refreshSystemColorContrast();
     }
   }
 
@@ -73,6 +80,8 @@ class _SystemColorsScreenState extends State<SystemColorsScreen>
           connection: _connection,
           selection: _selection,
           onRefresh: _backend.refreshSystemColors,
+          onRefreshContrast: _backend.refreshSystemColorContrast,
+          onSetContrast: _backend.setSystemColorContrast,
           isNativeBusy: () => _backend.systemColors.busy,
           onApply: (bool wallpaper, int seed, int style) => wallpaper
               ? _backend.useWallpaperSystemColors()
@@ -116,10 +125,13 @@ class SystemColorsPanel extends StatefulWidget {
     required this.connection,
     required this.onApply,
     required this.onRefresh,
+    this.onRefreshContrast,
+    this.onSetContrast,
     this.onSelectionFeedback = RodinHaptics.segment,
     this.isNativeBusy,
     this.selection,
     this.previewBuilder,
+    this.enableLibrary = true,
     super.key,
   });
 
@@ -128,11 +140,14 @@ class SystemColorsPanel extends StatefulWidget {
   bool get backendOnline => connection == RodinConnectionState.online;
   final bool Function(bool wallpaper, int seed, int style) onApply;
   final bool Function() onRefresh;
+  final bool Function()? onRefreshContrast;
+  final bool Function(int level)? onSetContrast;
   final VoidCallback onSelectionFeedback;
   final bool Function()? isNativeBusy;
   final RodinSystemColorsSelection? selection;
   final Widget Function(int seed, int style, bool dark, bool scrubbing)?
   previewBuilder;
+  final bool enableLibrary;
 
   @override
   State<SystemColorsPanel> createState() => _SystemColorsPanelState();
@@ -158,11 +173,20 @@ class _SystemColorsPanelState extends State<SystemColorsPanel> {
   int _hapticStep = -1;
   final Stopwatch _hapticClock = Stopwatch()..start();
   int _lastHapticMs = -100;
+  final RodinSystemColorsLibrary _library = RodinSystemColorsLibrary();
+  bool _libraryLoaded = false;
+  Future<void>? _libraryLoading;
 
   @override
   void initState() {
     super.initState();
     _syncDraft();
+    if (widget.enableLibrary) unawaited(_loadLibrary());
+  }
+
+  Future<void> _loadLibrary() async {
+    await (_libraryLoading ??= _library.load());
+    if (mounted) setState(() => _libraryLoaded = true);
   }
 
   @override
@@ -230,6 +254,9 @@ class _SystemColorsPanelState extends State<SystemColorsPanel> {
             'Wallpaper following restored. Android resolved the same colors.',
           _ => 'This palette is already selected in Android.',
         };
+        if (widget.enableLibrary && palette.mode == 1 && palette.seed >= 0) {
+          unawaited(_recordConfirmed(palette.seed, palette.style));
+        }
       } else {
         _applyQueued = false;
         _notice = null;
@@ -401,6 +428,136 @@ class _SystemColorsPanelState extends State<SystemColorsPanel> {
       _fineTuneBase = rgb;
       _hsl = HSLColor.fromColor(_paletteColor(rgb));
     });
+  }
+
+  void _choosePalette(int seed, int style) {
+    _select(() {
+      _wallpaper = false;
+      _seed = seed;
+      _style = style;
+      _fineTuneBase = seed;
+      _hsl = HSLColor.fromColor(_paletteColor(seed));
+    });
+  }
+
+  Future<void> _recordConfirmed(int seed, int style) async {
+    await _loadLibrary();
+    await _library.record(seed, style);
+    if (mounted) setState(() => _libraryLoaded = true);
+  }
+
+  Future<void> _enterHexColor() async {
+    final TextEditingController controller = TextEditingController(
+      text: _paletteHex(_seed).substring(1),
+    );
+    String? error;
+    final int? value = await showDialog<int>(
+      context: context,
+      builder: (BuildContext dialogContext) => StatefulBuilder(
+        builder: (BuildContext context, StateSetter setDialogState) =>
+            AlertDialog(
+              title: const Text('Enter seed color'),
+              content: TextField(
+                key: const ValueKey<String>('palette-hex-field'),
+                controller: controller,
+                autofocus: true,
+                maxLength: 7,
+                textCapitalization: TextCapitalization.characters,
+                decoration: InputDecoration(
+                  prefixText: '#',
+                  labelText: 'HEX color',
+                  hintText: '008577',
+                  errorText: error,
+                ),
+                onSubmitted: (_) {
+                  final String raw = controller.text.trim().replaceFirst(
+                    '#',
+                    '',
+                  );
+                  final int? parsed = raw.length == 6
+                      ? int.tryParse(raw, radix: 16)
+                      : null;
+                  if (parsed == null) {
+                    setDialogState(
+                      () => error = 'Enter exactly six HEX digits.',
+                    );
+                  } else {
+                    Navigator.pop(dialogContext, parsed);
+                  }
+                },
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final String raw = controller.text.trim().replaceFirst(
+                      '#',
+                      '',
+                    );
+                    final int? parsed = raw.length == 6
+                        ? int.tryParse(raw, radix: 16)
+                        : null;
+                    if (parsed == null) {
+                      setDialogState(
+                        () => error = 'Enter exactly six HEX digits.',
+                      );
+                    } else {
+                      Navigator.pop(dialogContext, parsed);
+                    }
+                  },
+                  child: const Text('Use color'),
+                ),
+              ],
+            ),
+      ),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
+    if (value != null && mounted) _chooseSeed(value);
+  }
+
+  Future<void> _savePalette() async {
+    final TextEditingController controller = TextEditingController();
+    final String? name = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('Save palette'),
+        content: TextField(
+          key: const ValueKey<String>('palette-name-field'),
+          controller: controller,
+          autofocus: true,
+          maxLength: 32,
+          decoration: const InputDecoration(
+            labelText: 'Palette name',
+            hintText: 'My favorite',
+          ),
+          onSubmitted: (String value) {
+            if (value.trim().isNotEmpty)
+              Navigator.pop(dialogContext, value.trim());
+          },
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (controller.text.trim().isNotEmpty) {
+                Navigator.pop(dialogContext, controller.text.trim());
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
+    if (name == null || !mounted) return;
+    await _library.save(name, _seed, _style);
+    if (mounted) setState(() => _libraryLoaded = true);
   }
 
   @override
@@ -590,6 +747,83 @@ class _SystemColorsPanelState extends State<SystemColorsPanel> {
                           );
                         },
                   ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: <Widget>[
+                      OutlinedButton.icon(
+                        key: const ValueKey<String>('palette-enter-hex'),
+                        onPressed: _enterHexColor,
+                        icon: const Icon(Icons.tag_rounded, size: 18),
+                        label: const Text('Enter HEX'),
+                      ),
+                      OutlinedButton.icon(
+                        key: const ValueKey<String>('palette-save'),
+                        onPressed: _libraryLoaded ? _savePalette : null,
+                        icon: const Icon(Icons.bookmark_add_outlined, size: 18),
+                        label: const Text('Save palette'),
+                      ),
+                    ],
+                  ),
+                  if (_libraryLoaded &&
+                      _library.recents.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Recent colors',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: <Widget>[
+                        for (final (int seed, int style) in _library.recents)
+                          ActionChip(
+                            avatar: CircleAvatar(
+                              backgroundColor: _paletteColor(seed),
+                            ),
+                            label: Text(_paletteHex(seed)),
+                            onPressed: () => _choosePalette(seed, style),
+                          ),
+                      ],
+                    ),
+                  ],
+                  if (_libraryLoaded && _library.saved.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Saved palettes',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: <Widget>[
+                        for (final RodinSavedPalette item in _library.saved)
+                          InputChip(
+                            avatar: CircleAvatar(
+                              backgroundColor: _paletteColor(item.seed),
+                            ),
+                            label: Text(item.name),
+                            tooltip:
+                                '${_paletteHex(item.seed)} · ${_paletteStyleNames[item.style]}',
+                            onPressed: () =>
+                                _choosePalette(item.seed, item.style),
+                            onDeleted: () async {
+                              await _library.remove(item);
+                              if (mounted) setState(() {});
+                            },
+                          ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Divider(color: colors.outlineVariant.withValues(alpha: 0.5)),
                   const SizedBox(height: 6),
@@ -788,6 +1022,7 @@ class _SystemColorsPanelState extends State<SystemColorsPanel> {
                           : () {
                               setState(() => _notice = null);
                               widget.onRefresh();
+                              widget.onRefreshContrast?.call();
                             },
                       icon: const Icon(Icons.refresh_rounded, size: 20),
                     ),
@@ -864,6 +1099,111 @@ class _SystemColorsPanelState extends State<SystemColorsPanel> {
             ),
           ),
           const SizedBox(height: 14),
+          if (palette.contrastSupported || palette.contrastBusy) ...<Widget>[
+            SurfaceCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            const Text(
+                              'Material contrast',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              'Adjusts Android’s native color roles, not display contrast.',
+                              style: description,
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (palette.contrastBusy)
+                        const SizedBox(
+                          width: 17,
+                          height: 17,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: <Widget>[
+                      for (final (String label, int value)
+                          in const <(String, int)>[
+                            ('Low', -1000),
+                            ('Standard', 0),
+                            ('High', 1000),
+                          ])
+                        ChoiceChip(
+                          key: ValueKey<String>('palette-contrast-$label'),
+                          label: Text(label),
+                          selected:
+                              palette.contrastReady &&
+                              palette.contrast == value,
+                          onSelected:
+                              !widget.backendOnline ||
+                                  palette.contrastBusy ||
+                                  !palette.contrastSupported
+                              ? null
+                              : (_) {
+                                  widget.onSelectionFeedback();
+                                  widget.onSetContrast?.call(value);
+                                },
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                    ],
+                  ),
+                  if (palette.hasNativeRoles) ...<Widget>[
+                    const SizedBox(height: 14),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: _MaterialRolePreview(
+                            label: 'Light',
+                            background: _paletteColor(palette.lightContainer),
+                            foreground: _paletteColor(palette.lightOnContainer),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _MaterialRolePreview(
+                            label: 'Dark',
+                            background: _paletteColor(palette.darkContainer),
+                            foreground: _paletteColor(palette.darkOnContainer),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Container and text roles read directly from Android.',
+                      style: description.copyWith(fontSize: 11),
+                    ),
+                  ],
+                  if (palette.contrastFailed) ...<Widget>[
+                    const SizedBox(height: 10),
+                    Text(
+                      'This ROM did not verify the requested native contrast. Its previous value was restored.',
+                      style: description.copyWith(color: colors.error),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+          ],
           Text(
             'Android saves your choice across restarts. No background reapply '
             'loop is used. OEM surfaces, apps and keyboards with fixed themes '
@@ -1194,6 +1534,36 @@ class _PaletteSourceTile extends StatelessWidget {
   }
 }
 
+class _MaterialRolePreview extends StatelessWidget {
+  const _MaterialRolePreview({
+    required this.label,
+    required this.background,
+    required this.foreground,
+  });
+
+  final String label;
+  final Color background;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    height: 62,
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      color: background,
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: Text(
+      label,
+      style: TextStyle(
+        color: foreground,
+        fontSize: 13,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+  );
+}
+
 class _PaletteNotice extends StatelessWidget {
   const _PaletteNotice({required this.icon, required this.text});
   final IconData icon;
@@ -1241,11 +1611,12 @@ class _SystemPalettePreviewPane extends StatefulWidget {
 
 class _SystemPalettePreviewPaneState extends State<_SystemPalettePreviewPane> {
   final RodinPalettePreviewWorker _worker = RodinPalettePreviewWorker();
-  final Map<RodinPaletteKey, ColorScheme> _cache =
-      <RodinPaletteKey, ColorScheme>{};
+  final Map<RodinPaletteKey, (ColorScheme, List<List<int>>)> _cache =
+      <RodinPaletteKey, (ColorScheme, List<List<int>>)>{};
   late RodinPaletteKey _wanted;
   RodinPaletteKey? _shown;
   ColorScheme? _scheme;
+  List<List<int>>? _tones;
   bool _running = false;
   bool _failed = false;
 
@@ -1264,10 +1635,11 @@ class _SystemPalettePreviewPaneState extends State<_SystemPalettePreviewPane> {
   void _request() {
     _wanted = (widget.seed, widget.style, widget.dark);
     if (_shown == _wanted) return;
-    final ColorScheme? cached = _cache.remove(_wanted);
+    final (ColorScheme, List<List<int>>)? cached = _cache.remove(_wanted);
     if (cached != null) {
       _cache[_wanted] = cached;
-      _scheme = cached;
+      _scheme = cached.$1;
+      _tones = cached.$2;
       _shown = _wanted;
       _failed = false;
       return;
@@ -1285,12 +1657,14 @@ class _SystemPalettePreviewPaneState extends State<_SystemPalettePreviewPane> {
         final List<int> colors = await _worker.generate(key);
         if (!mounted) return;
         final ColorScheme scheme = rodinPreviewScheme(colors, key.$3);
+        final List<List<int>> tones = rodinPreviewTonalFamilies(colors);
         if (_cache.length >= 24) _cache.remove(_cache.keys.first);
-        _cache[key] = scheme;
+        _cache[key] = (scheme, tones);
         if (key == _wanted) {
           setState(() {
             _shown = key;
             _scheme = scheme;
+            _tones = tones;
             _failed = false;
           });
         }
@@ -1321,10 +1695,173 @@ class _SystemPalettePreviewPaneState extends State<_SystemPalettePreviewPane> {
             scheme: _scheme ?? Theme.of(context).colorScheme,
             animate: !widget.scrubbing,
           ),
+          const SizedBox(height: 10),
+          _PaletteLab(families: _tones),
           if (_failed)
             const Text(
               'Preview unavailable. System color controls still work.',
             ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PaletteLab extends StatefulWidget {
+  const _PaletteLab({required this.families});
+  final List<List<int>>? families;
+
+  @override
+  State<_PaletteLab> createState() => _PaletteLabState();
+}
+
+class _PaletteLabState extends State<_PaletteLab> {
+  bool _expanded = false;
+
+  static const List<int> _toneLabels = <int>[
+    0,
+    10,
+    20,
+    30,
+    40,
+    50,
+    60,
+    70,
+    80,
+    90,
+    95,
+    99,
+    100,
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    const List<String> names = <String>[
+      'Primary',
+      'Secondary',
+      'Tertiary',
+      'Neutral',
+      'Neutral variant',
+    ];
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerLow.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: colors.outlineVariant.withValues(alpha: 0.65),
+        ),
+      ),
+      child: Column(
+        children: <Widget>[
+          InkWell(
+            key: const ValueKey<String>('palette-lab-toggle'),
+            borderRadius: BorderRadius.circular(18),
+            onTap: widget.families == null
+                ? null
+                : () {
+                    RodinHaptics.segment();
+                    setState(() => _expanded = !_expanded);
+                  },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                children: <Widget>[
+                  Icon(Icons.gradient_rounded, size: 19, color: colors.primary),
+                  const SizedBox(width: 9),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          'Palette Lab',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          'Explore all 65 generated tones',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns: _expanded ? 0.5 : 0,
+                    duration: RodinInteractionSettings.motionDuration(180),
+                    child: const Icon(Icons.keyboard_arrow_down_rounded),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedSize(
+            duration: RodinInteractionSettings.motionDuration(220),
+            curve: Curves.easeOutCubic,
+            child: !_expanded || widget.families == null
+                ? const SizedBox.shrink()
+                : Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        for (
+                          int family = 0;
+                          family < names.length;
+                          family++
+                        ) ...<Widget>[
+                          if (family > 0) const SizedBox(height: 10),
+                          Text(
+                            names[family],
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: colors.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Row(
+                            children: <Widget>[
+                              for (int tone = 0; tone < 13; tone++)
+                                Expanded(
+                                  child: Semantics(
+                                    label:
+                                        '${names[family]} ${_toneLabels[tone]} ${_paletteHex(widget.families![family][tone] & 0xffffff)}',
+                                    child: Container(
+                                      height: 24,
+                                      decoration: BoxDecoration(
+                                        color: Color(
+                                          widget.families![family][tone],
+                                        ),
+                                        borderRadius: BorderRadius.horizontal(
+                                          left: tone == 0
+                                              ? const Radius.circular(8)
+                                              : Radius.zero,
+                                          right: tone == 12
+                                              ? const Radius.circular(8)
+                                              : Radius.zero,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                        const SizedBox(height: 9),
+                        Text(
+                          'Material preview generated locally. Applied colors are verified separately against Android.',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            height: 1.4,
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+          ),
         ],
       ),
     );

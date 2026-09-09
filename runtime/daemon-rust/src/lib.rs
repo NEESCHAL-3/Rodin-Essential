@@ -5243,6 +5243,18 @@ pub fn handle_command(line: &str) -> String {
             Err(error) => format!("ERR {error}"),
         };
     }
+    if cmd == "GET system.colors.contrast" {
+        return match system_colors::read_contrast() {
+            Ok(state) => format!("OK {state}"),
+            Err(error) => format!("ERR {error}"),
+        };
+    }
+    if let Some(args) = cmd.strip_prefix("SET system.colors.contrast ") {
+        return match system_colors::apply_contrast(args) {
+            Ok(state) => format!("OK {state}"),
+            Err(error) => format!("ERR {error}"),
+        };
+    }
     if let Some(args) = cmd.strip_prefix("SET system.colors ") {
         return match system_colors::apply_custom(args) {
             Ok(state) => format!("OK {state}"),

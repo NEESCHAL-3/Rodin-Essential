@@ -14,6 +14,10 @@ RodinSystemColorsState nativePalette({
   int outcome = 0,
   int revision = 1,
   int error = 0,
+  bool contrastSupported = false,
+  int contrastOperationState = 0,
+  int contrast = 0,
+  int contrastRevision = 0,
 }) => RodinSystemColorsState(
   operationState: operationState,
   supported: supported,
@@ -30,6 +34,14 @@ RodinSystemColorsState nativePalette({
   outcome: outcome,
   error: error,
   revision: revision,
+  contrastOperationState: contrastOperationState,
+  contrastSupported: contrastSupported,
+  contrast: contrast,
+  lightContainer: contrastSupported ? 0xffd9e3 : -1,
+  lightOnContainer: contrastSupported ? 0x6f334a : -1,
+  darkContainer: contrastSupported ? 0x6f334a : -1,
+  darkOnContainer: contrastSupported ? 0xffd9e3 : -1,
+  contrastRevision: contrastRevision,
 );
 
 Future<void> showPanel(
@@ -42,6 +54,8 @@ Future<void> showPanel(
   Brightness brightness = Brightness.light,
   bool Function(bool, int, int)? onApply,
   bool Function()? onRefresh,
+  bool Function()? onRefreshContrast,
+  bool Function(int)? onSetContrast,
   VoidCallback? onSelectionFeedback,
   bool Function()? isNativeBusy,
   RodinSystemColorsSelection? selection,
@@ -70,11 +84,14 @@ Future<void> showPanel(
                       : RodinConnectionState.offline),
               onApply: onApply ?? (_, _, _) => false,
               onRefresh: onRefresh ?? () => true,
+              onRefreshContrast: onRefreshContrast ?? () => true,
+              onSetContrast: onSetContrast ?? (_) => true,
               onSelectionFeedback: onSelectionFeedback ?? () {},
               isNativeBusy: isNativeBusy,
               selection: selection,
               previewBuilder: (seed, style, dark, scrubbing) =>
                   const SizedBox(height: 225),
+              enableLibrary: false,
             ),
           ),
         ),
@@ -114,6 +131,15 @@ void main() {
             93: 0,
             94: 9,
             95: 1,
+            96: 2,
+            97: 1,
+            98: 1000,
+            99: 0x112233,
+            100: 0x445566,
+            101: 0x778899,
+            102: 0xaabbcc,
+            103: 0,
+            104: 4,
           }[index] ??
           -1,
     );
@@ -123,6 +149,73 @@ void main() {
     expect(decoded.seed, 0x008577);
     expect(decoded.user, 10);
     expect(decoded.revision, 9);
+    expect(decoded.contrastSupported, isTrue);
+    expect(decoded.contrast, 1000);
+    expect(decoded.nativeRoleColors, <int>[
+      0x112233,
+      0x445566,
+      0x778899,
+      0xaabbcc,
+    ]);
+    expect(decoded.hasNativeRoles, isTrue);
+  });
+
+  testWidgets('native contrast appears only after capability readback', (
+    WidgetTester tester,
+  ) async {
+    final List<int> writes = <int>[];
+    await showPanel(tester);
+    expect(find.text('Material contrast'), findsNothing);
+    await showPanel(
+      tester,
+      palette: nativePalette(
+        contrastSupported: true,
+        contrastOperationState: 2,
+        contrast: 0,
+        contrastRevision: 1,
+      ),
+      onSetContrast: (int value) {
+        writes.add(value);
+        return true;
+      },
+    );
+    expect(find.text('Material contrast'), findsOneWidget);
+    expect(
+      find.text('Container and text roles read directly from Android.'),
+      findsOneWidget,
+    );
+    final Finder high = find.byKey(
+      const ValueKey<String>('palette-contrast-High'),
+    );
+    await tester.ensureVisible(high);
+    await tester.tap(high);
+    expect(writes, <int>[1000]);
+  });
+
+  testWidgets('exact HEX entry applies a validated six-digit seed', (
+    WidgetTester tester,
+  ) async {
+    final List<int> writes = <int>[];
+    await showPanel(
+      tester,
+      palette: nativePalette(mode: 1, seed: 0x008577),
+      onApply: (bool wallpaper, int seed, int style) {
+        writes.add(seed);
+        return true;
+      },
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey<String>('palette-enter-hex')),
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('palette-enter-hex')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('palette-hex-field')),
+      '12ABEF',
+    );
+    await tester.tap(find.text('Use color'));
+    await tester.pump();
+    expect(writes, <int>[0x12abef]);
   });
 
   testWidgets('choices apply on tap and rapid edits coalesce to the latest', (
@@ -236,7 +329,10 @@ void main() {
       palette: nativePalette(supported: false),
       onApply: record,
     );
-    expect(find.textContaining('does not expose Android’s native'), findsOneWidget);
+    expect(
+      find.textContaining('does not expose Android’s native'),
+      findsOneWidget,
+    );
     await tapText(tester, 'Vibrant');
     expect(writes, isEmpty);
   });
@@ -445,21 +541,22 @@ void main() {
     },
   );
 
-  testWidgets('unchanged wallpaper output is described without a false change', (
-    WidgetTester tester,
-  ) async {
-    await showPanel(tester, onApply: (_, _, _) => true);
-    await tapText(tester, 'Custom color');
-    await showPanel(
-      tester,
-      palette: nativePalette(mode: 0, outcome: 2, revision: 2),
-    );
-    expect(
-      find.textContaining('Wallpaper following restored'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('System colors updated'), findsNothing);
-  });
+  testWidgets(
+    'unchanged wallpaper output is described without a false change',
+    (WidgetTester tester) async {
+      await showPanel(tester, onApply: (_, _, _) => true);
+      await tapText(tester, 'Custom color');
+      await showPanel(
+        tester,
+        palette: nativePalette(mode: 0, outcome: 2, revision: 2),
+      );
+      expect(
+        find.textContaining('Wallpaper following restored'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('System colors updated'), findsNothing);
+    },
+  );
 
   testWidgets('reconnecting does not silently apply an offline preview', (
     WidgetTester tester,

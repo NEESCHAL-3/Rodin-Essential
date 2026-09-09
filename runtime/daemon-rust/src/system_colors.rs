@@ -11,6 +11,7 @@ const ACCENT: &str = "android.theme.customization.accent_color";
 const SOURCE: &str = "android.theme.customization.color_source";
 const STYLE: &str = "android.theme.customization.theme_style";
 const TIMESTAMP: &str = "_applied_timestamp";
+const CONTRAST: &str = "contrast_level";
 const COLOR_KEYS: [&str; 8] = [
     PALETTE,
     ACCENT,
@@ -37,6 +38,12 @@ const RESOURCES: [&str; 5] = [
     "android:color/system_neutral1_500",
     "android:color/system_neutral2_500",
 ];
+const CONTRAST_RESOURCES: [&str; 4] = [
+    "android:color/system_primary_container_light",
+    "android:color/system_on_primary_container_light",
+    "android:color/system_primary_container_dark",
+    "android:color/system_on_primary_container_dark",
+];
 static TRANSACTION: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy, Debug)]
@@ -62,6 +69,27 @@ struct PaletteState {
     // 0: read/already selected; 1: resources changed;
     // 2: wallpaper following restored with the same resolved colors.
     outcome: i32,
+}
+
+#[derive(Debug)]
+struct ContrastState {
+    supported: bool,
+    level: i32,
+    colors: [u32; 4],
+}
+
+impl ContrastState {
+    fn encode(&self) -> String {
+        format!(
+            "supported={};level={};light_container={};light_on_container={};dark_container={};dark_on_container={}",
+            i32::from(self.supported),
+            self.level,
+            self.colors[0],
+            self.colors[1],
+            self.colors[2],
+            self.colors[3],
+        )
+    }
 }
 
 impl PaletteState {
@@ -206,6 +234,161 @@ fn read_color_families(
         }
         Ok(result)
     })
+}
+
+fn read_resources<const N: usize>(
+    resources: [&str; N],
+    read: impl Fn(&str) -> Result<u32, String> + Sync,
+) -> Result<[u32; N], String> {
+    std::thread::scope(|scope| {
+        let mut workers = Vec::with_capacity(N);
+        for resource in resources {
+            let read = &read;
+            workers.push(
+                std::thread::Builder::new()
+                    .name("palette-role-read".into())
+                    .spawn_scoped(scope, move || read(resource))
+                    .map_err(|_| "palette_service_unavailable: cannot start role read")?,
+            );
+        }
+        let mut result = [0; N];
+        for (index, worker) in workers.into_iter().enumerate() {
+            result[index] = worker
+                .join()
+                .map_err(|_| "palette_service_unavailable: role read failed")??;
+        }
+        Ok(result)
+    })
+}
+
+fn read_contrast_raw(environment: Environment) -> Result<Option<String>, String> {
+    let value = command(&[
+        "settings",
+        "--user",
+        &environment.user.to_string(),
+        "get",
+        "secure",
+        CONTRAST,
+    ])?;
+    Ok((value != "null").then_some(value))
+}
+
+fn parse_contrast(raw: Option<&str>) -> Result<i32, String> {
+    let value = match raw {
+        None => 0.0,
+        Some(raw) => raw
+            .parse::<f64>()
+            .map_err(|_| "palette_invalid_settings: invalid contrast level")?,
+    };
+    if !value.is_finite() || !(-1.0..=1.0).contains(&value) {
+        return Err("palette_invalid_settings: contrast level is outside Android's range".into());
+    }
+    Ok((value * 1000.0).round() as i32)
+}
+
+fn read_contrast_roles(environment: Environment) -> Result<[u32; 4], String> {
+    let user = environment.user.to_string();
+    read_resources(CONTRAST_RESOURCES, |resource| {
+        let raw = command(&["overlay", "lookup", "--user", &user, "android", resource])
+            .map_err(|_| "palette_unsupported: native contrast resources are unavailable")?;
+        parse_lookup_rgb(&raw)
+            .ok_or_else(|| "palette_unsupported: native contrast resources are unavailable".into())
+    })
+}
+
+fn describe_contrast(environment: Environment) -> Result<ContrastState, String> {
+    if environment.sdk < 34 {
+        return Ok(ContrastState {
+            supported: false,
+            level: 0,
+            colors: [0; 4],
+        });
+    }
+    let level = parse_contrast(read_contrast_raw(environment)?.as_deref())?;
+    match read_contrast_roles(environment) {
+        Ok(colors) => Ok(ContrastState {
+            supported: true,
+            level,
+            colors,
+        }),
+        Err(error) if error.contains("palette_unsupported") => Ok(ContrastState {
+            supported: false,
+            level,
+            colors: [0; 4],
+        }),
+        Err(error) => Err(error),
+    }
+}
+
+fn write_contrast(environment: Environment, level: i32) -> Result<(), String> {
+    command(&[
+        "settings",
+        "--user",
+        &environment.user.to_string(),
+        "put",
+        "secure",
+        CONTRAST,
+        &format!("{:.3}", level as f64 / 1000.0),
+    ])
+    .map(|_| ())
+}
+
+fn restore_contrast(environment: Environment, original: Option<&str>) -> Result<(), String> {
+    let user = environment.user.to_string();
+    match original {
+        Some(value) => command(&[
+            "settings", "--user", &user, "put", "secure", CONTRAST, value,
+        ]),
+        None => command(&["settings", "--user", &user, "delete", "secure", CONTRAST]),
+    }
+    .map(|_| ())
+}
+
+fn apply_contrast_to(environment: Environment, level: i32) -> Result<ContrastState, String> {
+    if environment.sdk < 34 {
+        return Err("palette_unsupported: native contrast requires Android 14 or newer".into());
+    }
+    if !(-1000..=1000).contains(&level) {
+        return Err("palette_invalid_choice: contrast must be between -1000 and 1000".into());
+    }
+    let original = read_contrast_raw(environment)?;
+    let before_level = parse_contrast(original.as_deref())?;
+    let before = read_contrast_roles(environment)?;
+    if before_level == level {
+        return Ok(ContrastState {
+            supported: true,
+            level,
+            colors: before,
+        });
+    }
+    write_contrast(environment, level)?;
+    let result = (|| {
+        if parse_contrast(read_contrast_raw(environment)?.as_deref())? != level {
+            return Err("palette_readback: Android did not retain the contrast level".into());
+        }
+        let mut previous = None;
+        for wait in [80, 120, 180, 260, 360, 500] {
+            std::thread::sleep(Duration::from_millis(wait));
+            let actual = read_contrast_roles(environment)?;
+            if previous == Some(actual) && actual != before {
+                return Ok(ContrastState {
+                    supported: true,
+                    level,
+                    colors: actual,
+                });
+            }
+            previous = Some(actual);
+        }
+        Err(
+            "palette_readback: this ROM retained contrast but did not regenerate native roles"
+                .into(),
+        )
+    })();
+    if result.is_err() {
+        restore_contrast(environment, original.as_deref())
+            .map_err(|_| "palette_restore_failed: contrast could not be restored")?;
+    }
+    result
 }
 
 fn parse_rgb(raw: &str) -> Option<u32> {
@@ -520,8 +703,44 @@ pub(super) fn apply_custom(args: &str) -> Result<String, String> {
     .map(|state| state.encode())
 }
 
+pub(super) fn read_contrast() -> Result<String, String> {
+    let _guard = TRANSACTION
+        .try_lock()
+        .map_err(|_| "palette_busy: a palette operation is in progress")?;
+    describe_contrast(AndroidPaletteIo::open()?.environment).map(|state| state.encode())
+}
+
+pub(super) fn apply_contrast(args: &str) -> Result<String, String> {
+    let level = args
+        .trim()
+        .parse::<i32>()
+        .map_err(|_| "palette_invalid_choice: invalid contrast level")?;
+    if !(-1000..=1000).contains(&level) {
+        return Err("palette_invalid_choice: contrast must be between -1000 and 1000".into());
+    }
+    let _guard = TRANSACTION
+        .try_lock()
+        .map_err(|_| "palette_busy: a palette operation is in progress")?;
+    apply_contrast_to(AndroidPaletteIo::open()?.environment, level).map(|state| state.encode())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn contrast_settings_use_androids_scaled_range() {
+        assert_eq!(super::parse_contrast(None).unwrap(), 0);
+        assert_eq!(super::parse_contrast(Some("-1")).unwrap(), -1000);
+        assert_eq!(super::parse_contrast(Some("0.375")).unwrap(), 375);
+        assert_eq!(super::parse_contrast(Some("1.0")).unwrap(), 1000);
+    }
+
+    #[test]
+    fn invalid_contrast_settings_are_rejected() {
+        for value in ["-1.001", "1.001", "NaN", "inf", "garbage"] {
+            assert!(super::parse_contrast(Some(value)).is_err(), "{value}");
+        }
+    }
+
     #[test]
     fn color_families_are_read_concurrently_in_resource_order() {
         let threads = std::sync::Mutex::new(std::collections::HashSet::new());

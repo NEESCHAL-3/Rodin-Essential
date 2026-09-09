@@ -20,6 +20,14 @@ The APK remains zero-DEX and runs with its ordinary application UID.
 4. Check **Android's current colors** for native resource readback. Its five
    swatches represent the accent and neutral families at tone 500. They are
    not the generated preview.
+5. Use **Enter HEX** for an exact six-digit RGB seed. Confirmed custom choices
+   appear under **Recent colors** and can be given a local name under
+   **Saved palettes**. These shortcuts store only the seed and style in the
+   app's private files; selecting one still uses the normal verified Android
+   transaction.
+6. Expand **Palette Lab** to inspect all thirteen tones in each of Android's
+   five generated families. This is a local preview and is never presented as
+   native readback.
 
 Selections update immediately and submit without waiting for another frame
 or tap. A choice made during initial discovery or a refresh is retained until
@@ -69,6 +77,14 @@ Soft maps to `SPRITZ`; Monochrome maps to `MONOCHROMATIC`. Android 17's
 [theme compatibility requirements](https://source.android.com/docs/compatibility/17/android-17-cdd#3_8_6_themes)
 retain the same palette-setting mechanism and seven styles. This is a platform
 contract, not a claim that every Android 17 OEM build has been device-tested.
+
+On Android 14 and newer, Rodin also exposes Android's native Material contrast
+levels when the framework contrast resources are present. **Low**, **Standard**
+and **High** map to the platform `contrast_level` range -1.0, 0.0 and 1.0. This
+changes Material role contrast, not the physical panel's contrast. The control
+is hidden on unsupported builds. A successful change requires both setting
+readback and stable regeneration of light and dark container/text roles; a
+failed change restores the preceding value.
 
 Rodin does not identify support from overlay package or fabricated-overlay
 names. Those identifiers are private to each SystemUI implementation and differ
@@ -145,11 +161,14 @@ development client, are:
 GET system.colors
 SET system.colors <24-bit RGB integer> <style index 0..6>
 SET system.colors.wallpaper
+GET system.colors.contrast
+SET system.colors.contrast <-1000|0|1000>
 ```
 
-The native host uses extended operations 24–26 and cache fields 81–95. Palette
-results are separate from hardware acknowledgements and persistence. Android
-commands run off the UI thread with bounded subprocess timeouts.
+The native host uses extended operations 24–28 and cache fields 81–104. Palette
+and contrast results have independent operation state, error and revision
+fields. They remain separate from hardware acknowledgements and persistence.
+Android commands run off the UI thread with bounded subprocess timeouts.
 
 ## Validation
 
@@ -177,7 +196,8 @@ offline/connecting handling, tap-to-apply, settled slider writes, coalesced
 selections, HSL endpoints, reset after native readback, complete seed hit targets,
 scroll cancellation, pointer-down deferral, completed-edit disposal, bounded
 completion observation, concurrent resource reads, background preview parity,
-and responsive light/dark layouts.
+all 65 preview tones, native contrast protocol/capability mapping, and responsive
+light/dark layouts.
 Native activity configuration
 handles overlay asset changes without returning the user to Home. The native
 client connects in parallel with startup; an unchecked connection is displayed

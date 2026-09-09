@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:isolate';
 
 import 'package:flutter/material.dart';
+import 'package:material_color_utilities/material_color_utilities.dart';
 
 typedef RodinPaletteKey = (int seed, int style, bool dark);
 
@@ -24,7 +25,7 @@ List<int> _generatePalette(RodinPaletteKey key) {
     brightness: dark ? Brightness.dark : Brightness.light,
     dynamicSchemeVariant: _variants[style],
   );
-  return <Color>[
+  final List<int> result = <Color>[
     scheme.surfaceContainerLow,
     scheme.outlineVariant,
     scheme.onSurface,
@@ -37,11 +38,48 @@ List<int> _generatePalette(RodinPaletteKey key) {
     scheme.surfaceContainerHighest,
     scheme.secondaryContainer,
     scheme.onSecondaryContainer,
-  ].map((Color color) => color.toARGB32()).toList(growable: false);
+  ].map((Color color) => color.toARGB32()).toList();
+  final Hct source = Hct.fromInt(0xff000000 | seed);
+  final DynamicScheme dynamic = switch (style) {
+    0 => SchemeTonalSpot(
+      sourceColorHct: source,
+      isDark: dark,
+      contrastLevel: 0,
+    ),
+    1 => SchemeVibrant(sourceColorHct: source, isDark: dark, contrastLevel: 0),
+    2 => SchemeExpressive(
+      sourceColorHct: source,
+      isDark: dark,
+      contrastLevel: 0,
+    ),
+    3 => SchemeNeutral(sourceColorHct: source, isDark: dark, contrastLevel: 0),
+    4 => SchemeRainbow(sourceColorHct: source, isDark: dark, contrastLevel: 0),
+    5 => SchemeFruitSalad(
+      sourceColorHct: source,
+      isDark: dark,
+      contrastLevel: 0,
+    ),
+    6 => SchemeMonochrome(
+      sourceColorHct: source,
+      isDark: dark,
+      contrastLevel: 0,
+    ),
+    _ => throw RangeError.range(style, 0, 6, 'style'),
+  };
+  for (final TonalPalette family in <TonalPalette>[
+    dynamic.primaryPalette,
+    dynamic.secondaryPalette,
+    dynamic.tertiaryPalette,
+    dynamic.neutralPalette,
+    dynamic.neutralVariantPalette,
+  ]) {
+    result.addAll(family.asList);
+  }
+  return List<int>.unmodifiable(result);
 }
 
 ColorScheme rodinPreviewScheme(List<int> colors, bool dark) {
-  if (colors.length != 12) throw const FormatException('Invalid preview');
+  if (colors.length < 12) throw const FormatException('Invalid preview');
   return (dark ? const ColorScheme.dark() : const ColorScheme.light()).copyWith(
     surfaceContainerLow: Color(colors[0]),
     outlineVariant: Color(colors[1]),
@@ -55,6 +93,17 @@ ColorScheme rodinPreviewScheme(List<int> colors, bool dark) {
     surfaceContainerHighest: Color(colors[9]),
     secondaryContainer: Color(colors[10]),
     onSecondaryContainer: Color(colors[11]),
+  );
+}
+
+List<List<int>> rodinPreviewTonalFamilies(List<int> colors) {
+  if (colors.length != 77) throw const FormatException('Invalid tonal palette');
+  return List<List<int>>.generate(
+    5,
+    (int family) => List<int>.unmodifiable(
+      colors.sublist(12 + family * 13, 12 + (family + 1) * 13),
+    ),
+    growable: false,
   );
 }
 

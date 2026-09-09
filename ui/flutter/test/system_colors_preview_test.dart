@@ -20,6 +20,14 @@ void main() {
     for (final bool dark in <bool>[false, true]) {
       for (int style = 0; style < variants.length; style++) {
         final List<int> colors = await worker.generate((0x7655ca, style, dark));
+        final List<List<int>> families = rodinPreviewTonalFamilies(colors);
+        expect(colors, hasLength(77));
+        expect(families, hasLength(5));
+        for (final List<int> family in families) {
+          expect(family, hasLength(13));
+          expect(family.first, 0xff000000);
+          expect(family.last, 0xffffffff);
+        }
         final ColorScheme preview = rodinPreviewScheme(colors, dark);
         final ColorScheme expected = ColorScheme.fromSeed(
           seedColor: const Color(0xff7655ca),
@@ -64,6 +72,6 @@ void main() {
     final RodinPalettePreviewWorker worker = RodinPalettePreviewWorker();
     addTearDown(worker.dispose);
     await expectLater(worker.generate((0, 20, false)), throwsStateError);
-    expect(await worker.generate((0x008577, 0, false)), hasLength(12));
+    expect(await worker.generate((0x008577, 0, false)), hasLength(77));
   });
 }

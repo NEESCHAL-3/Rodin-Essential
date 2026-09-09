@@ -113,6 +113,7 @@ final class RodinBackend {
   ffi.DynamicLibrary? _lib;
   Timer? _timer;
   RodinSystemColorsMonitor? _paletteMonitor;
+  RodinSystemColorsMonitor? _contrastMonitor;
   bool _started = false;
 
   final StreamController<RodinBackendSnapshot> _controller =
@@ -595,6 +596,23 @@ final class RodinBackend {
 
   bool refreshSystemColors() => _queueSystemColors(26);
 
+  bool refreshSystemColorContrast() => _queueSystemColorContrast(27);
+
+  bool _queueSystemColorContrast(int operation, [int level = 0]) {
+    if (!_started || _lib == null) return false;
+    if (_backendSetNative(operation, level, 0) != 1) return false;
+    (_contrastMonitor ??= RodinSystemColorsMonitor(
+      readStamp: () => (extendedValue(96), extendedValue(104)),
+      onChanged: () => _controller.add(_latest),
+    )).watch();
+    return true;
+  }
+
+  bool setSystemColorContrast(int level) {
+    if (level < -1000 || level > 1000) return false;
+    return _queueSystemColorContrast(28, level);
+  }
+
   bool useWallpaperSystemColors() => _queueSystemColors(25);
 
   bool setSystemColors(int seed, int style) {
@@ -742,6 +760,7 @@ final class RodinBackend {
 
   void dispose() {
     _paletteMonitor?.dispose();
+    _contrastMonitor?.dispose();
     _timer?.cancel();
     _timer = null;
   }

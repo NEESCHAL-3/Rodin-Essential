@@ -16,7 +16,7 @@ const SOCKET_NAME: &str = "rodin_essentiald_v15";
 const REVERSE_SOCKET_NAME: &str = "rodin_essential_app_v15";
 const LOOPBACK_PORT: u16 = 732;
 const LOOPBACK_PRIVILEGE_PROBE_PORT: u16 = 731;
-const EXTENDED_VALUE_COUNT: usize = 96;
+const EXTENDED_VALUE_COUNT: usize = 105;
 
 #[repr(C)]
 struct SockAddrUn {
@@ -133,7 +133,11 @@ impl Cache {
             dolby: AtomicI32::new(-1),
             performance: AtomicI32::new(-1),
             extended: std::array::from_fn(|index| {
-                AtomicI32::new(if matches!(index, 81 | 94) { 0 } else { -1 })
+                AtomicI32::new(if matches!(index, 81 | 94 | 96 | 104) {
+                    0
+                } else {
+                    -1
+                })
             }),
         }
     }
@@ -1117,6 +1121,42 @@ fn parse_palette_response(body: &str) -> Result<Vec<(usize, i32)>, String> {
     Ok(values)
 }
 
+const CONTRAST_FIELDS: [(&str, usize); 6] = [
+    ("supported", 97),
+    ("level", 98),
+    ("light_container", 99),
+    ("light_on_container", 100),
+    ("dark_container", 101),
+    ("dark_on_container", 102),
+];
+
+fn parse_contrast_response(body: &str) -> Result<Vec<(usize, i32)>, String> {
+    let mut map = std::collections::HashMap::new();
+    for (key, value) in body.split(';').filter_map(|field| field.split_once('=')) {
+        if map.insert(key, value).is_some() {
+            return Err("palette_response_invalid: duplicate contrast field".into());
+        }
+    }
+    let mut values = Vec::with_capacity(CONTRAST_FIELDS.len());
+    for (name, index) in CONTRAST_FIELDS {
+        let value = map
+            .get(name)
+            .and_then(|value| value.parse::<i32>().ok())
+            .ok_or("palette_response_invalid: incomplete native contrast response")?;
+        let valid = match index {
+            97 => matches!(value, 0 | 1),
+            98 => (-1000..=1000).contains(&value),
+            99..=102 => (0..=0x00ff_ffff).contains(&value),
+            _ => false,
+        };
+        if !valid {
+            return Err("palette_response_invalid: invalid native contrast value".into());
+        }
+        values.push((index, value));
+    }
+    Ok(values)
+}
+
 fn palette_error_code(error: &str) -> i32 {
     if error.contains("palette_unsupported") || error.contains("unknown command") {
         1
@@ -1146,16 +1186,31 @@ fn palette_command(op: i32, a: i32, b: i32) -> Result<String, String> {
         }
         25 if a == 0 && b == 0 => Ok("SET system.colors.wallpaper".into()),
         26 if a == 0 && b == 0 => Ok("GET system.colors".into()),
+        27 if a == 0 && b == 0 => Ok("GET system.colors.contrast".into()),
+        28 if (-1000..=1000).contains(&a) && b == 0 => {
+            Ok(format!("SET system.colors.contrast {a}"))
+        }
         _ => Err("palette_invalid_choice".into()),
     }
 }
 
 fn perform_palette(cache: &Cache, op: i32, a: i32, b: i32) {
-    cache.extended[81].store(1, Ordering::Release);
-    cache.extended[93].store(0, Ordering::Release);
+    let (state_index, error_index, revision_index) = if matches!(op, 27 | 28) {
+        (96, 103, 104)
+    } else {
+        (81, 93, 94)
+    };
+    cache.extended[state_index].store(1, Ordering::Release);
+    cache.extended[error_index].store(0, Ordering::Release);
     let result = palette_command(op, a, b)
         .and_then(|command| request(&command))
-        .and_then(|body| parse_palette_response(&body));
+        .and_then(|body| {
+            if matches!(op, 27 | 28) {
+                parse_contrast_response(&body)
+            } else {
+                parse_palette_response(&body)
+            }
+        });
 
     let completed_state = match result {
         Ok(values) => {
@@ -1166,7 +1221,7 @@ fn perform_palette(cache: &Cache, op: i32, a: i32, b: i32) {
             2
         }
         Err(error) => {
-            cache.extended[93].store(palette_error_code(&error), Ordering::Release);
+            cache.extended[error_index].store(palette_error_code(&error), Ordering::Release);
             rodin_action_log(format!(
                 "RODIN_SYSTEM_COLORS_FAIL operation={op} error={error}"
             ));
@@ -1175,8 +1230,8 @@ fn perform_palette(cache: &Cache, op: i32, a: i32, b: i32) {
     };
     // Publish the revision before the terminal state. A client observing
     // completion must also see the new values and revision, not the old stamp.
-    cache.extended[94].fetch_add(1, Ordering::Release);
-    cache.extended[81].store(completed_state, Ordering::Release);
+    cache.extended[revision_index].fetch_add(1, Ordering::Release);
+    cache.extended[state_index].store(completed_state, Ordering::Release);
 }
 
 fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
@@ -1192,7 +1247,7 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
     loop {
         match rx.recv_timeout(Duration::from_millis(500)) {
             Ok(command) => {
-                if let Command::Extended(op @ 24..=26, a, b) = &command {
+                if let Command::Extended(op @ 24..=28, a, b) = &command {
                     perform_palette(&cache, *op, *a, *b);
                     last_idle_refresh = std::time::Instant::now();
                     continue;
@@ -1630,13 +1685,14 @@ pub extern "C" fn rodin_backend_extended_get(index: i32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rodin_backend_extended_set(op: i32, a: i32, b: i32) -> i32 {
-    if (24..=26).contains(&op) {
+    if (24..=28).contains(&op) {
         let Some(rt) = runtime() else {
             return 0;
         };
-        let previous = rt.cache.extended[81].load(Ordering::Acquire);
+        let state_index = if matches!(op, 27 | 28) { 96 } else { 81 };
+        let previous = rt.cache.extended[state_index].load(Ordering::Acquire);
         if previous == 1
-            || rt.cache.extended[81]
+            || rt.cache.extended[state_index]
                 .compare_exchange(previous, 1, Ordering::AcqRel, Ordering::Acquire)
                 .is_err()
         {
@@ -1644,7 +1700,7 @@ pub extern "C" fn rodin_backend_extended_set(op: i32, a: i32, b: i32) -> i32 {
         }
         let accepted = send(Command::Extended(op, a, b));
         if accepted == 0 {
-            rt.cache.extended[81].store(previous, Ordering::Release);
+            rt.cache.extended[state_index].store(previous, Ordering::Release);
         }
         return accepted;
     }
@@ -1666,6 +1722,7 @@ mod palette_tests {
     }
 
     const RESPONSE: &str = "supported=1;mode=1;seed=34167;style=0;primary=2917496;secondary=6318962;tertiary=6712194;neutral=7699582;neutral_variant=7437181;sdk=36;user=10;outcome=1";
+    const CONTRAST_RESPONSE: &str = "supported=1;level=1000;light_container=16767459;light_on_container=7287626;dark_container=7287626;dark_on_container=16767459";
 
     #[test]
     fn reads_all_native_palette_fields_without_touching_hardware_cache() {
@@ -1715,15 +1772,42 @@ mod palette_tests {
             "SET system.colors.wallpaper"
         );
         assert_eq!(palette_command(26, 0, 0).unwrap(), "GET system.colors");
+        assert_eq!(
+            palette_command(27, 0, 0).unwrap(),
+            "GET system.colors.contrast"
+        );
+        assert_eq!(
+            palette_command(28, -1000, 0).unwrap(),
+            "SET system.colors.contrast -1000"
+        );
         for (op, a, b) in [
             (24, -1, 0),
             (24, 0x1000000, 0),
             (24, 1, 7),
             (25, 1, 0),
             (26, 0, 1),
+            (27, 1, 0),
+            (28, -1001, 0),
+            (28, 1001, 0),
             (23, 0, 0),
         ] {
             assert!(palette_command(op, a, b).is_err());
+        }
+    }
+
+    #[test]
+    fn validates_native_contrast_fields() {
+        let values = parse_contrast_response(CONTRAST_RESPONSE).unwrap();
+        assert_eq!(values.len(), 6);
+        assert!(values.contains(&(97, 1)));
+        assert!(values.contains(&(98, 1000)));
+        for invalid in [
+            CONTRAST_RESPONSE.replace("level=1000", "level=1001"),
+            CONTRAST_RESPONSE.replace("supported=1", "supported=2"),
+            CONTRAST_RESPONSE.replace("light_container=16767459;", ""),
+            format!("{CONTRAST_RESPONSE};level=0"),
+        ] {
+            assert!(parse_contrast_response(&invalid).is_err(), "{invalid}");
         }
     }
 
@@ -1745,7 +1829,12 @@ mod palette_tests {
         let cache = Cache::new();
         assert_eq!(cache.extended[81].load(Ordering::Acquire), 0);
         assert_eq!(cache.extended[94].load(Ordering::Acquire), 0);
+        assert_eq!(cache.extended[96].load(Ordering::Acquire), 0);
+        assert_eq!(cache.extended[104].load(Ordering::Acquire), 0);
         for index in 82..=92 {
+            assert_eq!(cache.extended[index].load(Ordering::Acquire), -1);
+        }
+        for index in 97..=103 {
             assert_eq!(cache.extended[index].load(Ordering::Acquire), -1);
         }
     }
