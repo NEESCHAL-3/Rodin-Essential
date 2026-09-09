@@ -52,27 +52,27 @@ focused panels for each subsystem.
 
 | Home | Control Hubs |
 | --- | --- |
-| <a href="docs/screenshots/home-redesigned-framed.svg"><img src="docs/screenshots/home-redesigned-framed.svg" alt="Home dashboard" width="180"></a> | <a href="docs/screenshots/control-hubs-redesigned-framed.svg"><img src="docs/screenshots/control-hubs-redesigned-framed.svg" alt="Control hubs" width="180"></a> |
+| <a href="docs/screenshots/home-redesigned.jpg"><img src="docs/screenshots/home-redesigned.jpg" alt="Home dashboard" width="140"></a> | <a href="docs/screenshots/control-hubs-redesigned.jpg"><img src="docs/screenshots/control-hubs-redesigned.jpg" alt="Control hubs" width="140"></a> |
 | Device Pulse, active profile, and quick controls. | Central entry point for performance, display, power, memory, and diagnostics. |
 
 | CPU | GPU |
 | --- | --- |
-| <a href="docs/screenshots/cpu.jpg"><img src="docs/screenshots/cpu.jpg" alt="CPU controls" width="180"></a> | <a href="docs/screenshots/gpu.jpg"><img src="docs/screenshots/gpu.jpg" alt="GPU controls" width="180"></a> |
+| <a href="docs/screenshots/cpu.jpg"><img src="docs/screenshots/cpu.jpg" alt="CPU controls" width="140"></a> | <a href="docs/screenshots/gpu.jpg"><img src="docs/screenshots/gpu.jpg" alt="GPU controls" width="140"></a> |
 | Tune cluster policies, frequencies, and core state. | Configure GPU profiles, governors, and performance limits. |
 
 | Touch | Display |
 | --- | --- |
-| <a href="docs/screenshots/touch.jpg"><img src="docs/screenshots/touch.jpg" alt="Touch controls" width="180"></a> | <a href="docs/screenshots/display.jpg"><img src="docs/screenshots/display.jpg" alt="Display controls" width="180"></a> |
+| <a href="docs/screenshots/touch.jpg"><img src="docs/screenshots/touch.jpg" alt="Touch controls" width="140"></a> | <a href="docs/screenshots/display.jpg"><img src="docs/screenshots/display.jpg" alt="Display controls" width="140"></a> |
 | Select touch timing profiles and response behavior. | Adjust display modes, resolution, density, and vendor controls. |
 
 | Battery | ZRAM |
 | --- | --- |
-| <a href="docs/screenshots/battery.jpg"><img src="docs/screenshots/battery.jpg" alt="Battery controls" width="180"></a> | <a href="docs/screenshots/zram.jpg"><img src="docs/screenshots/zram.jpg" alt="ZRAM controls" width="180"></a> |
+| <a href="docs/screenshots/battery.jpg"><img src="docs/screenshots/battery.jpg" alt="Battery controls" width="140"></a> | <a href="docs/screenshots/zram.jpg"><img src="docs/screenshots/zram.jpg" alt="ZRAM controls" width="140"></a> |
 | Monitor charging behavior and power telemetry. | Configure compressed-memory size, algorithm, and policy. |
 
 | Diagnostics | Support |
 | --- | --- |
-| <a href="docs/screenshots/diagnostics.jpg"><img src="docs/screenshots/diagnostics.jpg" alt="Diagnostics" width="180"></a> | <a href="docs/screenshots/support.jpg"><img src="docs/screenshots/support.jpg" alt="Support and project information" width="180"></a> |
+| <a href="docs/screenshots/diagnostics.jpg"><img src="docs/screenshots/diagnostics.jpg" alt="Diagnostics" width="140"></a> | <a href="docs/screenshots/support.jpg"><img src="docs/screenshots/support.jpg" alt="Support and project information" width="140"></a> |
 | Inspect connection status, capabilities, and runtime health. | Find project links, community support, and hardware safety notes. |
 
 ## Performance profiles
