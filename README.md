@@ -45,6 +45,36 @@ installer and are not supported by the included AOSP policy.
   vendor resets, app force-close, or removal from recents.
 - Configurable in-app motion timing with native 120 Hz frame pacing.
 
+## Screenshots
+
+The redesigned hubs provide a quick overview of Rodin Essential's controls,
+with focused panels for each hardware subsystem.
+
+| Home | Control Hubs |
+| --- | --- |
+| [![Home dashboard](docs/screenshots/home-redesigned.jpg)](docs/screenshots/home-redesigned.jpg) | [![Control hubs](docs/screenshots/control-hubs-redesigned.jpg)](docs/screenshots/control-hubs-redesigned.jpg) |
+| Overview of active profiles, device state, and key controls. | Central entry point for CPU, GPU, touch, display, battery, memory, and diagnostics. |
+
+| CPU | GPU |
+| --- | --- |
+| [![CPU controls](docs/screenshots/cpu.jpg)](docs/screenshots/cpu.jpg) | [![GPU controls](docs/screenshots/gpu.jpg)](docs/screenshots/gpu.jpg) |
+| Tune cluster policies, frequencies, and core state. | Configure GPU profiles, governors, and performance limits. |
+
+| Touch | Display |
+| --- | --- |
+| [![Touch controls](docs/screenshots/touch.jpg)](docs/screenshots/touch.jpg) | [![Display controls](docs/screenshots/display.jpg)](docs/screenshots/display.jpg) |
+| Select touch timing profiles and response behavior. | Adjust display modes, resolution, density, and vendor controls. |
+
+| Battery | ZRAM |
+| --- | --- |
+| [![Battery controls](docs/screenshots/battery.jpg)](docs/screenshots/battery.jpg) | [![ZRAM controls](docs/screenshots/zram.jpg)](docs/screenshots/zram.jpg) |
+| Monitor charging behavior and power telemetry. | Configure compressed-memory size, algorithm, and policy. |
+
+| Diagnostics |
+| --- |
+| [![Diagnostics](docs/screenshots/diagnostics.jpg)](docs/screenshots/diagnostics.jpg) |
+| Inspect connection status, capabilities, and runtime health. |
+
 ## Performance profiles
 
 | Profile | GPU range and governor | GED / power policy | CPU behavior |
