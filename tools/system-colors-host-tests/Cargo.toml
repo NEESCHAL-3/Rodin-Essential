@@ -1,0 +1,11 @@
+[package]
+name = "rodin-system-colors-host-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+serde_json = "1.0"
+
+# Keep this host-only harness independent from the Android/Unix workspace.
+[workspace]

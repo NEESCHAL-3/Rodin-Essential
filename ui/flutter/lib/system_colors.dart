@@ -227,8 +227,7 @@ class _SystemColorsPanelState extends State<SystemColorsPanel> {
                 ? 'Wallpaper colors restored. Android’s palette changed.'
                 : 'System colors updated. Verified against Android’s palette.',
           2 =>
-            'Saved. Android returned the same colors; this may be a similar '
-                'palette or a ROM that has not regenerated it. Refresh to check.',
+            'Wallpaper following restored. Android resolved the same colors.',
           _ => 'This palette is already selected in Android.',
         };
       } else {
@@ -443,8 +442,8 @@ class _SystemColorsPanelState extends State<SystemColorsPanel> {
           ),
           const SizedBox(height: 8),
           Text(
-            'One palette for compatible apps and system surfaces. '
-            'Separate from Rodin’s own theme.',
+            'Use Android’s native Monet palette across compatible system '
+            'surfaces, apps and keyboards. Separate from Rodin’s own theme.',
             style: description,
           ),
           const SizedBox(height: 18),
@@ -733,8 +732,8 @@ class _SystemColorsPanelState extends State<SystemColorsPanel> {
                   : palette.failed
                   ? palette.errorMessage
                   : 'This ROM does not expose Android’s native Material You '
-                        'engine. You can preview colors, but system-wide applying '
-                        'is unavailable.',
+                        'update path. Preview remains available, but Rodin will '
+                        'not claim or fabricate a system-wide result.',
             ),
             const SizedBox(height: 12),
           ],
@@ -867,8 +866,8 @@ class _SystemColorsPanelState extends State<SystemColorsPanel> {
           const SizedBox(height: 14),
           Text(
             'Android saves your choice across restarts. No background reapply '
-            'loop is used. Some Xiaomi screens keep their own fixed colors; '
-            'apps and keyboards must support dynamic color and use a compatible theme.',
+            'loop is used. OEM surfaces, apps and keyboards with fixed themes '
+            'can ignore the palette even when Android applies it correctly.',
             style: description,
           ),
           const SizedBox(height: 12),

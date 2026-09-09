@@ -445,17 +445,17 @@ void main() {
     },
   );
 
-  testWidgets('unchanged native output is not presented as verified change', (
+  testWidgets('unchanged wallpaper output is described without a false change', (
     WidgetTester tester,
   ) async {
     await showPanel(tester, onApply: (_, _, _) => true);
     await tapText(tester, 'Custom color');
     await showPanel(
       tester,
-      palette: nativePalette(mode: 1, seed: 0x008577, outcome: 2, revision: 2),
+      palette: nativePalette(mode: 0, outcome: 2, revision: 2),
     );
     expect(
-      find.textContaining('Android returned the same colors'),
+      find.textContaining('Wallpaper following restored'),
       findsOneWidget,
     );
     expect(find.textContaining('System colors updated'), findsNothing);

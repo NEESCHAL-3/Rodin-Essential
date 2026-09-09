@@ -52,7 +52,8 @@ final class RodinSystemColorsState {
   final int neutralVariant;
   final int sdk;
   final int user;
-  // 0: read/already selected, 1: native colors changed, 2: saved but unchanged.
+  // 0: read/already selected, 1: native colors changed,
+  // 2: wallpaper following restored with the same resolved colors.
   final int outcome;
   final int error;
   final int revision;
@@ -83,8 +84,9 @@ final class RodinSystemColorsState {
       'Android denied or did not finish a theme command. Check that the ROM '
           'or module includes the updated backend and its policy.',
     5 =>
-      'The change could not be verified. Refresh to check Android’s current '
-          'colors before trying again.',
+      'Android saved the request but did not produce a verified native palette. '
+          'This ROM may expose the resources without implementing the standard '
+          'Material You update path. The previous palette was restored.',
     6 =>
       'Another palette operation is still running. Please try again shortly.',
     8 =>

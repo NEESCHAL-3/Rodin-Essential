@@ -2,6 +2,21 @@
 
 All notable changes are documented here.
 
+## Unreleased
+
+### Fixed
+
+- System Colors now writes the version-correct Android Monet contract: the
+  legacy palette/accent pair on Android 12 and palette/style fields on Android
+  13 and newer.
+- Wallpaper mode now restores Android's explicit `home_wallpaper` source so
+  the palette follows later wallpaper changes.
+- Custom palette changes require verified native resource regeneration.
+  Settings-only changes on incomplete OEM implementations are rolled back and
+  reported as unsupported instead of being presented as applied.
+- Palette readback uses a longer bounded settle window for slower OEM overlay
+  transactions while preserving conflict detection and rollback safety.
+
 ## 1.18.3
 
 ### Fixed

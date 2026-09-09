@@ -59,7 +59,8 @@ struct PaletteState {
     seed: i32,
     style: i32,
     colors: [u32; 5],
-    // 0: read/already selected; 1: resources changed; 2: saved but unchanged.
+    // 0: read/already selected; 1: resources changed;
+    // 2: wallpaper following restored with the same resolved colors.
     outcome: i32,
 }
 
@@ -88,8 +89,8 @@ trait PaletteIo {
     fn read_setting(&mut self) -> Result<Option<String>, String>;
     fn write_setting(&mut self, value: &str) -> Result<(), String>;
     fn colors(&mut self) -> Result<[u32; 5], String>;
-    fn pause(&mut self) {
-        std::thread::sleep(Duration::from_millis(120));
+    fn pause(&mut self, duration: Duration) {
+        std::thread::sleep(duration);
     }
 }
 
@@ -267,6 +268,7 @@ fn validate(selection: Selection, sdk: i32) -> Result<(), String> {
 fn next_setting(
     original: &Map<String, Value>,
     selection: Selection,
+    sdk: i32,
     timestamp: u64,
 ) -> Map<String, Value> {
     let mut next = original.clone();
@@ -275,12 +277,22 @@ fn next_setting(
     }
     if let Selection::Custom { seed, style } = selection {
         next.insert(PALETTE.into(), Value::String(format!("{seed:06X}")));
-        next.insert(ACCENT.into(), Value::String(format!("{seed:06X}")));
         next.insert(SOURCE.into(), Value::String("preset".into()));
-        next.insert(STYLE.into(), Value::String(STYLES[style].into()));
+        if sdk < 33 {
+            // Android 12's SystemUI contract requires both legacy fields and
+            // supports only the default Tonal Spot strategy.
+            next.insert(ACCENT.into(), Value::String(format!("{seed:06X}")));
+        } else {
+            next.insert(STYLE.into(), Value::String(STYLES[style].into()));
+        }
     } else {
-        // Explicitly leave Monochrome/Vibrant/etc. when returning to wallpaper.
-        next.insert(STYLE.into(), Value::String("TONAL_SPOT".into()));
+        // AOSP tracks wallpaper palettes by source. Keeping this explicit lets
+        // SystemUI follow subsequent home-wallpaper changes instead of leaving
+        // a fixed preset behind.
+        next.insert(SOURCE.into(), Value::String("home_wallpaper".into()));
+        if sdk >= 33 {
+            next.insert(STYLE.into(), Value::String("TONAL_SPOT".into()));
+        }
     }
     next.insert(TIMESTAMP.into(), Value::from(timestamp));
     next
@@ -291,6 +303,24 @@ fn same_color_fields(a: &Map<String, Value>, b: &Map<String, Value>) -> bool {
         .iter()
         .filter(|key| **key != TIMESTAMP)
         .all(|key| a.get(*key) == b.get(*key))
+}
+
+fn selection_matches(setting: &Map<String, Value>, selection: Selection, sdk: i32) -> bool {
+    match selection {
+        Selection::Wallpaper => matches!(
+            setting.get(SOURCE).and_then(Value::as_str),
+            Some("home_wallpaper" | "lock_wallpaper")
+        ),
+        Selection::Custom { seed, style } => {
+            setting
+                .get(PALETTE)
+                .and_then(Value::as_str)
+                .and_then(parse_rgb)
+                == Some(seed)
+                && setting.get(SOURCE).and_then(Value::as_str) == Some("preset")
+                && (sdk < 33 || setting.get(STYLE).and_then(Value::as_str) == Some(STYLES[style]))
+        }
+    }
 }
 
 fn describe(
@@ -349,7 +379,7 @@ fn read_from(io: &mut impl PaletteIo) -> Result<PaletteState, String> {
 
 fn settled_before(io: &mut impl PaletteIo) -> Result<[u32; 5], String> {
     let first = io.colors()?;
-    io.pause();
+    io.pause(Duration::from_millis(120));
     let second = io.colors()?;
     if first != second {
         return Err("palette_conflict: Android is updating its colors; refresh shortly".into());
@@ -387,11 +417,14 @@ fn apply_to(io: &mut impl PaletteIo, selection: Selection) -> Result<PaletteStat
     }
     let original = decode(io.read_setting()?.as_deref())?;
     let before = settled_before(io)?;
+    if selection_matches(&original, selection, environment.sdk) {
+        return Ok(describe(environment, &original, before, 0));
+    }
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-    let next = next_setting(&original, selection, timestamp);
+    let next = next_setting(&original, selection, environment.sdk, timestamp);
     if same_color_fields(&original, &next) {
         return Ok(describe(environment, &original, before, 0));
     }
@@ -408,12 +441,15 @@ fn apply_to(io: &mut impl PaletteIo, selection: Selection) -> Result<PaletteStat
         let mut actual = before;
         let mut previous = None;
         let mut settled = false;
-        for _ in 0..4 {
-            io.pause();
+        // SystemUI fabricates and commits several overlays asynchronously.
+        // OEM builds can take longer than AOSP, so use a bounded progressive
+        // window while still requiring two identical complete snapshots.
+        for wait in [80, 120, 180, 260, 360, 500, 700, 900] {
+            io.pause(Duration::from_millis(wait));
             actual = io.colors()?;
             settled = previous == Some(actual);
             previous = Some(actual);
-            if actual != before && settled {
+            if settled && (actual != before || matches!(selection, Selection::Wallpaper)) {
                 break;
             }
         }
@@ -424,8 +460,15 @@ fn apply_to(io: &mut impl PaletteIo, selection: Selection) -> Result<PaletteStat
         if !same_color_fields(&current, &next) {
             return Err("palette_conflict: another theme picker changed the palette".into());
         }
-        // Similar seeds can generate identical tones. Do not claim a visible
-        // change if Android only accepted the setting but returned the same colors.
+        if matches!(selection, Selection::Custom { .. }) && actual == before {
+            return Err(
+                "palette_readback: Android retained the request but did not regenerate its native palette"
+                    .into(),
+            );
+        }
+        // A wallpaper palette can legitimately resolve to the same tones as
+        // the previous selection. Its explicit source still restores future
+        // wallpaper-following behavior.
         Ok(describe(
             environment,
             &current,
@@ -555,10 +598,10 @@ mod tests {
             if !self.native_colors_available {
                 return Err("palette_unsupported: native palette resources are unavailable".into());
             }
-            if self.writes > 0 {
-                if let Some(other) = self.concurrent_palette.take() {
-                    self.setting = Some(other);
-                }
+            if self.writes > 0
+                && let Some(other) = self.concurrent_palette.take()
+            {
+                self.setting = Some(other);
             }
             if self.writes > 0 && self.fail_colors_after_write {
                 return Err("palette_service_unavailable".into());
@@ -572,7 +615,7 @@ mod tests {
                 0x6974ad
             }; 5])
         }
-        fn pause(&mut self) {}
+        fn pause(&mut self, _duration: Duration) {}
     }
 
     fn custom() -> Selection {
@@ -586,7 +629,7 @@ mod tests {
     fn custom_preserves_unrelated_theme_fields_and_types() {
         let raw = r#"{"android.theme.customization.font":"font.package","icon_shape":"round","vendor":{"enabled":true},"array":[1,2]}"#;
         let original = decode(Some(raw)).unwrap();
-        let next = next_setting(&original, custom(), 42);
+        let next = next_setting(&original, custom(), 37, 42);
         for (key, value) in &original {
             assert_eq!(next.get(key), Some(value));
         }
@@ -598,18 +641,14 @@ mod tests {
     #[test]
     fn wallpaper_removes_only_color_fields() {
         let original = decode(Some(r#"{"font":"kept"}"#)).unwrap();
-        let custom = next_setting(&original, custom(), 42);
-        let wallpaper = next_setting(&custom, Selection::Wallpaper, 43);
+        let custom = next_setting(&original, custom(), 37, 42);
+        let wallpaper = next_setting(&custom, Selection::Wallpaper, 37, 43);
         assert_eq!(wallpaper.get("font"), original.get("font"));
         assert_eq!(wallpaper.get(STYLE).unwrap(), "TONAL_SPOT");
-        for key in [
-            PALETTE,
-            ACCENT,
-            SOURCE,
-            "android.theme.customization.dynamic_color",
-        ] {
+        for key in [PALETTE, ACCENT, "android.theme.customization.dynamic_color"] {
             assert!(!wallpaper.contains_key(key));
         }
+        assert_eq!(wallpaper.get(SOURCE).unwrap(), "home_wallpaper");
         assert_eq!(encode(&Map::new()), "{}");
     }
 
@@ -688,18 +727,60 @@ mod tests {
 
     #[test]
     fn identical_choice_does_not_write_again() {
-        let initial = encode(&next_setting(&Map::new(), custom(), 42));
+        let initial = encode(&next_setting(&Map::new(), custom(), 37, 42));
         let mut io = FakeIo::new(Some(&initial));
         assert_eq!(apply_to(&mut io, custom()).unwrap().outcome, 0);
         assert_eq!(io.writes, 0);
     }
 
     #[test]
-    fn unchanged_resources_are_reported_honestly() {
+    fn android_12_uses_legacy_pair_without_style() {
+        let next = next_setting(
+            &Map::new(),
+            Selection::Custom {
+                seed: 0x123456,
+                style: 0,
+            },
+            31,
+            42,
+        );
+        assert_eq!(next.get(PALETTE).unwrap(), "123456");
+        assert_eq!(next.get(ACCENT).unwrap(), "123456");
+        assert_eq!(next.get(SOURCE).unwrap(), "preset");
+        assert!(!next.contains_key(STYLE));
+    }
+
+    #[test]
+    fn android_13_uses_palette_and_style_without_legacy_accent() {
+        let next = next_setting(&Map::new(), custom(), 33, 42);
+        assert_eq!(next.get(STYLE).unwrap(), "VIBRANT");
+        assert!(!next.contains_key(ACCENT));
+    }
+
+    #[test]
+    fn matching_choice_ignores_deprecated_vendor_extras() {
+        let mut initial = next_setting(&Map::new(), custom(), 37, 42);
+        initial.insert(ACCENT.into(), Value::String("008577".into()));
+        initial.insert(
+            "android.theme.customization.dynamic_color".into(),
+            Value::String("1".into()),
+        );
+        let mut io = FakeIo::new(Some(&encode(&initial)));
+        assert_eq!(apply_to(&mut io, custom()).unwrap().outcome, 0);
+        assert_eq!(io.writes, 0);
+    }
+
+    #[test]
+    fn unchanged_custom_resources_are_rejected_and_rolled_back() {
         let mut io = FakeIo::new(None);
         io.changed = false;
-        assert_eq!(apply_to(&mut io, custom()).unwrap().outcome, 2);
-        assert_eq!(io.writes, 1);
+        assert!(
+            apply_to(&mut io, custom())
+                .unwrap_err()
+                .starts_with("palette_readback")
+        );
+        assert_eq!(io.writes, 2);
+        assert_eq!(io.setting.as_deref(), Some("{}"));
     }
 
     #[test]
@@ -717,7 +798,7 @@ mod tests {
     #[test]
     fn rollback_preserves_concurrent_non_color_updates() {
         let original = Map::new();
-        let attempted = next_setting(&original, custom(), 42);
+        let attempted = next_setting(&original, custom(), 37, 42);
         let mut current = attempted.clone();
         current.insert("font".into(), Value::String("new.font".into()));
         let mut io = FakeIo::new(Some(&encode(&current)));
@@ -732,13 +813,14 @@ mod tests {
     #[test]
     fn rollback_does_not_overwrite_another_palette_picker() {
         let original = Map::new();
-        let attempted = next_setting(&original, custom(), 42);
+        let attempted = next_setting(&original, custom(), 37, 42);
         let other = next_setting(
             &original,
             Selection::Custom {
                 seed: 0xabcdef,
                 style: 2,
             },
+            37,
             43,
         );
         let mut io = FakeIo::new(Some(&encode(&other)));
@@ -755,6 +837,7 @@ mod tests {
                 seed: 0xabcdef,
                 style: 2,
             },
+            37,
             43,
         );
         let mut io = FakeIo::new(None);
@@ -777,7 +860,7 @@ mod tests {
             supported: true,
         };
         for source in ["home_wallpaper", "lock_wallpaper"] {
-            let mut setting = next_setting(&Map::new(), custom(), 42);
+            let mut setting = next_setting(&Map::new(), custom(), 37, 42);
             setting.insert(SOURCE.into(), Value::String(source.into()));
             assert_eq!(describe(environment, &setting, [0; 5], 0).mode, 0);
         }
@@ -795,7 +878,7 @@ mod tests {
     #[test]
     fn unstable_readback_rolls_back_without_reporting_success() {
         let mut io = FakeIo::new(None);
-        io.after_write_colors = vec![[1; 5], [2; 5], [3; 5], [4; 5]];
+        io.after_write_colors = (1..=8).map(|value| [value; 5]).collect();
         assert!(
             apply_to(&mut io, custom())
                 .unwrap_err()
@@ -813,6 +896,7 @@ mod tests {
                 seed: 0x7655ca,
                 style: 6,
             },
+            37,
             42,
         );
         let mut io = FakeIo::new(Some(&encode(&initial)));

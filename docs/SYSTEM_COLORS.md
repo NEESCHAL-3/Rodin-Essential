@@ -47,8 +47,8 @@ slider edits reduces interruptions but does not promise zero-latency global
 theme changes. Rodin does not disable obscured-touch protection, change system
 animation scales, or patch the ROM to conceal this limitation.
 
-Compatible apps must use dynamic colors. A fixed keyboard theme, a Xiaomi theme,
-or an app with its own colors can ignore the system palette. Very dark or
+Compatible apps must use dynamic colors. A fixed keyboard or OEM theme, or an
+app with its own colors, can ignore the system palette. Very dark or
 low-chroma seeds may produce Android's fallback color; use Monochrome for a
 grayscale palette where supported. The preview is illustrative because the
 installed Android version and OEM implementation determine the final tones.
@@ -87,8 +87,11 @@ the setting.
 
 The daemon resolves the foreground Android user and uses direct `cmd` arguments
 to read and update the secure setting `theme_customization_overlay_packages`.
-Custom colors set the seed, style, and `preset` source. Wallpaper mode removes
-the custom seed and selects the default `TONAL_SPOT` style. The setting remains
+Custom colors set the seed and `preset` source. Android 12 also receives its
+required legacy accent field and uses Tonal Spot; Android 13 and newer receive
+the selected style without the deprecated accent field. Wallpaper mode removes
+the custom seed, records `home_wallpaper` as the source, and selects the default
+`TONAL_SPOT` style where styles are supported. The setting remains
 a JSON object: deleting it can leave SystemUI's previous style active. Unrelated
 font, icon, shape, and OEM values are retained. Malformed existing JSON is
 rejected rather than replaced.
@@ -105,19 +108,23 @@ resource readback; fresh Android state always replaces it. On a first launch
 without a hint, both source tiles remain unselected until the read completes
 or the user makes a choice.
 
-The transaction verifies the saved fields and waits for two matching native
-color readings so a partly updated overlay is not reported as a final palette.
+The transaction verifies the saved fields and waits through a bounded,
+progressive settle window for two matching native color readings, so a partly
+updated overlay is not reported as a final palette.
 The five resource lookups within each reading run concurrently with bounded
 command timeouts. Both complete readings and all saved-setting/conflict checks
 are retained. During an operation, the app checks two atomic native cache fields
 every 32 ms so a completed selection does not wait for the 500 ms dashboard
 cadence. This observer stops on completion, failure or timeout and never polls
 hardware or rewrites settings.
-If colors remain unchanged, the interface reports **saved, unchanged** rather
-than claiming a visible change. On a failed transaction the daemon attempts to
-restore the previous palette fields, but never overwrites a newer palette from
-another picker. Android does not expose a compare-and-set operation for this
-JSON setting; concurrent edits are checked before and after the write.
+If a new custom seed or style is retained in SettingsProvider but the native
+resources do not change, the transaction fails and restores the previous
+palette rather than reporting false success. Wallpaper mode can legitimately
+resolve to the same colors; in that case the interface reports that wallpaper
+following was restored without claiming a visible change. A failed transaction
+never overwrites a newer palette from another picker. Android does not expose a
+compare-and-set operation for this JSON setting; concurrent edits are checked
+before and after the write.
 
 System Colors does not enable/disable overlay packages itself, stop SystemUI,
 change wallpapers, or alter CPU, GPU, touch, display calibration, or charging.
@@ -154,7 +161,17 @@ bash tools/test-root-module-contract.sh
 RODIN_BUILD_ONLY=1 ./build-and-install.sh
 ```
 
-Tests cover JSON preservation, reset, input/style validation, readback,
+On Windows, the palette transaction tests can run without compiling the
+Unix-only daemon transport:
+
+```powershell
+cargo test --manifest-path tools/system-colors-host-tests/Cargo.toml
+cd ui/flutter
+flutter test
+```
+
+Tests cover Android 12 and Android 13+ JSON contracts, JSON preservation, reset,
+input/style validation, strict native regeneration readback,
 idempotency, rollback, concurrent picker changes, native protocol/cache mapping,
 offline/connecting handling, tap-to-apply, settled slider writes, coalesced
 selections, HSL endpoints, reset after native readback, complete seed hit targets,
