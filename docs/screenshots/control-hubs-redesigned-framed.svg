@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="956" height="2056" viewBox="0 0 956 2056">
+  <rect width="956" height="2056" rx="64" fill="#111318"/>
+  <rect x="28" y="28" width="900" height="2000" rx="40" fill="#f1f4f9"/>
+  <image href="control-hubs-redesigned.jpg" x="28" y="28" width="900" height="2000" preserveAspectRatio="none"/>
+  <rect x="28" y="28" width="900" height="2000" rx="40" fill="none" stroke="#050608" stroke-width="8"/>
+  <ellipse cx="478" cy="48" rx="18" ry="18" fill="#050608"/>
+  <ellipse cx="478" cy="48" rx="7" ry="7" fill="#19333b"/>
+  <rect x="925" y="448" width="10" height="230" rx="5" fill="#25282e"/>
+  <rect x="925" y="748" width="10" height="130" rx="5" fill="#25282e"/>
+</svg>

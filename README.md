@@ -52,7 +52,7 @@ focused panels for each subsystem.
 
 | Home | Control Hubs |
 | --- | --- |
-| <a href="docs/screenshots/home-redesigned.jpg"><img src="docs/screenshots/home-redesigned.jpg" alt="Home dashboard" width="180"></a> | <a href="docs/screenshots/control-hubs-redesigned.jpg"><img src="docs/screenshots/control-hubs-redesigned.jpg" alt="Control hubs" width="180"></a> |
+| <a href="docs/screenshots/home-redesigned-framed.svg"><img src="docs/screenshots/home-redesigned-framed.svg" alt="Home dashboard" width="180"></a> | <a href="docs/screenshots/control-hubs-redesigned-framed.svg"><img src="docs/screenshots/control-hubs-redesigned-framed.svg" alt="Control hubs" width="180"></a> |
 | Device Pulse, active profile, and quick controls. | Central entry point for performance, display, power, memory, and diagnostics. |
 
 | CPU | GPU |
