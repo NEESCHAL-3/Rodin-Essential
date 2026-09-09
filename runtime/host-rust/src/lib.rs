@@ -2917,7 +2917,12 @@ unsafe extern "C" fn on_window_created(activity: *mut ANativeActivity, window: *
         return;
     }
 
-    unsafe { present_launch_background(state, window) };
+    // Only a cold engine needs the temporary launch frame. On return from
+    // Recents the raster thread still owns its context and will draw the
+    // retained Flutter scene into the replacement surface.
+    if input_engine(state) == 0 {
+        unsafe { present_launch_background(state, window) };
+    }
 
     match unsafe { start_flutter(activity, state) } {
         Ok(()) => {
@@ -3105,6 +3110,9 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
         return;
     }
 
+    // Connect in parallel with EGL and Flutter initialization. The daemon is
+    // independent of this Activity; reopening only reconnects its client.
+    backend_bridge::rodin_backend_start();
     rodin_prepare_launch_window(activity);
     rodin_photo_init(activity);
     rodin_haptic_init(activity);

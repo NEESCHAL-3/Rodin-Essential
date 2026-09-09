@@ -1,6 +1,13 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
 
+import 'backend_connection.dart';
+import 'system_colors_state.dart';
+import 'system_colors_preferences.dart';
+import 'system_colors_monitor.dart';
+export 'backend_connection.dart';
+export 'system_colors_state.dart';
+
 typedef _BackendGetNative = ffi.Int32 Function(ffi.Int32);
 typedef _BackendGetDart = int Function(int);
 typedef _BackendSetNative = ffi.Int32 Function(ffi.Int32, ffi.Int32, ffi.Int32);
@@ -8,7 +15,7 @@ typedef _BackendSetDart = int Function(int, int, int);
 
 final class RodinBackendSnapshot {
   const RodinBackendSnapshot({
-    required this.ready,
+    required this.connection,
     required this.actionState,
     required this.chargingWriteState,
     required this.chargingMode,
@@ -39,7 +46,8 @@ final class RodinBackendSnapshot {
     required this.performanceProfile,
   });
 
-  final bool ready;
+  final RodinConnectionState connection;
+  bool get ready => connection == RodinConnectionState.online;
   final int actionState;
   final int chargingWriteState;
   final int chargingMode;
@@ -104,6 +112,7 @@ final class RodinBackend {
 
   ffi.DynamicLibrary? _lib;
   Timer? _timer;
+  RodinSystemColorsMonitor? _paletteMonitor;
   bool _started = false;
 
   final StreamController<RodinBackendSnapshot> _controller =
@@ -163,7 +172,7 @@ final class RodinBackend {
   late _I32Dart _consumeBackRequestNative;
 
   RodinBackendSnapshot _latest = const RodinBackendSnapshot(
-    ready: false,
+    connection: RodinConnectionState.connecting,
     actionState: 0,
     chargingWriteState: 0,
     chargingMode: -1,
@@ -197,6 +206,41 @@ final class RodinBackend {
   RodinBackendSnapshot get latest => _latest;
   Stream<RodinBackendSnapshot> get snapshots => _controller.stream;
   bool get started => _started;
+
+  RodinSystemColorsSelection? _systemColorsSelection;
+  RodinSystemColorsSelection? get systemColorsSelection =>
+      _systemColorsSelection;
+  int _systemColorsRevision = 0;
+  Future<void> _systemColorsSave = Future<void>.value();
+
+  Future<void> _loadSystemColorsSelection() async {
+    final RodinSystemColorsSelection? selection =
+        await RodinSystemColorsPreferences.read();
+    // An actual readback that finished meanwhile always wins over the hint.
+    if (_systemColorsRevision == 0 && selection != _systemColorsSelection) {
+      _systemColorsSelection = selection;
+      _controller.add(_latest);
+    }
+  }
+
+  void _rememberSystemColors() {
+    final RodinSystemColorsState palette = systemColors;
+    if (!palette.ready ||
+        !palette.hasReadback ||
+        palette.revision == _systemColorsRevision)
+      return;
+    final bool firstRead = _systemColorsRevision == 0;
+    _systemColorsRevision = palette.revision;
+    final RodinSystemColorsSelection? selection =
+        RodinSystemColorsSelection.fromNative(palette);
+    if (selection == _systemColorsSelection && !firstRead) return;
+    _systemColorsSelection = selection;
+    // Serialize these small writes so an older completion cannot replace a
+    // newer confirmed selection. This is not a background system reapply.
+    _systemColorsSave = _systemColorsSave.then(
+      (_) => RodinSystemColorsPreferences.write(selection),
+    );
+  }
 
   bool start() {
     if (_started) return true;
@@ -368,6 +412,7 @@ final class RodinBackend {
       _lib = lib;
       _started = _startNative() == 1;
       if (_started) {
+        unawaited(_loadSystemColorsSelection());
         _refreshNative();
         _poll();
         _timer = Timer.periodic(
@@ -384,8 +429,9 @@ final class RodinBackend {
 
   void _poll() {
     if (!_started || _lib == null) return;
+    _rememberSystemColors();
     final RodinBackendSnapshot next = RodinBackendSnapshot(
-      ready: _readyNative() == 1,
+      connection: RodinConnectionState.fromNative(_readyNative()),
       actionState: _actionStateNative(),
       chargingWriteState: _chargingWriteStateNative(),
       chargingMode: _chargingModeNative(),
@@ -451,7 +497,7 @@ final class RodinBackend {
   bool setPerformanceProfile(int profile) {
     if (_latest.performanceProfile != profile) {
       _latest = RodinBackendSnapshot(
-        ready: _latest.ready,
+        connection: _latest.connection,
         actionState: _latest.actionState,
         chargingWriteState: _latest.chargingWriteState,
         chargingMode: _latest.chargingMode,
@@ -523,6 +569,37 @@ final class RodinBackend {
     final bool res = _queue(_backendSetNative(op, a, b));
     refresh();
     return res;
+  }
+
+  RodinSystemColorsState get systemColors => _started
+      ? RodinSystemColorsState.fromNative(extendedValue)
+      : const RodinSystemColorsState();
+
+  // Palette transactions have their own result and revision in the native
+  // cache. Do not trigger hardware refresh/reapply operations from this screen.
+  bool _queueSystemColors(int operation, [int seed = 0, int style = 0]) {
+    if (!_started || _lib == null) return false;
+    if (_backendSetNative(operation, seed, style) != 1) return false;
+    // The normal dashboard cadence is 500 ms. Palette completions must not
+    // sit behind it while the user is choosing the next color. Read only two
+    // atomic cache fields until completion, then stop completely.
+    (_paletteMonitor ??= RodinSystemColorsMonitor(
+      readStamp: () => (extendedValue(81), extendedValue(94)),
+      onChanged: () {
+        _rememberSystemColors();
+        _controller.add(_latest);
+      },
+    )).watch();
+    return true;
+  }
+
+  bool refreshSystemColors() => _queueSystemColors(26);
+
+  bool useWallpaperSystemColors() => _queueSystemColors(25);
+
+  bool setSystemColors(int seed, int style) {
+    if (seed < 0 || seed > 0xffffff || style < 0 || style > 6) return false;
+    return _queueSystemColors(24, seed, style);
   }
 
   bool setDoubleTapWake(bool enabled) =>
@@ -664,6 +741,7 @@ final class RodinBackend {
   }
 
   void dispose() {
+    _paletteMonitor?.dispose();
     _timer?.cancel();
     _timer = null;
   }

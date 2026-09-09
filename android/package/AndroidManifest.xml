@@ -28,7 +28,7 @@
 
         <activity
             android:name="android.app.NativeActivity"
-            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|uiMode|density|colorMode"
+            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|uiMode|density|colorMode|assetsPaths"
             android:exported="true"
             android:launchMode="singleTask"
             android:screenOrientation="unspecified"

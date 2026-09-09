@@ -17,6 +17,7 @@ Rust rodin_daemon
         ├── sysfs / procfs / block controls
         ├── Xiaomi touch and display AIDL services
         ├── MediaTek GED and Mali devfreq
+        ├── Android SettingsProvider / native palette readback
         └── persistent state and drift reassertion
 ```
 
@@ -97,6 +98,12 @@ configuration.
 Persisted domains include performance profile, GPU bounds/governor/GED/power
 policy, CPU governors and ranges, online-core mask, UFS scheduler, touch
 profile, DT2W, display settings, charging, and ZRAM.
+
+System Colors is deliberately separate: Android's per-user SettingsProvider
+persists the palette and SystemUI generates the tonal overlays. There is no
+palette entry in `state.conf` and no palette reassertion timer. The host caches
+its verified result independently of hardware state. See
+[System Colors](SYSTEM_COLORS.md) for transactions, compatibility, and policy.
 
 ## Touch paths
 

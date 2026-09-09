@@ -72,6 +72,10 @@ grep -Fq 'settings_service:service_manager find;' \
     "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
 grep -Fq 'window_service:service_manager find;' \
     "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
+grep -Fq 'activity_service:service_manager find;' \
+    "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
+grep -Fq 'overlay_service:service_manager find;' \
+    "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
 grep -Fq 'allow system_server rodin_daemon:fd use;' \
     "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
 grep -Fq 'allow system_server rodin_daemon:fifo_file write;' \

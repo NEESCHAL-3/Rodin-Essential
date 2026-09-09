@@ -4,8 +4,12 @@ import 'dart:ui' as ui;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 
 import 'backend/rodin_backend.dart';
+import 'system_colors_preview.dart';
+
+part 'system_colors.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,10 +17,10 @@ void main() {
 
   unawaited(RodinThemeController.bootstrap());
   WidgetsBinding.instance.addPostFrameCallback((_) {
+    // Native startup is already connecting asynchronously. Read that cache
+    // before building the dashboard, without delaying the initial white frame.
+    RodinBackend.instance.start();
     runApp(const RodinEssentialApp());
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      RodinBackend.instance.start();
-    });
   });
 }
 
@@ -43,6 +47,7 @@ enum RodinScreen {
   diagnostics,
   zramSwap,
   maliGpu,
+  systemColors,
 }
 
 extension RodinScreenName on RodinScreen {
@@ -74,6 +79,8 @@ extension RodinScreenName on RodinScreen {
         return 'ZRAM & Swap Manager';
       case RodinScreen.maliGpu:
         return 'MediaTek Mali GPU & GED';
+      case RodinScreen.systemColors:
+        return 'System Colors';
     }
   }
 
@@ -662,6 +669,8 @@ class _RodinShellState extends State<RodinShell> {
         return ZramSwapScreen(onBack: _back);
       case RodinScreen.maliGpu:
         return MaliGpuScreen(onBack: _back);
+      case RodinScreen.systemColors:
+        return SystemColorsScreen(onBack: _back);
       default:
         return _rootPager();
     }
@@ -701,15 +710,40 @@ class _RodinShellState extends State<RodinShell> {
                             _rootPager(),
                             AnimatedSwitcher(
                               duration: RodinInteractionSettings.motionDuration(
-                                260,
+                                360,
                               ),
                               reverseDuration:
-                                  RodinInteractionSettings.motionDuration(200),
-                              switchInCurve:
-                                  RodinInteractionSettings.transitionCurve,
-                              switchOutCurve: Curves.easeInOutCubic,
+                                  RodinInteractionSettings.motionDuration(260),
+                              switchInCurve: Curves.linear,
+                              switchOutCurve: Curves.linear,
                               transitionBuilder:
                                   (Widget child, Animation<double> animation) {
+                                    final CurvedAnimation movement =
+                                        CurvedAnimation(
+                                          parent: animation,
+                                          curve: RodinInteractionSettings
+                                              .transitionCurve,
+                                          reverseCurve: const Cubic(
+                                            0.40,
+                                            0.00,
+                                            1.00,
+                                            1.00,
+                                          ),
+                                        );
+                                    final CurvedAnimation opacity =
+                                        CurvedAnimation(
+                                          parent: animation,
+                                          curve: const Interval(
+                                            0.0,
+                                            0.78,
+                                            curve: Curves.easeOutCubic,
+                                          ),
+                                          reverseCurve: const Interval(
+                                            0.12,
+                                            1.0,
+                                            curve: Curves.easeInCubic,
+                                          ),
+                                        );
                                     final Animation<Offset> slide =
                                         Tween<Offset>(
                                           begin: Offset(
@@ -718,15 +752,15 @@ class _RodinShellState extends State<RodinShell> {
                                             0,
                                           ),
                                           end: Offset.zero,
-                                        ).animate(animation);
+                                        ).animate(movement);
                                     final Animation<double>
                                     scale = Tween<double>(
                                       begin: RodinInteractionSettings.pageScale,
                                       end: 1,
-                                    ).animate(animation);
+                                    ).animate(movement);
 
                                     return FadeTransition(
-                                      opacity: animation,
+                                      opacity: opacity,
                                       child: ScaleTransition(
                                         scale: scale,
                                         child: SlideTransition(
@@ -2625,70 +2659,851 @@ class HomeScreen extends StatelessWidget {
       children: <Widget>[
         const RodinHeader(
           title: 'Rodin Essential',
-          subtitle: 'Your device, beautifully simplified',
+          subtitle: 'Precision you can feel.',
           large: true,
         ),
         const SizedBox(height: 10),
-        const LiveDashboardHero(),
-        const SizedBox(height: 16),
-        const SectionLabel('At a glance'),
-        const SizedBox(height: 9),
+        _HomePulseHero(onOpen: onOpen),
+        const SizedBox(height: 14),
+        const SectionLabel('Quick controls'),
+        const SizedBox(height: 8),
+        _HomeQuickActions(onOpen: onOpen),
+        const SizedBox(height: 14),
+        const SectionLabel('Live hardware'),
+        const SizedBox(height: 8),
         _LiveOverviewGrid(onOpen: onOpen),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
         _ControlCenterPortal(onTap: onHubs),
-        const SizedBox(height: 16),
-        const SectionLabel('Explore'),
-        const SizedBox(height: 9),
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: _ExploreCard(
-                title: 'ZRAM Swap',
-                subtitle: 'Memory compression & swap',
-                icon: Icons.storage_rounded,
-                accent: const Color(0xFF67C2FF),
-                onTap: () => onOpen(RodinScreen.zramSwap),
-              ),
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: _ExploreCard(
-                title: 'Diagnostics',
-                subtitle: 'Check device health',
-                icon: Icons.monitor_heart_rounded,
-                accent: const Color(0xFF74E6C6),
-                onTap: () => onOpen(RodinScreen.diagnostics),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 9),
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: _ExploreCard(
-                title: 'Resolution',
-                subtitle: 'Screen sizing tools',
-                icon: Icons.aspect_ratio_rounded,
-                accent: const Color(0xFFFFBE63),
-                onTap: () => onOpen(RodinScreen.resolution),
-              ),
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: _ExploreCard(
-                title: 'Community',
-                subtitle: 'Project & support',
-                icon: Icons.forum_outlined,
-                accent: const Color(0xFF67C2FF),
-                onTap: onSupport,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        const _DisclaimerCard(),
+        const SizedBox(height: 14),
+        const SectionLabel('Useful shortcuts'),
+        const SizedBox(height: 8),
+        _HomeShortcutPanel(onOpen: onOpen, onSupport: onSupport),
+        const SizedBox(height: 12),
       ],
+    );
+  }
+}
+
+class _HomePulseHero extends StatelessWidget {
+  const _HomePulseHero({required this.onOpen});
+
+  final ValueChanged<RodinScreen> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return _BackendSnapshotBuilder(
+      builder: (RodinBackendSnapshot snapshot) {
+        final ThemeData theme = Theme.of(context);
+        final ColorScheme colors = theme.colorScheme;
+        final bool dark = theme.brightness == Brightness.dark;
+        final RodinBackend backend = RodinBackend.instance;
+        final RodinAppearanceConfig appearance = RodinAppearanceScope.of(
+          context,
+        );
+        final int activePerf = snapshot.performanceProfile >= 0
+            ? snapshot.performanceProfile
+            : 0;
+        final String profile = _rodinPerformanceLabel(activePerf);
+        final Color profileAccent = switch (activePerf) {
+          2 => const Color(0xFF35C997),
+          1 => const Color(0xFFFFB84D),
+          3 => const Color(0xFFFF5252),
+          _ => const Color(0xFF4EA8DE),
+        };
+        final IconData profileIcon = switch (activePerf) {
+          2 => Icons.eco_rounded,
+          1 => Icons.sports_esports_rounded,
+          3 => Icons.local_fire_department_rounded,
+          _ => Icons.balance_rounded,
+        };
+        final String profileDescription = switch (activePerf) {
+          2 => 'Efficiency-first clocks and reduced power demand',
+          1 => 'Unrestricted 260–1300 MHz GPU scaling with GED boost',
+          3 => 'GPU locked at the 1300 MHz hardware ceiling',
+          _ => 'OEM-balanced performance and efficiency for everyday use',
+        };
+        final int onlineCores = _rodinOnlineCoreCount(snapshot);
+        final String battery = snapshot.batteryCapacity >= 0
+            ? '${snapshot.batteryCapacity}%'
+            : '—';
+        final String temperature = snapshot.batteryTempC == null
+            ? '—'
+            : '${snapshot.batteryTempC!.toStringAsFixed(1)}°C';
+        final String touchValue = switch (snapshot.touchState) {
+          1 => '240 Hz',
+          2 => '480 Hz',
+          3 => 'Super',
+          _ => 'OEM',
+        };
+        final String touchDetail = switch (snapshot.touchState) {
+          1 || 2 => 'Fixed target',
+          3 => '1000 / 500 Hz',
+          _ => 'Adaptive',
+        };
+        final int liveGpuFreq = backend.extendedValue(46) >= 260
+            ? backend.extendedValue(46)
+            : 0;
+        final int maxGpuFreq = backend.extendedValue(48) >= 260
+            ? backend.extendedValue(48)
+            : 1300;
+        final String gpu = '${liveGpuFreq > 0 ? liveGpuFreq : maxGpuFreq} MHz';
+
+        final Widget hero = Stack(
+          children: <Widget>[
+            if (appearance.heroGlow)
+              Positioned.fill(
+                child: Container(
+                  margin: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(
+                      appearance.cardRadius + 5,
+                    ),
+                    boxShadow: <BoxShadow>[
+                      BoxShadow(
+                        color: profileAccent.withValues(alpha: 0.17),
+                        blurRadius: 31,
+                        spreadRadius: -4,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            SurfaceCard(
+              padding: EdgeInsets.zero,
+              accent: profileAccent,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(appearance.cardRadius),
+                child: Stack(
+                  children: <Widget>[
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: <Color>[
+                              profileAccent.withValues(
+                                alpha: dark ? 0.15 : 0.12,
+                              ),
+                              colors.surface.withValues(
+                                alpha: dark ? 0.76 : 0.90,
+                              ),
+                              const Color(
+                                0xFFB087FF,
+                              ).withValues(alpha: dark ? 0.06 : 0.045),
+                            ],
+                            stops: const <double>[0, 0.58, 1],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: -48,
+                      top: -62,
+                      width: 150,
+                      height: 150,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: <Color>[
+                              profileAccent.withValues(
+                                alpha: dark ? 0.15 : 0.12,
+                              ),
+                              profileAccent.withValues(alpha: 0),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: -38,
+                      bottom: -64,
+                      width: 132,
+                      height: 132,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: <Color>[
+                              colors.secondary.withValues(
+                                alpha: dark ? 0.08 : 0.055,
+                              ),
+                              colors.secondary.withValues(alpha: 0),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Row(
+                            children: <Widget>[
+                              Container(
+                                width: 7,
+                                height: 7,
+                                decoration: BoxDecoration(
+                                  color: profileAccent,
+                                  shape: BoxShape.circle,
+                                  boxShadow: <BoxShadow>[
+                                    BoxShadow(
+                                      color: profileAccent.withValues(
+                                        alpha: 0.60,
+                                      ),
+                                      blurRadius: 7,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 7),
+                              Text(
+                                'DEVICE PULSE',
+                                style: TextStyle(
+                                  fontSize: 9.4,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1.05,
+                                  color: colors.onSurfaceVariant,
+                                ),
+                              ),
+                              const Spacer(),
+                              _HomeLiveBadge(connection: snapshot.connection),
+                            ],
+                          ),
+                          const SizedBox(height: 11),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    Text(
+                                      profile,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 27,
+                                        height: 1,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: -0.72,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      profileDescription,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        height: 1.28,
+                                        fontWeight: FontWeight.w500,
+                                        color: colors.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Container(
+                                width: 49,
+                                height: 49,
+                                decoration: BoxDecoration(
+                                  color: profileAccent.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(17),
+                                  border: Border.all(
+                                    color: profileAccent.withValues(
+                                      alpha: 0.22,
+                                    ),
+                                  ),
+                                ),
+                                child: Icon(
+                                  profileIcon,
+                                  size: 25,
+                                  color: profileAccent,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          _HomeCoreVisualizer(
+                            snapshot: snapshot,
+                            onlineCores: onlineCores,
+                            style: appearance.coreVisualizerStyle,
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: <Widget>[
+                              Expanded(
+                                child: _HomeHeroMetric(
+                                  label: 'BATTERY',
+                                  value: battery,
+                                  detail: temperature,
+                                  icon: Icons.battery_5_bar_rounded,
+                                  accent: const Color(0xFF41C98A),
+                                  onTap: () => onOpen(RodinScreen.charging),
+                                ),
+                              ),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                child: _HomeHeroMetric(
+                                  label: 'MALI GPU',
+                                  value: gpu,
+                                  detail: liveGpuFreq > 0
+                                      ? 'Live clock'
+                                      : 'Current target',
+                                  icon: Icons.sports_esports_rounded,
+                                  accent: const Color(0xFFFF5252),
+                                  onTap: () => onOpen(RodinScreen.maliGpu),
+                                ),
+                              ),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                child: _HomeHeroMetric(
+                                  label: 'TOUCH',
+                                  value: touchValue,
+                                  detail: touchDetail,
+                                  icon: Icons.touch_app_rounded,
+                                  accent: const Color(0xFF41C98A),
+                                  onTap: () => onOpen(RodinScreen.touchBoost),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+
+        return TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 0, end: 1),
+          duration: RodinInteractionSettings.motionDuration(420),
+          curve: RodinInteractionSettings.transitionCurve,
+          child: hero,
+          builder: (BuildContext context, double value, Widget? child) {
+            return Opacity(
+              opacity: value,
+              child: Transform.translate(
+                offset: Offset(0, (1 - value) * 12),
+                child: child,
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _HomeLiveBadge extends StatelessWidget {
+  const _HomeLiveBadge({required this.connection});
+
+  final RodinConnectionState connection;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final bool online = connection == RodinConnectionState.online;
+    final Color accent = online
+        ? const Color(0xFF41C98A)
+        : colors.onSurfaceVariant;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: accent.withValues(alpha: 0.24)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            connection.badgeLabel,
+            style: TextStyle(
+              fontSize: 8.8,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.48,
+              color: accent,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeCoreVisualizer extends StatelessWidget {
+  const _HomeCoreVisualizer({
+    required this.snapshot,
+    required this.onlineCores,
+    required this.style,
+  });
+
+  final RodinBackendSnapshot snapshot;
+  final int onlineCores;
+  final int style;
+
+  Color _coreColor(int cpu) {
+    if (!snapshot.cpuOnline(cpu)) {
+      return const Color(0xFF252A31);
+    }
+    if (cpu == 7) {
+      return const Color(0xFFFF8E3C);
+    }
+    if (cpu >= 4) {
+      return const Color(0xFFA066FF);
+    }
+    return const Color(0xFF4EA8DE);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    Widget indicator(int cpu) {
+      final Color color = _coreColor(cpu);
+      final bool online = snapshot.cpuOnline(cpu);
+
+      if (style == 1) {
+        return Container(
+          width: 9,
+          height: 9,
+          margin: const EdgeInsets.symmetric(horizontal: 2.4),
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            boxShadow: online
+                ? <BoxShadow>[
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.55),
+                      blurRadius: 5,
+                    ),
+                  ]
+                : null,
+          ),
+        );
+      }
+
+      if (style == 2) {
+        return Container(
+          width: 12,
+          height: 9,
+          margin: const EdgeInsets.symmetric(horizontal: 0.8),
+          color: color,
+        );
+      }
+
+      return Container(
+        width: 8,
+        height: 14,
+        margin: const EdgeInsets.symmetric(horizontal: 2.3),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(3),
+          boxShadow: online
+              ? <BoxShadow>[
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.38),
+                    blurRadius: 4,
+                  ),
+                ]
+              : null,
+        ),
+      );
+    }
+
+    Widget indicators = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[for (int cpu = 0; cpu < 8; cpu++) indicator(cpu)],
+    );
+
+    if (style == 2) {
+      indicators = ClipRRect(
+        borderRadius: BorderRadius.circular(99),
+        child: indicators,
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: colors.surface.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: colors.outline.withValues(alpha: 0.17)),
+      ),
+      child: Row(
+        children: <Widget>[
+          Text(
+            'CPU',
+            style: TextStyle(
+              fontSize: 8.6,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.72,
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(
+            snapshot.ready ? '$onlineCores / 8 online' : 'Waiting for system',
+            style: const TextStyle(fontSize: 10.3, fontWeight: FontWeight.w700),
+          ),
+          const Spacer(),
+          indicators,
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeHeroMetric extends StatelessWidget {
+  const _HomeHeroMetric({
+    required this.label,
+    required this.value,
+    required this.detail,
+    required this.icon,
+    required this.accent,
+    required this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final String detail;
+  final IconData icon;
+  final Color accent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    return PressScale(
+      onTap: onTap,
+      child: Container(
+        height: 60,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+        decoration: BoxDecoration(
+          color: colors.surface.withValues(alpha: 0.52),
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(
+            color: colors.outline.withValues(alpha: 0.16),
+            width: 0.7,
+          ),
+        ),
+        child: Row(
+          children: <Widget>[
+            Icon(icon, size: 15, color: accent),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    label,
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontSize: 7.7,
+                      height: 1,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.40,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11.1,
+                      height: 1,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    detail,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 7.9,
+                      height: 1,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeQuickActions extends StatelessWidget {
+  const _HomeQuickActions({required this.onOpen});
+
+  final ValueChanged<RodinScreen> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    return SurfaceCard(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: _HomeQuickAction(
+              title: 'Mali GPU',
+              subtitle: 'Profiles',
+              icon: Icons.sports_esports_rounded,
+              accent: const Color(0xFFFF5252),
+              onTap: () => onOpen(RodinScreen.maliGpu),
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 42,
+            color: colors.outline.withValues(alpha: 0.18),
+          ),
+          Expanded(
+            child: _HomeQuickAction(
+              title: 'Touch',
+              subtitle: 'Response',
+              icon: Icons.touch_app_rounded,
+              accent: const Color(0xFF41C98A),
+              onTap: () => onOpen(RodinScreen.touchBoost),
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 42,
+            color: colors.outline.withValues(alpha: 0.18),
+          ),
+          Expanded(
+            child: _HomeQuickAction(
+              title: 'CPU',
+              subtitle: 'Cores & MHz',
+              icon: Icons.memory_rounded,
+              accent: const Color(0xFF67C2FF),
+              onTap: () => onOpen(RodinScreen.cpuControl),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeQuickAction extends StatelessWidget {
+  const _HomeQuickAction({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.accent,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color accent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    return PressScale(
+      onTap: onTap,
+      child: Container(
+        height: 61,
+        padding: const EdgeInsets.symmetric(horizontal: 7),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(15)),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Container(
+              width: 31,
+              height: 31,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.11),
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(color: accent.withValues(alpha: 0.16)),
+              ),
+              child: Icon(icon, size: 17, color: accent),
+            ),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11.3,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 8.8,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeShortcutPanel extends StatelessWidget {
+  const _HomeShortcutPanel({required this.onOpen, required this.onSupport});
+
+  final ValueChanged<RodinScreen> onOpen;
+  final VoidCallback onSupport;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    Widget divider() => Padding(
+      padding: const EdgeInsets.only(left: 47),
+      child: Divider(
+        height: 1,
+        thickness: 0.65,
+        color: colors.outline.withValues(alpha: 0.20),
+      ),
+    );
+
+    return SurfaceCard(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      child: Column(
+        children: <Widget>[
+          _HomeShortcutRow(
+            title: 'Diagnostics',
+            subtitle: 'Live sensors and hardware health',
+            icon: Icons.monitor_heart_rounded,
+            accent: const Color(0xFF74E6C6),
+            onTap: () => onOpen(RodinScreen.diagnostics),
+          ),
+          divider(),
+          _HomeShortcutRow(
+            title: 'Resolution',
+            subtitle: 'Canvas size, density and refresh details',
+            icon: Icons.aspect_ratio_rounded,
+            accent: const Color(0xFFFFBE63),
+            onTap: () => onOpen(RodinScreen.resolution),
+          ),
+          divider(),
+          _HomeShortcutRow(
+            title: 'Community & Support',
+            subtitle: 'Project source, help and device community',
+            icon: Icons.forum_outlined,
+            accent: const Color(0xFF67C2FF),
+            onTap: onSupport,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeShortcutRow extends StatelessWidget {
+  const _HomeShortcutRow({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.accent,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color accent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    return PressScale(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 6),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(15)),
+        child: Row(
+          children: <Widget>[
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Icon(icon, size: 19, color: accent),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10.2,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 20,
+              color: colors.onSurfaceVariant.withValues(alpha: 0.65),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2833,60 +3648,77 @@ class _LiveOverviewGrid extends StatelessWidget {
             ? '${zramUsedMb}M used · $zramAlg'
             : 'ZRAM Pool · $zramAlg';
 
-        return Column(
-          children: <Widget>[
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: _OverviewCard(
-                    eyebrow: 'POWER',
-                    value: battery,
-                    subtitle: temperature,
-                    icon: Icons.bolt_rounded,
-                    accent: const Color(0xFF41C98A),
-                    onTap: () => onOpen(RodinScreen.charging),
+        final ColorScheme colors = Theme.of(context).colorScheme;
+
+        return SurfaceCard(
+          padding: EdgeInsets.zero,
+          child: Column(
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: _OverviewCard(
+                      eyebrow: 'POWER',
+                      value: battery,
+                      subtitle: temperature,
+                      icon: Icons.bolt_rounded,
+                      accent: const Color(0xFF41C98A),
+                      onTap: () => onOpen(RodinScreen.charging),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: _OverviewCard(
-                    eyebrow: 'CPU',
-                    value: coreValue,
-                    subtitle: coreSubtitle,
-                    icon: Icons.memory_rounded,
-                    accent: const Color(0xFF67C2FF),
-                    onTap: () => onOpen(RodinScreen.cpuControl),
+                  Container(
+                    width: 1,
+                    height: 54,
+                    color: colors.outline.withValues(alpha: 0.18),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 9),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: _OverviewCard(
-                    eyebrow: 'DISPLAY',
-                    value: display,
-                    subtitle: touch,
-                    icon: Icons.auto_awesome_rounded,
-                    accent: const Color(0xFFB087FF),
-                    onTap: () => onOpen(RodinScreen.displayStudio),
+                  Expanded(
+                    child: _OverviewCard(
+                      eyebrow: 'CPU',
+                      value: coreValue,
+                      subtitle: coreSubtitle,
+                      icon: Icons.memory_rounded,
+                      accent: const Color(0xFF67C2FF),
+                      onTap: () => onOpen(RodinScreen.cpuControl),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: _OverviewCard(
-                    eyebrow: 'MEMORY',
-                    value: memoryVal,
-                    subtitle: memorySub,
-                    icon: Icons.layers_rounded,
-                    accent: const Color(0xFFFFB84D),
-                    onTap: () => onOpen(RodinScreen.zramSwap),
+                ],
+              ),
+              Divider(
+                height: 1,
+                thickness: 0.65,
+                color: colors.outline.withValues(alpha: 0.18),
+              ),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: _OverviewCard(
+                      eyebrow: 'DISPLAY',
+                      value: display,
+                      subtitle: touch,
+                      icon: Icons.auto_awesome_rounded,
+                      accent: const Color(0xFFB087FF),
+                      onTap: () => onOpen(RodinScreen.displayStudio),
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                  Container(
+                    width: 1,
+                    height: 54,
+                    color: colors.outline.withValues(alpha: 0.18),
+                  ),
+                  Expanded(
+                    child: _OverviewCard(
+                      eyebrow: 'MEMORY',
+                      value: memoryVal,
+                      subtitle: memorySub,
+                      icon: Icons.layers_rounded,
+                      accent: const Color(0xFFFFB84D),
+                      onTap: () => onOpen(RodinScreen.zramSwap),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         );
       },
     );
@@ -2915,80 +3747,72 @@ class _OverviewCard extends StatelessWidget {
     final bool dark = Theme.of(context).brightness == Brightness.dark;
     final ColorScheme colors = Theme.of(context).colorScheme;
 
-    final Widget card = SurfaceCard(
-      padding: EdgeInsets.zero,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 126),
-        child: Stack(
-          children: <Widget>[
-            Positioned(
-              top: 12,
-              right: 12,
-              child: Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: accent.withValues(alpha: dark ? 0.12 : 0.08),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: accent.withValues(alpha: dark ? 0.28 : 0.18),
+    final Widget card = Container(
+      height: 78,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(16)),
+      child: Row(
+        children: <Widget>[
+          Container(
+            width: 35,
+            height: 35,
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: dark ? 0.13 : 0.09),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: accent.withValues(alpha: dark ? 0.24 : 0.16),
+              ),
+            ),
+            child: Icon(icon, size: 18, color: accent),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  eyebrow,
+                  style: TextStyle(
+                    fontSize: 8.4,
+                    height: 1,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.78,
+                    color: colors.onSurfaceVariant,
                   ),
                 ),
-                child: Icon(icon, size: 18, color: accent),
-              ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    height: 1,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.25,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 9.4,
+                    height: 1,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 13, 12, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Text(
-                        eyebrow,
-                        style: TextStyle(
-                          fontSize: 9.2,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1.1,
-                          color: colors.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Icon(
-                        Icons.arrow_forward_ios_rounded,
-                        size: 8.5,
-                        color: colors.onSurfaceVariant.withValues(alpha: 0.5),
-                      ),
-                    ],
-                  ),
-                  const Spacer(),
-                  Text(
-                    value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 21,
-                      height: 1.05,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -0.4,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 10.8,
-                      fontWeight: FontWeight.w500,
-                      color: colors.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+          Icon(
+            Icons.chevron_right_rounded,
+            size: 17,
+            color: colors.onSurfaceVariant.withValues(alpha: 0.48),
+          ),
+        ],
       ),
     );
 
@@ -3097,90 +3921,6 @@ class _ControlCenterPortal extends StatelessWidget {
   }
 }
 
-class _ExploreCard extends StatelessWidget {
-  const _ExploreCard({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.accent,
-    required this.onTap,
-  });
-
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final Color accent;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final bool dark = Theme.of(context).brightness == Brightness.dark;
-    final ColorScheme colors = Theme.of(context).colorScheme;
-
-    return PressScale(
-      onTap: onTap,
-      child: SurfaceCard(
-        padding: EdgeInsets.zero,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 110),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(13, 13, 11, 11),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
-                  children: <Widget>[
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: accent.withValues(alpha: dark ? 0.12 : 0.08),
-                        borderRadius: BorderRadius.circular(13),
-                        border: Border.all(
-                          color: accent.withValues(alpha: dark ? 0.25 : 0.16),
-                        ),
-                      ),
-                      child: Icon(icon, size: 19, color: accent),
-                    ),
-                    const Spacer(),
-                    Icon(
-                      Icons.north_east_rounded,
-                      size: 15,
-                      color: colors.onSurfaceVariant,
-                    ),
-                  ],
-                ),
-                const Spacer(),
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13.4,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -0.1,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w500,
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 int _rodinOnlineCoreCount(RodinBackendSnapshot snapshot) {
   int count = 0;
 
@@ -3217,72 +3957,6 @@ class HubsScreen extends StatelessWidget {
 
   final ValueChanged<RodinScreen> onOpen;
 
-  static const List<_HubSpec> hubs = <_HubSpec>[
-    _HubSpec(
-      RodinScreen.charging,
-      'Charging',
-      'Fast charging & power stats',
-      Icons.battery_charging_full_rounded,
-      Color(0xFF41C98A),
-    ),
-    _HubSpec(
-      RodinScreen.touchBoost,
-      'Touch Response',
-      'OEM adaptive · 240 · 480 · Super Touch',
-      Icons.bolt_rounded,
-      Color(0xFF41C98A),
-    ),
-    _HubSpec(
-      RodinScreen.displayStudio,
-      'Display Studio',
-      'Color calibration & HDR tuning',
-      Icons.palette_rounded,
-      Color(0xFF67C2FF),
-    ),
-    _HubSpec(
-      RodinScreen.cpuControl,
-      'CPU Core & Frequency',
-      'Clock ranges, exact locks & core power control',
-      Icons.memory_rounded,
-      Color(0xFF67C2FF),
-    ),
-    _HubSpec(
-      RodinScreen.advancedConfiguration,
-      'Advanced Configuration',
-      'Governors & device tuning',
-      Icons.tune_rounded,
-      Color(0xFFFFB84D),
-    ),
-    _HubSpec(
-      RodinScreen.resolution,
-      'Resolution',
-      'Display panel specifications',
-      Icons.grid_view_rounded,
-      Color(0xFFFFBE63),
-    ),
-    _HubSpec(
-      RodinScreen.zramSwap,
-      'ZRAM & Swap Manager',
-      'Memory compression, swap size & algorithm',
-      Icons.storage_rounded,
-      Color(0xFF67C2FF),
-    ),
-    _HubSpec(
-      RodinScreen.maliGpu,
-      'MediaTek Mali GPU & GED',
-      'Hardware 1.30 GHz target, GED turbo & live clock tuning',
-      Icons.sports_esports_rounded,
-      Color(0xFFFF5252),
-    ),
-    _HubSpec(
-      RodinScreen.diagnostics,
-      'Diagnostics',
-      'Hardware health & sensors',
-      Icons.monitor_heart_rounded,
-      Color(0xFF74E6C6),
-    ),
-  ];
-
   @override
   Widget build(BuildContext context) {
     return _BackendSnapshotBuilder(
@@ -3306,73 +3980,684 @@ class HubsScreen extends StatelessWidget {
         final int activePerf = snapshot.performanceProfile >= 0
             ? snapshot.performanceProfile
             : 0;
-
         final bool isBeast =
             (rawUncap == 1 && rawMinFreq == 1300 && rawMaxFreq == 1300) ||
             activePerf == 3;
         final String gpuLabel = liveGpuFreq >= 260
             ? '$liveGpuFreq MHz'
-            : (isBeast ? '1300 MHz target' : '$rawMaxFreq MHz');
-
-        final Color gpuAccent = isBeast
-            ? const Color(0xFFFF5252)
-            : (activePerf == 1 || backend.extendedValue(50) == 1
-                  ? const Color(0xFFFFB84D)
-                  : (activePerf == 2 || rawMaxFreq <= 598
-                        ? const Color(0xFF35C997)
-                        : const Color(0xFF4EA8DE)));
+            : (isBeast ? '1300 MHz' : '$rawMaxFreq MHz');
+        final String displayMode = switch (snapshot.displayColor) {
+          0 => 'Original PRO',
+          1 => 'Vivid',
+          2 => 'Saturated',
+          _ => 'OEM Adaptive',
+        };
+        final String touchMode = _rodinTouchLabel(snapshot.touchState);
+        final int zramDiskMb = backend.extendedValue(39) > 0
+            ? backend.extendedValue(39)
+            : 8192;
+        final String memory = '${(zramDiskMb / 1024).toStringAsFixed(1)} GB';
+        final String cpuSummary = snapshot.ready
+            ? '$cores · Core topology and clock ranges'
+            : 'Core topology and clock ranges';
+        final String chargingSummary = battery == '—'
+            ? 'Charging controls and power statistics'
+            : '$battery · Charging controls and power stats';
 
         return RodinScrollPage(
           children: <Widget>[
             const RodinHeader(
               title: 'Control Hubs',
-              subtitle: 'Hardware tools and tuning controls',
+              subtitle: 'Performance, display and system controls',
             ),
-            const SizedBox(height: 9),
+            const SizedBox(height: 11),
+            _HubReveal(
+              child: _HubProfileHero(
+                profile: _rodinPerformanceLabel(activePerf),
+                connection: snapshot.connection,
+                battery: battery,
+                cores: cores,
+                gpu: gpuLabel,
+                gpuAccent: const Color(0xFFFF5252),
+                onBattery: () => onOpen(RodinScreen.charging),
+                onCpu: () => onOpen(RodinScreen.cpuControl),
+                onGpu: () => onOpen(RodinScreen.maliGpu),
+              ),
+            ),
+            const SizedBox(height: 12),
+            _HubReveal(
+              duration: 420,
+              child: _HubCategoryCard(
+                title: 'Performance',
+                subtitle: 'Compute, graphics and system policy',
+                icon: Icons.speed_rounded,
+                accent: const Color(0xFF67C2FF),
+                child: Column(
+                  children: <Widget>[
+                    _HubControlRow(
+                      title: 'CPU Core & Frequency',
+                      subtitle: cpuSummary,
+                      icon: Icons.memory_rounded,
+                      accent: const Color(0xFF67C2FF),
+                      onTap: () => onOpen(RodinScreen.cpuControl),
+                    ),
+                    const _HubControlDivider(),
+                    _HubControlRow(
+                      emphasized: true,
+                      title: 'Mali GPU & GED',
+                      subtitle: 'Clocks, boost and power policy',
+                      value: gpuLabel,
+                      icon: Icons.sports_esports_rounded,
+                      accent: const Color(0xFFFF5252),
+                      onTap: () => onOpen(RodinScreen.maliGpu),
+                    ),
+                    const _HubControlDivider(),
+                    _HubControlRow(
+                      title: 'Advanced Configuration',
+                      subtitle: 'Governors, scheduler & device tuning',
+                      icon: Icons.tune_rounded,
+                      accent: const Color(0xFFFFB84D),
+                      onTap: () => onOpen(RodinScreen.advancedConfiguration),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            _HubReveal(
+              duration: 500,
+              child: _HubCategoryCard(
+                title: 'Display & Input',
+                subtitle: 'Touch response, color and canvas',
+                icon: Icons.touch_app_rounded,
+                accent: const Color(0xFFB087FF),
+                child: Column(
+                  children: <Widget>[
+                    _HubControlRow(
+                      title: 'Touch Response',
+                      subtitle: '$touchMode · Sampling and instant boost',
+                      icon: Icons.bolt_rounded,
+                      accent: const Color(0xFF41C98A),
+                      onTap: () => onOpen(RodinScreen.touchBoost),
+                    ),
+                    const _HubControlDivider(),
+                    _HubControlRow(
+                      title: 'Display Studio',
+                      subtitle: '$displayMode · Color and HDR tuning',
+                      icon: Icons.palette_rounded,
+                      accent: const Color(0xFFB087FF),
+                      onTap: () => onOpen(RodinScreen.displayStudio),
+                    ),
+                    const _HubControlDivider(),
+                    _HubControlRow(
+                      title: 'System Colors',
+                      subtitle: 'Material You palettes for Android & apps',
+                      icon: Icons.color_lens_rounded,
+                      accent: const Color(0xFFB087FF),
+                      onTap: () => onOpen(RodinScreen.systemColors),
+                    ),
+                    const _HubControlDivider(),
+                    _HubControlRow(
+                      title: 'Resolution',
+                      subtitle: '1.5K · Canvas, density and refresh rate',
+                      icon: Icons.grid_view_rounded,
+                      accent: const Color(0xFFFFBE63),
+                      onTap: () => onOpen(RodinScreen.resolution),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            _HubReveal(
+              duration: 580,
+              child: _HubCategoryCard(
+                title: 'Power & Memory',
+                subtitle: 'Charging and memory management',
+                icon: Icons.battery_saver_rounded,
+                accent: const Color(0xFF41C98A),
+                child: Column(
+                  children: <Widget>[
+                    _HubControlRow(
+                      title: 'Charging',
+                      subtitle: chargingSummary,
+                      icon: Icons.battery_charging_full_rounded,
+                      accent: const Color(0xFF41C98A),
+                      onTap: () => onOpen(RodinScreen.charging),
+                    ),
+                    const _HubControlDivider(),
+                    _HubControlRow(
+                      title: 'ZRAM & Swap Manager',
+                      subtitle: '$memory · Compression and swap policy',
+                      icon: Icons.storage_rounded,
+                      accent: const Color(0xFF67C2FF),
+                      onTap: () => onOpen(RodinScreen.zramSwap),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            _HubReveal(
+              duration: 640,
+              child: SurfaceCard(
+                padding: const EdgeInsets.all(11),
+                child: _HubControlRow(
+                  title: 'Diagnostics',
+                  subtitle: 'Sensors and hardware health',
+                  value: snapshot.connection.label,
+                  icon: Icons.monitor_heart_rounded,
+                  accent: const Color(0xFF74E6C6),
+                  onTap: () => onOpen(RodinScreen.diagnostics),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _HubReveal extends StatelessWidget {
+  const _HubReveal({required this.child, this.duration = 340});
+
+  final Widget child;
+  final int duration;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: RodinInteractionSettings.motionDuration(duration),
+      curve: RodinInteractionSettings.transitionCurve,
+      child: child,
+      builder: (BuildContext context, double value, Widget? child) {
+        return Opacity(
+          opacity: value,
+          child: Transform.translate(
+            offset: Offset(0, (1 - value) * 10),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _HubProfileHero extends StatelessWidget {
+  const _HubProfileHero({
+    required this.profile,
+    required this.connection,
+    required this.battery,
+    required this.cores,
+    required this.gpu,
+    required this.gpuAccent,
+    required this.onBattery,
+    required this.onCpu,
+    required this.onGpu,
+  });
+
+  final String profile;
+  final RodinConnectionState connection;
+  final String battery;
+  final String cores;
+  final String gpu;
+  final Color gpuAccent;
+  final VoidCallback onBattery;
+  final VoidCallback onCpu;
+  final VoidCallback onGpu;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colors = theme.colorScheme;
+    final bool dark = theme.brightness == Brightness.dark;
+    final bool online = connection == RodinConnectionState.online;
+    final Color accent = colors.primary;
+
+    return SurfaceCard(
+      padding: EdgeInsets.zero,
+      accent: accent,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: <Color>[
+              accent.withValues(alpha: dark ? 0.12 : 0.095),
+              colors.surface.withValues(alpha: dark ? 0.36 : 0.62),
+              const Color(0xFFB087FF).withValues(alpha: dark ? 0.055 : 0.04),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(
+            RodinAppearanceScope.of(context).cardRadius,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
             Row(
               children: <Widget>[
-                Expanded(
-                  child: SummaryChip(
-                    title: 'Battery',
-                    subtitle: battery,
-                    accent: const Color(0xFF41C98A),
-                    onTap: () => onOpen(RodinScreen.charging),
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: accent.withValues(alpha: 0.18)),
+                  ),
+                  child: Icon(
+                    Icons.dashboard_customize_rounded,
+                    size: 18,
+                    color: accent,
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 10),
                 Expanded(
-                  child: SummaryChip(
-                    title: 'CPU',
-                    subtitle: cores,
-                    accent: const Color(0xFF67C2FF),
-                    onTap: () => onOpen(RodinScreen.cpuControl),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        'CURRENT SYSTEM PROFILE',
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.72,
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        profile,
+                        style: const TextStyle(
+                          fontSize: 21,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.55,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: SummaryChip(
-                    title: 'Mali GPU',
-                    subtitle: gpuLabel,
-                    accent: gpuAccent,
-                    onTap: () => onOpen(RodinScreen.maliGpu),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: (online ? const Color(0xFF41C98A) : colors.outline)
+                        .withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: (online ? const Color(0xFF41C98A) : colors.outline)
+                          .withValues(alpha: 0.28),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: online
+                              ? const Color(0xFF41C98A)
+                              : colors.onSurfaceVariant,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        connection.badgeLabel,
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.45,
+                          color: online
+                              ? const Color(0xFF41C98A)
+                              : colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 9),
-            for (final _HubSpec item in hubs) ...<Widget>[
-              FeatureCard(
-                title: item.title,
-                subtitle: item.subtitle,
-                icon: item.icon,
-                accent: item.accent,
-                onTap: () => onOpen(item.screen),
-              ),
-              const SizedBox(height: 9),
-            ],
+            const SizedBox(height: 12),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: _HubMetric(
+                    label: 'BATTERY',
+                    value: battery,
+                    icon: Icons.battery_5_bar_rounded,
+                    accent: const Color(0xFF41C98A),
+                    onTap: onBattery,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: _HubMetric(
+                    label: 'CPU',
+                    value: cores,
+                    icon: Icons.memory_rounded,
+                    accent: const Color(0xFF67C2FF),
+                    onTap: onCpu,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: _HubMetric(
+                    label: 'MALI GPU',
+                    value: gpu,
+                    icon: Icons.sports_esports_rounded,
+                    accent: gpuAccent,
+                    onTap: onGpu,
+                  ),
+                ),
+              ],
+            ),
           ],
-        );
-      },
+        ),
+      ),
+    );
+  }
+}
+
+class _HubMetric extends StatelessWidget {
+  const _HubMetric({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.accent,
+    required this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color accent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    return PressScale(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
+        decoration: BoxDecoration(
+          color: colors.surface.withValues(alpha: 0.50),
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(
+            color: colors.outline.withValues(alpha: 0.18),
+            width: 0.7,
+          ),
+        ),
+        child: Row(
+          children: <Widget>[
+            Icon(icon, size: 15, color: accent),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    label,
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontSize: 8,
+                      height: 1,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.42,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      height: 1,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HubCategoryCard extends StatelessWidget {
+  const _HubCategoryCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.accent,
+    required this.child,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color accent;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    return SurfaceCard(
+      padding: const EdgeInsets.all(11),
+      accent: accent,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(2, 1, 2, 10),
+            child: Row(
+              children: <Widget>[
+                Container(
+                  width: 31,
+                  height: 31,
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.11),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: Icon(icon, size: 17, color: accent),
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.22,
+                        ),
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _HubControlDivider extends StatelessWidget {
+  const _HubControlDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 52),
+      child: Divider(
+        height: 1,
+        thickness: 0.65,
+        color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.20),
+      ),
+    );
+  }
+}
+
+class _HubControlRow extends StatelessWidget {
+  const _HubControlRow({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.accent,
+    required this.onTap,
+    this.value,
+    this.emphasized = false,
+  });
+
+  final String title;
+  final String subtitle;
+  final String? value;
+  final IconData icon;
+  final Color accent;
+  final VoidCallback onTap;
+  final bool emphasized;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colors = theme.colorScheme;
+    final bool dark = theme.brightness == Brightness.dark;
+
+    return PressScale(
+      onTap: onTap,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 62),
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 7),
+        decoration: BoxDecoration(
+          gradient: emphasized
+              ? LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: <Color>[
+                    accent.withValues(alpha: dark ? 0.095 : 0.060),
+                    accent.withValues(alpha: 0.012),
+                  ],
+                )
+              : null,
+          borderRadius: BorderRadius.circular(15),
+          border: emphasized
+              ? Border.all(
+                  color: accent.withValues(alpha: dark ? 0.16 : 0.12),
+                  width: 0.7,
+                )
+              : null,
+        ),
+        child: Row(
+          children: <Widget>[
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: <Color>[
+                    accent.withValues(alpha: dark ? 0.18 : 0.13),
+                    accent.withValues(alpha: dark ? 0.08 : 0.055),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: accent.withValues(alpha: dark ? 0.24 : 0.18),
+                  width: 0.75,
+                ),
+              ),
+              child: Icon(icon, size: 20, color: accent),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.16,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10.4,
+                      height: 1.12,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (value != null) ...<Widget>[
+              const SizedBox(width: 7),
+              Container(
+                constraints: const BoxConstraints(maxWidth: 78),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: dark ? 0.13 : 0.09),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  value!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    color: accent,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(width: 5),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 20,
+              color: colors.onSurfaceVariant.withValues(alpha: 0.65),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -3581,7 +4866,7 @@ class SupportScreen extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    'NEESCHAL',
+                    'NEESCHAL 🇳🇵',
                     style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w800,
@@ -3993,7 +5278,7 @@ class _ChargingBatteryCard extends StatelessWidget {
                 ),
               ),
               _ChargingStatePill(
-                label: snapshot.ready ? 'LIVE' : 'OFFLINE',
+                label: snapshot.connection.badgeLabel,
                 accent: snapshot.ready ? accent : colors.onSurfaceVariant,
               ),
             ],
@@ -10829,7 +12114,9 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               accent: accent,
               title: snapshot.ready
                   ? 'System Health Normal'
-                  : 'System Service Connecting',
+                  : snapshot.connection == RodinConnectionState.connecting
+                  ? 'Connecting to System Service'
+                  : 'System Service Unavailable',
               subtitle: phase == 16
                   ? 'All hardware controllers and telemetry streams active'
                   : 'Waiting for system background service',
@@ -10841,7 +12128,9 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                   _DiagnosticRow(
                     label: 'Hardware Controller',
                     good: snapshot.ready && phase == 16,
-                    detail: snapshot.ready ? 'Online & Ready' : 'Connecting...',
+                    detail: snapshot.ready
+                        ? 'Online & Ready'
+                        : snapshot.connection.label,
                   ),
                   const Divider(height: 14),
                   _DiagnosticRow(
@@ -12314,7 +13603,7 @@ class LiveDashboardHero extends StatelessWidget {
             ? snapshot.performanceProfile
             : 0;
         final String profile = _rodinPerformanceLabel(activePerf);
-        const String source = 'Global System Profile';
+        const String source = 'Active performance profile';
         final String battery = snapshot.batteryCapacity >= 0
             ? '${snapshot.batteryCapacity}%'
             : '—';
@@ -12415,7 +13704,7 @@ class LiveDashboardHero extends StatelessWidget {
                             ),
                             const SizedBox(width: 5),
                             Text(
-                              ready ? 'LIVE' : 'OFFLINE',
+                              snapshot.connection.badgeLabel,
                               style: TextStyle(
                                 fontSize: 9.5,
                                 fontWeight: FontWeight.w800,
@@ -12657,7 +13946,9 @@ class LiveDashboardHero extends StatelessWidget {
                       ),
                       const Spacer(),
                       Text(
-                        ready ? 'System online' : 'Offline',
+                        snapshot.connection == RodinConnectionState.online
+                            ? 'System online'
+                            : snapshot.connection.label,
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
@@ -13017,7 +14308,9 @@ class SurfaceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool dark = Theme.of(context).brightness == Brightness.dark;
+    final ThemeData theme = Theme.of(context);
+    final bool dark = theme.brightness == Brightness.dark;
+    final ColorScheme colors = theme.colorScheme;
     final RodinAppearanceConfig config = RodinAppearanceScope.of(context);
     final Color activeAccent = accent ?? config.activeAccent;
     final double radius = config.cardRadius;
@@ -13025,23 +14318,31 @@ class SurfaceCard extends StatelessWidget {
     final BoxDecoration decoration = switch (config.cardStyle) {
       1 => BoxDecoration(
         // Frosted Glass
-        color: dark
-            ? activeAccent.withValues(alpha: 0.05)
-            : Colors.white.withValues(alpha: 0.85),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[
+            colors.surface.withValues(alpha: dark ? 0.68 : 0.80),
+            activeAccent.withValues(alpha: dark ? 0.075 : 0.045),
+            colors.surface.withValues(alpha: dark ? 0.48 : 0.66),
+          ],
+          stops: const <double>[0, 0.56, 1],
+        ),
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(
           color: dark
-              ? activeAccent.withValues(alpha: 0.22)
-              : const Color(0xFFD6E1ED),
-          width: 0.95,
+              ? Colors.white.withValues(alpha: 0.12)
+              : Colors.white.withValues(alpha: 0.86),
+          width: 0.85,
         ),
         boxShadow: <BoxShadow>[
           BoxShadow(
             color: dark
-                ? activeAccent.withValues(alpha: 0.06)
-                : const Color(0x140C2943),
-            blurRadius: 18,
-            offset: const Offset(0, 7),
+                ? Colors.black.withValues(alpha: 0.24)
+                : const Color(0x1A0C2943),
+            blurRadius: 24,
+            spreadRadius: -8,
+            offset: const Offset(0, 11),
           ),
         ],
       ),
@@ -13113,12 +14414,14 @@ class SurfaceCard extends StatelessWidget {
       ),
     };
 
-    return Container(
+    final Widget card = Container(
       width: double.infinity,
       padding: padding,
       decoration: decoration,
       child: child,
     );
+
+    return card;
   }
 }
 
@@ -13138,6 +14441,8 @@ class IconTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
     return Container(
       width: size,
       height: size,
@@ -13146,17 +14451,18 @@ class IconTile extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: <Color>[
-            accent.withValues(alpha: 0.23),
-            accent.withValues(alpha: 0.07),
+            accent.withValues(alpha: 0.13),
+            colors.surface.withValues(alpha: 0.42),
           ],
         ),
-        borderRadius: BorderRadius.circular(size * 0.32),
-        border: Border.all(color: accent.withValues(alpha: 0.18)),
+        borderRadius: BorderRadius.circular(size * 0.36),
+        border: Border.all(color: accent.withValues(alpha: 0.14), width: 0.75),
         boxShadow: <BoxShadow>[
           BoxShadow(
-            color: accent.withValues(alpha: 0.10),
-            blurRadius: 14,
-            spreadRadius: -5,
+            color: Colors.black.withValues(alpha: 0.045),
+            blurRadius: 10,
+            spreadRadius: -6,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -13186,7 +14492,9 @@ class SummaryChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme colors = Theme.of(context).colorScheme;
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colors = theme.colorScheme;
+    final bool dark = theme.brightness == Brightness.dark;
 
     Widget chip = Container(
       constraints: const BoxConstraints(minHeight: 58),
@@ -13196,12 +14504,15 @@ class SummaryChip extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: <Color>[
-            accent.withValues(alpha: 0.13),
-            accent.withValues(alpha: 0.045),
+            colors.surface.withValues(alpha: dark ? 0.74 : 0.94),
+            accent.withValues(alpha: dark ? 0.055 : 0.035),
           ],
         ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: accent.withValues(alpha: 0.19)),
+        border: Border.all(
+          color: colors.outline.withValues(alpha: dark ? 0.58 : 0.44),
+          width: 0.7,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -13212,8 +14523,8 @@ class SummaryChip extends StatelessWidget {
             maxLines: 1,
             style: TextStyle(
               fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: colors.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+              color: accent,
             ),
           ),
           const SizedBox(height: 3),
@@ -13357,7 +14668,13 @@ class RodinInteractionSettings {
 
   static double get detailSlideDistance => _mix(0.035, 0.065);
 
-  static double get pageScale => _mix(0.997, 0.992);
+  static double get pageScale => _mix(0.985, 0.992);
+
+  static SpringDescription get interactionSpring => SpringDescription(
+    mass: 1,
+    stiffness: _mix(430, 560),
+    damping: _mix(38, 42),
+  );
 
   static Duration motionDuration(int baseMilliseconds) {
     final double speed = motionSpeed.clamp(0.75, 1.35).toDouble();
@@ -13454,17 +14771,53 @@ class RodinInteractionSettings {
 }
 
 class PressScale extends StatefulWidget {
-  const PressScale({required this.child, this.onTap, super.key});
+  const PressScale({
+    required this.child,
+    this.onTap,
+    this.enableHaptics = true,
+    super.key,
+  });
 
   final Widget child;
   final VoidCallback? onTap;
+  final bool enableHaptics;
 
   @override
   State<PressScale> createState() => _PressScaleState();
 }
 
-class _PressScaleState extends State<PressScale> {
-  bool _pressed = false;
+class _PressScaleState extends State<PressScale>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _depth = AnimationController.unbounded(
+    vsync: this,
+    value: 0,
+  );
+
+  void _press() {
+    _depth.animateTo(
+      1,
+      duration: RodinInteractionSettings.motionDuration(74),
+      curve: const Cubic(0.20, 0.00, 0.00, 1.00),
+    );
+  }
+
+  void _release() {
+    final double start = _depth.value;
+    _depth.animateWith(
+      SpringSimulation(
+        RodinInteractionSettings.interactionSpring,
+        start,
+        0,
+        -0.35,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _depth.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -13472,36 +14825,45 @@ class _PressScaleState extends State<PressScale> {
       return widget.child;
     }
 
-    final Duration pressDuration = RodinInteractionSettings.motionDuration(80);
-    final Duration releaseDuration = RodinInteractionSettings.motionDuration(
-      150,
-    );
-
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapCancel: () => setState(() => _pressed = false),
+      onTapDown: (_) => _press(),
+      onTapCancel: _release,
       onTapUp: (_) {
-        setState(() => _pressed = false);
-        RodinHaptics.tap();
+        _release();
+        if (widget.enableHaptics) RodinHaptics.tap();
         widget.onTap?.call();
       },
-      child: AnimatedScale(
-        scale: _pressed ? RodinInteractionSettings.pressScale : 1.0,
-        duration: _pressed ? pressDuration : releaseDuration,
-        curve: RodinInteractionSettings.pressCurve,
-        child: AnimatedOpacity(
-          opacity: _pressed ? RodinInteractionSettings.pressOpacity : 1.0,
-          duration: _pressed ? pressDuration : releaseDuration,
-          curve: RodinInteractionSettings.pressCurve,
-          child: widget.child,
-        ),
+      child: AnimatedBuilder(
+        animation: _depth,
+        child: widget.child,
+        builder: (BuildContext context, Widget? child) {
+          final double depth = _depth.value.clamp(-0.08, 1.04).toDouble();
+          final double scale = ui.lerpDouble(
+            1,
+            RodinInteractionSettings.pressScale,
+            depth,
+          )!;
+          final double opacity = ui
+              .lerpDouble(
+                1,
+                RodinInteractionSettings.pressOpacity,
+                depth.clamp(0, 1).toDouble(),
+              )!
+              .clamp(0, 1)
+              .toDouble();
+
+          return Transform.scale(
+            scale: scale,
+            child: Opacity(opacity: opacity, child: child),
+          );
+        },
       ),
     );
   }
 }
 
-class RodinBottomBar extends StatelessWidget {
+class RodinBottomBar extends StatefulWidget {
   const RodinBottomBar({
     required this.controller,
     required this.currentRoot,
@@ -13512,6 +14874,21 @@ class RodinBottomBar extends StatelessWidget {
   final PageController controller;
   final RodinScreen currentRoot;
   final ValueChanged<RodinScreen> onSelect;
+
+  @override
+  State<RodinBottomBar> createState() => _RodinBottomBarState();
+}
+
+class _RodinBottomBarState extends State<RodinBottomBar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _elasticity = AnimationController.unbounded(
+    vsync: this,
+    value: 0,
+  );
+
+  double _dragPage = 0;
+  int? _lastDragIndex;
+  bool _dragging = false;
 
   static const List<RodinScreen> _screens = <RodinScreen>[
     RodinScreen.home,
@@ -13542,8 +14919,79 @@ class RodinBottomBar extends StatelessWidget {
   ];
 
   int _selectedIndex() {
-    final int index = _screens.indexOf(currentRoot);
+    final int index = _screens.indexOf(widget.currentRoot);
     return index < 0 ? 0 : index;
+  }
+
+  double _pageForPosition(double dx, double width) {
+    final double itemWidth = width / _screens.length;
+    return ((dx / itemWidth) - 0.5)
+        .clamp(0.0, _screens.length - 1.0)
+        .toDouble();
+  }
+
+  void _beginDrag(double dx, double width) {
+    _dragging = true;
+    _lastDragIndex = null;
+    _elasticity
+      ..stop()
+      ..value = 0;
+    RodinHaptics.segment();
+    _updateDrag(dx, width, 0);
+  }
+
+  void _updateDrag(double dx, double width, double delta) {
+    if (!widget.controller.hasClients) {
+      return;
+    }
+
+    final double page = _pageForPosition(dx, width);
+    final int index = page.round().clamp(0, _screens.length - 1);
+    final ScrollPosition position = widget.controller.position;
+    final double pixels = (page * position.viewportDimension)
+        .clamp(position.minScrollExtent, position.maxScrollExtent)
+        .toDouble();
+
+    _dragPage = page;
+    final double targetElasticity = (delta / 13).clamp(-1.0, 1.0).toDouble();
+    _elasticity.value = ui
+        .lerpDouble(_elasticity.value, targetElasticity, 0.68)!
+        .clamp(-1.0, 1.0)
+        .toDouble();
+    position.jumpTo(pixels);
+
+    if (_lastDragIndex != index) {
+      if (_lastDragIndex != null) {
+        RodinHaptics.frequentSegment();
+      }
+      _lastDragIndex = index;
+    }
+  }
+
+  void _settleDrag() {
+    if (!_dragging) {
+      return;
+    }
+
+    final int target = _dragPage.round().clamp(0, _screens.length - 1);
+    _dragging = false;
+    _lastDragIndex = null;
+    _elasticity.animateWith(
+      SpringSimulation(
+        const SpringDescription(mass: 1, stiffness: 360, damping: 26),
+        _elasticity.value,
+        0,
+        -_elasticity.value * 0.8,
+      ),
+    );
+    RodinHaptics.confirm();
+    widget.onSelect(_screens[target]);
+  }
+
+  @override
+  void dispose() {
+    _elasticity.dispose();
+    super.dispose();
   }
 
   @override
@@ -13554,154 +15002,229 @@ class RodinBottomBar extends StatelessWidget {
 
     return SafeArea(
       top: false,
-      minimum: const EdgeInsets.fromLTRB(9, 0, 9, 18),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(
-            sigmaX: 6,
-            sigmaY: 6,
-            tileMode: TileMode.clamp,
-          ),
-          child: Container(
-            height: 60,
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: colors.surface.withValues(alpha: dark ? 0.72 : 0.74),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(
-                color: colors.outline.withValues(alpha: dark ? 0.46 : 0.50),
-                width: 0.75,
-              ),
-              boxShadow: <BoxShadow>[
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: dark ? 0.20 : 0.065),
-                  blurRadius: 14,
-                  spreadRadius: -7,
-                  offset: const Offset(0, 8),
-                ),
-              ],
+      minimum: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+      child: RepaintBoundary(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(
+              sigmaX: 18,
+              sigmaY: 18,
+              tileMode: TileMode.clamp,
             ),
-            child: AnimatedBuilder(
-              animation: controller,
-              builder: (BuildContext context, Widget? child) {
-                int selectedIndex = _selectedIndex();
+            child: Container(
+              height: 56,
+              padding: const EdgeInsets.all(5),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: <Color>[
+                    Colors.white.withValues(alpha: dark ? 0.075 : 0.66),
+                    colors.surface.withValues(alpha: dark ? 0.52 : 0.50),
+                    colors.surfaceContainerHighest.withValues(
+                      alpha: dark ? 0.38 : 0.32,
+                    ),
+                  ],
+                  stops: const <double>[0, 0.52, 1],
+                ),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: dark
+                      ? Colors.white.withValues(alpha: 0.16)
+                      : Colors.white.withValues(alpha: 0.74),
+                  width: 0.85,
+                ),
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: dark ? 0.32 : 0.14),
+                    blurRadius: 26,
+                    spreadRadius: -9,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: AnimatedBuilder(
+                animation: Listenable.merge(<Listenable>[
+                  widget.controller,
+                  _elasticity,
+                ]),
+                builder: (BuildContext context, Widget? child) {
+                  double page = _selectedIndex().toDouble();
 
-                if (controller.hasClients) {
-                  try {
-                    final double page =
-                        controller.page ?? selectedIndex.toDouble();
+                  if (widget.controller.hasClients) {
+                    try {
+                      page = widget.controller.page ?? page;
+                    } catch (_) {}
+                  }
 
-                    selectedIndex = page.round().clamp(0, _screens.length - 1);
-                  } catch (_) {}
-                }
+                  page = page.clamp(0.0, _screens.length - 1.0).toDouble();
+                  final int lower = page.floor().clamp(0, _screens.length - 1);
+                  final int upper = page.ceil().clamp(0, _screens.length - 1);
+                  final Color indicatorColor = Color.lerp(
+                    _sectionColors[lower],
+                    _sectionColors[upper],
+                    page - lower,
+                  )!;
 
-                Widget navItem(int index) {
-                  final bool selected = index == selectedIndex;
-                  final Color itemColor = _sectionColors[index];
+                  return LayoutBuilder(
+                    builder:
+                        (BuildContext context, BoxConstraints constraints) {
+                          final double itemWidth =
+                              constraints.maxWidth / _screens.length;
 
-                  return Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2),
-                      child: PressScale(
-                        onTap: () => onSelect(_screens[index]),
-                        child: AnimatedContainer(
-                          duration: RodinInteractionSettings.motionDuration(
-                            180,
-                          ),
-                          curve: RodinInteractionSettings.transitionCurve,
-                          height: 46,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: selected
-                                ? itemColor.withValues(
-                                    alpha: dark ? 0.16 : 0.105,
-                                  )
-                                : Colors.transparent,
-                            borderRadius: BorderRadius.circular(15),
-                            border: Border.all(
-                              color: selected
-                                  ? itemColor.withValues(
-                                      alpha: dark ? 0.28 : 0.20,
-                                    )
-                                  : Colors.transparent,
-                              width: 0.8,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            mainAxisSize: MainAxisSize.min,
-                            children: <Widget>[
-                              AnimatedScale(
-                                scale: selected ? 1.08 : 0.94,
-                                duration:
-                                    RodinInteractionSettings.motionDuration(
-                                      200,
-                                    ),
-                                curve: RodinInteractionSettings.transitionCurve,
-                                child: Icon(
-                                  _icons[index],
-                                  size: 20.5,
-                                  color: selected
-                                      ? itemColor
-                                      : colors.onSurfaceVariant.withValues(
-                                          alpha: 0.72,
-                                        ),
+                          Widget navItem(int index) {
+                            final double rawFocus = (1 - (page - index).abs())
+                                .clamp(0.0, 1.0);
+                            final double focus = RodinInteractionSettings
+                                .transitionCurve
+                                .transform(rawFocus);
+                            final Color itemColor = _sectionColors[index];
+                            final Color foreground = Color.lerp(
+                              colors.onSurfaceVariant.withValues(alpha: 0.68),
+                              itemColor,
+                              focus,
+                            )!;
+
+                            return Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 2,
                                 ),
-                              ),
-                              AnimatedSize(
-                                duration:
-                                    RodinInteractionSettings.motionDuration(
-                                      200,
-                                    ),
-                                reverseDuration:
-                                    RodinInteractionSettings.motionDuration(
-                                      160,
-                                    ),
-                                curve: RodinInteractionSettings.transitionCurve,
-                                alignment: Alignment.centerLeft,
-                                child: selected
-                                    ? Padding(
-                                        padding: const EdgeInsets.only(left: 7),
-                                        child: AnimatedOpacity(
-                                          opacity: 1,
-                                          duration:
-                                              RodinInteractionSettings.motionDuration(
-                                                120,
-                                              ),
-                                          curve: Curves.easeOutCubic,
-                                          child: Text(
-                                            _labels[index],
-                                            maxLines: 1,
-                                            softWrap: false,
-                                            overflow: TextOverflow.fade,
-                                            style: TextStyle(
-                                              fontSize: 11.2,
-                                              fontWeight: FontWeight.w700,
-                                              color: itemColor,
+                                child: PressScale(
+                                  onTap: () => widget.onSelect(_screens[index]),
+                                  child: SizedBox(
+                                    height: 46,
+                                    child: Center(
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: <Widget>[
+                                          Transform.scale(
+                                            scale: 0.92 + (0.13 * focus),
+                                            child: Icon(
+                                              _icons[index],
+                                              size: 20.5,
+                                              color: foreground,
                                             ),
                                           ),
-                                        ),
-                                      )
-                                    : const SizedBox.shrink(),
+                                          ClipRect(
+                                            child: Align(
+                                              widthFactor: focus,
+                                              alignment: Alignment.centerLeft,
+                                              child: Opacity(
+                                                opacity: focus,
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        left: 7,
+                                                      ),
+                                                  child: Text(
+                                                    _labels[index],
+                                                    maxLines: 1,
+                                                    softWrap: false,
+                                                    style: TextStyle(
+                                                      fontSize: 11.2,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      letterSpacing: -0.08,
+                                                      color: itemColor,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }
+                            );
+                          }
 
-                return Row(
-                  children: <Widget>[
-                    navItem(0),
-                    navItem(1),
-                    navItem(2),
-                    navItem(3),
-                  ],
-                );
-              },
+                          return GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onHorizontalDragStart: (DragStartDetails details) {
+                              _beginDrag(
+                                details.localPosition.dx,
+                                constraints.maxWidth,
+                              );
+                            },
+                            onHorizontalDragUpdate:
+                                (DragUpdateDetails details) {
+                                  _updateDrag(
+                                    details.localPosition.dx,
+                                    constraints.maxWidth,
+                                    details.delta.dx,
+                                  );
+                                },
+                            onHorizontalDragEnd: (_) => _settleDrag(),
+                            onHorizontalDragCancel: _settleDrag,
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              children: <Widget>[
+                                Positioned(
+                                  left:
+                                      (itemWidth * page) +
+                                      4 -
+                                      (_elasticity.value < 0
+                                          ? _elasticity.value.abs() * 13
+                                          : 0),
+                                  top: 0,
+                                  width:
+                                      itemWidth -
+                                      8 +
+                                      (_elasticity.value.abs() * 13),
+                                  height: 46,
+                                  child: Transform.scale(
+                                    scaleY:
+                                        1 - (_elasticity.value.abs() * 0.035),
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                          colors: <Color>[
+                                            Colors.white.withValues(
+                                              alpha: dark ? 0.10 : 0.34,
+                                            ),
+                                            colors.surface.withValues(
+                                              alpha: dark ? 0.26 : 0.28,
+                                            ),
+                                            indicatorColor.withValues(
+                                              alpha: dark ? 0.045 : 0.026,
+                                            ),
+                                          ],
+                                          stops: const <double>[0, 0.62, 1],
+                                        ),
+                                        borderRadius: BorderRadius.circular(
+                                          15 - (_elasticity.value.abs() * 1.2),
+                                        ),
+                                        border: Border.all(
+                                          color: Colors.white.withValues(
+                                            alpha: dark ? 0.11 : 0.44,
+                                          ),
+                                          width: 0.55,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Row(
+                                  children: List<Widget>.generate(
+                                    _screens.length,
+                                    navItem,
+                                    growable: false,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                  );
+                },
+              ),
             ),
           ),
         ),
@@ -13760,20 +15283,4 @@ class BottomBarItem extends StatelessWidget {
       ),
     );
   }
-}
-
-class _HubSpec {
-  const _HubSpec(
-    this.screen,
-    this.title,
-    this.subtitle,
-    this.icon,
-    this.accent,
-  );
-
-  final RodinScreen screen;
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final Color accent;
 }

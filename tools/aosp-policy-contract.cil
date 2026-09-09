@@ -104,6 +104,8 @@
 (allow rodin_daemon_release_probe power_service (service_manager (find)))
 (allow rodin_daemon_release_probe settings_service (service_manager (find)))
 (allow rodin_daemon_release_probe window_service (service_manager (find)))
+(allow rodin_daemon_release_probe activity_service (service_manager (find)))
+(allow rodin_daemon_release_probe overlay_service (service_manager (find)))
 (allow rodin_daemon_release_probe system_file
     (file (execute execute_no_trans getattr map open read)))
 (allow rodin_daemon_release_probe toolbox_exec

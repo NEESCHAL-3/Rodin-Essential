@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+mod system_colors;
 mod touch_resampler;
 
 pub const SOCKET_NAME: &str = "rodin_essentiald_v15";
@@ -5227,6 +5228,26 @@ pub fn handle_command(line: &str) -> String {
     }
     if cmd == "GET snapshot" {
         return format!("OK {}", snapshot());
+    }
+    // SettingsProvider owns palette persistence. These commands deliberately
+    // bypass hardware state recording and all background reassertion guards.
+    if cmd == "GET system.colors" {
+        return match system_colors::read() {
+            Ok(state) => format!("OK {state}"),
+            Err(error) => format!("ERR {error}"),
+        };
+    }
+    if cmd == "SET system.colors.wallpaper" {
+        return match system_colors::apply_wallpaper() {
+            Ok(state) => format!("OK {state}"),
+            Err(error) => format!("ERR {error}"),
+        };
+    }
+    if let Some(args) = cmd.strip_prefix("SET system.colors ") {
+        return match system_colors::apply_custom(args) {
+            Ok(state) => format!("OK {state}"),
+            Err(error) => format!("ERR {error}"),
+        };
     }
 
     let result: Result<(), String> = if let Some(arg) = cmd.strip_prefix("SET charging ") {

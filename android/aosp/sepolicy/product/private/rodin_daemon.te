@@ -35,6 +35,10 @@ allow rodin_daemon display_service:service_manager find;
 allow rodin_daemon power_service:service_manager find;
 allow rodin_daemon settings_service:service_manager find;
 allow rodin_daemon window_service:service_manager find;
+# System Colors resolves the foreground user and reads native palette output.
+# SettingsProvider and SystemUI retain ownership of the actual theme overlays.
+allow rodin_daemon activity_service:service_manager find;
+allow rodin_daemon overlay_service:service_manager find;
 
 # The backend calls Android command-line clients for settings and diagnostics.
 allow rodin_daemon system_file:file { rx_file_perms execute_no_trans };
