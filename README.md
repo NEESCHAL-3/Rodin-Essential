@@ -51,9 +51,9 @@ The redesigned interface groups live device telemetry and hardware tuning into
 focused panels for each subsystem.
 
 <p align="center">
-  <a href="docs/screenshots/home-redesigned.jpg"><img src="docs/screenshots/home-redesigned.jpg" alt="Home dashboard" width="150"></a>
+  <a href="docs/screenshots/home-redesigned.png"><img src="docs/screenshots/home-redesigned.png" alt="Home dashboard" width="150"></a>
   &nbsp;&nbsp;
-  <a href="docs/screenshots/control-hubs-redesigned.jpg"><img src="docs/screenshots/control-hubs-redesigned.jpg" alt="Control hubs" width="150"></a>
+  <a href="docs/screenshots/control-hubs-redesigned.png"><img src="docs/screenshots/control-hubs-redesigned.png" alt="Control hubs" width="150"></a>
 </p>
 <p align="center"><sub><b>Home</b> - Device Pulse and quick controls&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Control Hubs</b> - Hardware subsystem navigation</sub></p>
 
