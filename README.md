@@ -47,33 +47,33 @@ installer and are not supported by the included AOSP policy.
 
 ## Screenshots
 
-The redesigned hubs provide a quick overview of Rodin Essential's controls,
-with focused panels for each hardware subsystem.
+The redesigned interface groups live device telemetry and hardware tuning into
+focused panels for each subsystem.
 
 | Home | Control Hubs |
 | --- | --- |
-| [![Home dashboard](docs/screenshots/home-redesigned.jpg)](docs/screenshots/home-redesigned.jpg) | [![Control hubs](docs/screenshots/control-hubs-redesigned.jpg)](docs/screenshots/control-hubs-redesigned.jpg) |
-| Overview of active profiles, device state, and key controls. | Central entry point for CPU, GPU, touch, display, battery, memory, and diagnostics. |
+| <a href="docs/screenshots/home-redesigned.jpg"><img src="docs/screenshots/home-redesigned.jpg" alt="Home dashboard" width="180"></a> | <a href="docs/screenshots/control-hubs-redesigned.jpg"><img src="docs/screenshots/control-hubs-redesigned.jpg" alt="Control hubs" width="180"></a> |
+| Device Pulse, active profile, and quick controls. | Central entry point for performance, display, power, memory, and diagnostics. |
 
 | CPU | GPU |
 | --- | --- |
-| [![CPU controls](docs/screenshots/cpu.jpg)](docs/screenshots/cpu.jpg) | [![GPU controls](docs/screenshots/gpu.jpg)](docs/screenshots/gpu.jpg) |
+| <a href="docs/screenshots/cpu.jpg"><img src="docs/screenshots/cpu.jpg" alt="CPU controls" width="180"></a> | <a href="docs/screenshots/gpu.jpg"><img src="docs/screenshots/gpu.jpg" alt="GPU controls" width="180"></a> |
 | Tune cluster policies, frequencies, and core state. | Configure GPU profiles, governors, and performance limits. |
 
 | Touch | Display |
 | --- | --- |
-| [![Touch controls](docs/screenshots/touch.jpg)](docs/screenshots/touch.jpg) | [![Display controls](docs/screenshots/display.jpg)](docs/screenshots/display.jpg) |
+| <a href="docs/screenshots/touch.jpg"><img src="docs/screenshots/touch.jpg" alt="Touch controls" width="180"></a> | <a href="docs/screenshots/display.jpg"><img src="docs/screenshots/display.jpg" alt="Display controls" width="180"></a> |
 | Select touch timing profiles and response behavior. | Adjust display modes, resolution, density, and vendor controls. |
 
 | Battery | ZRAM |
 | --- | --- |
-| [![Battery controls](docs/screenshots/battery.jpg)](docs/screenshots/battery.jpg) | [![ZRAM controls](docs/screenshots/zram.jpg)](docs/screenshots/zram.jpg) |
+| <a href="docs/screenshots/battery.jpg"><img src="docs/screenshots/battery.jpg" alt="Battery controls" width="180"></a> | <a href="docs/screenshots/zram.jpg"><img src="docs/screenshots/zram.jpg" alt="ZRAM controls" width="180"></a> |
 | Monitor charging behavior and power telemetry. | Configure compressed-memory size, algorithm, and policy. |
 
-| Diagnostics |
-| --- |
-| [![Diagnostics](docs/screenshots/diagnostics.jpg)](docs/screenshots/diagnostics.jpg) |
-| Inspect connection status, capabilities, and runtime health. |
+| Diagnostics | Support |
+| --- | --- |
+| <a href="docs/screenshots/diagnostics.jpg"><img src="docs/screenshots/diagnostics.jpg" alt="Diagnostics" width="180"></a> | <a href="docs/screenshots/support.jpg"><img src="docs/screenshots/support.jpg" alt="Support and project information" width="180"></a> |
+| Inspect connection status, capabilities, and runtime health. | Find project links, community support, and hardware safety notes. |
 
 ## Performance profiles
 
