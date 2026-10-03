@@ -2,10 +2,45 @@
 
 All notable changes are documented here.
 
-## Unreleased
+## 1.18.4
+
+Released on 4 October 2026.
+
+### Added
+
+- Kernel-supported bypass charging with Immediate and 20/40/80/90% threshold
+  choices, persisted independently of the app, and measured status reporting.
+- Whole-app hardware-control pause and reset controls.
+- OEM Control choices for touch sampling, display colour and temperature.
+  Fresh or missing settings leave those features under ROM ownership; existing
+  explicit choices remain saved.
+- A stock-EEA unpacked-ROM integration kit with partition copy destinations,
+  filesystem metadata, certificate-bound application policy and a full porter
+  guide. Its prepared policies target OS3.0.302.0.WOJEUXM, not arbitrary ports.
+- AOSP integration instructions and a scoped platform-policy preparation helper
+  for the native touch timing interface.
 
 ### Fixed
 
+- Touch ownership release is serialized with wake and boot restoration so an
+  older queued restore cannot resurrect a fixed profile after selecting OEM.
+- Display OEM Control stops future overrides without forcing a guessed stock
+  colour mode. The current appearance may remain until the ROM reapplies it.
+- Hardware reset invalidates applied-state caches, and bypass verification is
+  retained across page changes without redundant unchanged kernel requests.
+- Dock clearance and card text wrapping improve readability. App-facing
+  descriptions use the full Rodin Essential name.
+- Refined Home, Control Hubs, Support, charging cards, confirmation dialogs and
+  haptics, including a continuous bypass-threshold selector.
+- Root-module migration handles the signing-key rotation for user-installed
+  copies while preserving daemon settings. Application-local preferences reset
+  during this one-time migration; differently signed ROM-native updates remain
+  rejected rather than bypassing Android package identity.
+- ROM application policy uses certificate-bound IPC, normal application MCS
+  isolation and scoped daemon hardware permissions. Policy tests no longer
+  treat a runtime-mode compile as a strict neverallow pass.
+- App, daemon/host packages, module metadata and About label are synchronized
+  at 1.18.4 / code 11804. The matching IPC protocol remains 13.6.
 - System Colors now writes the version-correct Android Monet contract: the
   legacy palette/accent pair on Android 12 and palette/style fields on Android
   13 and newer.

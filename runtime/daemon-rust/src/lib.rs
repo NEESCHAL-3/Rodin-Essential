@@ -8,20 +8,28 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Output as ProcessOutput, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+mod bypass_policy;
+mod service_control;
 mod system_colors;
 mod touch_resampler;
 
 pub const SOCKET_NAME: &str = "rodin_essentiald_v15";
 pub const REVERSE_SOCKET_NAME: &str = "rodin_essential_app_v15";
-pub const PROTOCOL_VERSION: &str = "13.5";
+pub const PROTOCOL_VERSION: &str = "13.6";
 const LOOPBACK_PORT: u16 = 732;
 
 const AF_UNIX: i32 = 1;
+#[cfg(target_os = "android")]
+const AF_NETLINK: i32 = 16;
 const SOCK_STREAM: i32 = 1;
+#[cfg(target_os = "android")]
+const SOCK_DGRAM: i32 = 2;
 const SOCK_CLOEXEC: i32 = 0x80000;
+#[cfg(target_os = "android")]
+const NETLINK_KOBJECT_UEVENT: i32 = 15;
 const SOL_SOCKET: i32 = 1;
 const SO_PEERCRED: i32 = 17;
 
@@ -38,6 +46,15 @@ struct UCred {
     gid: u32,
 }
 
+#[repr(C)]
+#[cfg(target_os = "android")]
+struct SockAddrNl {
+    nl_family: u16,
+    nl_pad: u16,
+    nl_pid: u32,
+    nl_groups: u32,
+}
+
 unsafe extern "C" {
     fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
     fn bind(fd: i32, addr: *const c_void, len: u32) -> i32;
@@ -45,6 +62,8 @@ unsafe extern "C" {
     fn accept4(fd: i32, addr: *mut c_void, len: *mut u32, flags: i32) -> i32;
     fn connect(fd: i32, addr: *const c_void, len: u32) -> i32;
     fn getsockopt(fd: i32, level: i32, name: i32, value: *mut c_void, len: *mut u32) -> i32;
+    #[cfg(target_os = "android")]
+    fn recv(fd: i32, buf: *mut c_void, len: usize, flags: i32) -> isize;
     fn close(fd: i32) -> i32;
 }
 
@@ -410,6 +429,7 @@ pub fn accept_stream(listener: RawFd) -> Result<UnixStream, String> {
 enum AppUidPolicy {
     SelinuxOnly,
     Enforce(u32),
+    EnforceAppId(u32),
     Reject,
 }
 
@@ -417,9 +437,32 @@ static APP_UID_POLICY: OnceLock<AppUidPolicy> = OnceLock::new();
 static APP_CLIENT_SEEN: AtomicI32 = AtomicI32::new(0);
 static APP_CLIENT_TRANSPORT: AtomicI32 = AtomicI32::new(0);
 
+fn package_app_id_from_packages_list(contents: &str, package: &str) -> Option<u32> {
+    contents.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        if fields.next()? != package {
+            return None;
+        }
+        fields
+            .next()?
+            .parse::<u32>()
+            .ok()
+            .filter(|uid| *uid >= 10_000)
+            .map(|uid| uid % 100_000)
+    })
+}
+
 fn configured_app_uid_policy() -> AppUidPolicy {
     *APP_UID_POLICY.get_or_init(|| match std::env::var("RODIN_APP_UID") {
-        Err(std::env::VarError::NotPresent) => AppUidPolicy::SelinuxOnly,
+        Err(std::env::VarError::NotPresent) => match std::env::var("RODIN_APP_PACKAGE") {
+            Err(std::env::VarError::NotPresent) => AppUidPolicy::SelinuxOnly,
+            Err(std::env::VarError::NotUnicode(_)) => AppUidPolicy::Reject,
+            Ok(package) => fs::read_to_string("/data/system/packages.list")
+                .ok()
+                .and_then(|contents| package_app_id_from_packages_list(&contents, &package))
+                .map(AppUidPolicy::EnforceAppId)
+                .unwrap_or(AppUidPolicy::Reject),
+        },
         Err(std::env::VarError::NotUnicode(_)) => AppUidPolicy::Reject,
         Ok(value) => value
             .parse::<u32>()
@@ -521,6 +564,7 @@ fn client_uid_allowed(peer: u32, policy: AppUidPolicy) -> bool {
         || match policy {
             AppUidPolicy::SelinuxOnly => true,
             AppUidPolicy::Enforce(expected) => peer == expected,
+            AppUidPolicy::EnforceAppId(expected) => peer >= 10_000 && peer % 100_000 == expected,
             AppUidPolicy::Reject => false,
         }
 }
@@ -556,12 +600,332 @@ fn read_trimmed<P: AsRef<Path>>(path: P) -> Result<String, String> {
 }
 
 fn write_verified(path: &Path, value: &str) -> Result<String, String> {
-    fs::write(path, format!("{value}\n")).map_err(|e| format!("write {}: {e}", path.display()))?;
+    service_control::write(path, format!("{value}\n"))
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
     read_trimmed(path)
 }
 
+const RODIN_MAX_FCC_UA: i64 = 22_000_000;
+const BYPASS_CHARGING_PATHS: [&str; 2] = [
+    "/sys/class/power_supply/battery/bypass_charging",
+    "/sys/class/power_supply/battery/bypass_charge",
+];
+
+static CHARGING_LAST_USB_ONLINE: AtomicI32 = AtomicI32::new(-1);
+static CHARGING_BOOT_RESTORE_DONE: AtomicI32 = AtomicI32::new(0);
+
 fn charging_path() -> PathBuf {
     PathBuf::from("/sys/class/power_supply/usb/sic_mode")
+}
+
+fn charging_fcc_path() -> Option<PathBuf> {
+    [
+        "/sys/class/power_supply/battery/constant_charge_current",
+        "/sys/class/power_supply/bms/constant_charge_current",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .find(|path| path.exists())
+}
+
+fn bypass_charging_path() -> Option<PathBuf> {
+    let capability = Path::new("/sys/class/power_supply/battery/bypass_charging_supported");
+    if !Path::new("/sys/class/power_supply/battery/bypass_charging_active").exists()
+        || read_trimmed(capability)
+            .ok()
+            .and_then(|value| parse_kernel_bool(&value))
+            != Some(true)
+    {
+        return None;
+    }
+    BYPASS_CHARGING_PATHS
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|path| path.exists())
+}
+
+fn parse_kernel_bool(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "y" | "yes" | "true" | "on" | "enabled" => Some(true),
+        "0" | "n" | "no" | "false" | "off" | "disabled" => Some(false),
+        _ => None,
+    }
+}
+
+fn bypass_charging_state() -> i32 {
+    bypass_charging_path()
+        .and_then(|path| read_trimmed(path).ok())
+        .and_then(|value| parse_kernel_bool(&value))
+        .map(i32::from)
+        .unwrap_or(-1)
+}
+
+fn apply_bypass_charging(enabled: bool) -> Result<(), String> {
+    let path = bypass_charging_path()
+        .ok_or_else(|| "bypass charging is not supported by this kernel".to_string())?;
+    // The OEM driver restarts its neutral-current observation on a write,
+    // including a repeated enable. Reads, page changes and wake restoration
+    // must not restart that hardware settling interval.
+    if read_trimmed(&path)
+        .ok()
+        .and_then(|value| parse_kernel_bool(&value))
+        == Some(enabled)
+    {
+        return Ok(());
+    }
+    let requested = if enabled { "1" } else { "0" };
+    let readback = write_verified(&path, requested)?;
+    let actual = parse_kernel_bool(&readback)
+        .ok_or_else(|| format!("bypass charging readback is invalid: {readback}"))?;
+    if actual != enabled {
+        return Err(format!(
+            "bypass charging verify failed: requested {}, live {}",
+            i32::from(enabled),
+            i32::from(actual)
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct BypassPolicyRuntime {
+    selection: Option<(bool, i32)>,
+    held: bool,
+    last_write: Option<Instant>,
+}
+
+static BYPASS_POLICY: OnceLock<Mutex<BypassPolicyRuntime>> = OnceLock::new();
+static BYPASS_TRANSACTION: Mutex<()> = Mutex::new(());
+static BYPASS_POLICY_ERROR: AtomicI32 = AtomicI32::new(0);
+static BYPASS_MONITOR_DIRTY: Mutex<bool> = Mutex::new(true);
+static BYPASS_MONITOR_WAKE: Condvar = Condvar::new();
+
+fn wake_bypass_monitor() {
+    *BYPASS_MONITOR_DIRTY
+        .lock()
+        .expect("bypass monitor poisoned") = true;
+    BYPASS_MONITOR_WAKE.notify_one();
+}
+
+fn reconcile_bypass(enabled: bool, threshold: i32, explicit: bool) -> Result<(), String> {
+    let mut policy = BYPASS_POLICY
+        .get_or_init(|| Mutex::new(BypassPolicyRuntime::default()))
+        .lock()
+        .map_err(|_| "bypass policy lock poisoned".to_string())?;
+    let live = bypass_charging_state();
+    if live < 0 {
+        return Err("bypass charging is not supported by this kernel".into());
+    }
+    if policy.selection != Some((enabled, threshold)) {
+        // Recover the threshold latch from the real hardware after a daemon
+        // restart, rather than briefly resuming charging in its release band.
+        policy.held = live == 1;
+        policy.selection = Some((enabled, threshold));
+    }
+    let desired = bypass_policy::target(
+        enabled,
+        threshold,
+        battery("capacity").parse::<i32>().ok(),
+        policy.held,
+    )?;
+    let transition = desired != policy.held;
+    if live != i32::from(desired) {
+        // Events drive normal transitions. Bound retries of a vendor conflict;
+        // never run a sysfs write loop or restart an unchanged request.
+        if !explicit
+            && !transition
+            && policy
+                .last_write
+                .is_some_and(|time| time.elapsed() < Duration::from_secs(5))
+        {
+            return Ok(());
+        }
+        policy.last_write = Some(Instant::now());
+        apply_bypass_charging(desired)?;
+    }
+    policy.held = desired;
+    BYPASS_POLICY_ERROR.store(0, Ordering::Release);
+    Ok(())
+}
+
+fn maintain_bypass_policy() {
+    let _transaction = BYPASS_TRANSACTION
+        .lock()
+        .expect("bypass transaction poisoned");
+    let state = persisted_state().lock().ok().map(|state| state.clone());
+    if let Some(state) = state.filter(|state| state.bypass_charging == 1) {
+        if let Err(error) = reconcile_bypass(true, state.bypass_threshold, false) {
+            if BYPASS_POLICY_ERROR.swap(1, Ordering::AcqRel) == 0 {
+                eprintln!("RODIN_BYPASS_POLICY_FAIL {error}");
+            }
+        }
+    }
+}
+
+fn configure_bypass(enabled: Option<bool>, threshold: Option<i32>) -> Result<(), String> {
+    let _transaction = BYPASS_TRANSACTION
+        .lock()
+        .map_err(|_| "bypass transaction poisoned")?;
+    let old = persisted_state()
+        .lock()
+        .map_err(|_| "persisted state poisoned")?
+        .clone();
+    let threshold_only = enabled.is_none();
+    let enabled = enabled.unwrap_or(old.bypass_charging == 1);
+    let threshold = threshold.unwrap_or(old.bypass_threshold);
+    if !bypass_policy::valid_threshold(threshold) {
+        return Err("invalid bypass threshold".into());
+    }
+    if threshold_only && !enabled {
+        if bypass_charging_path().is_none() {
+            return Err("bypass charging is not supported by this kernel".into());
+        }
+        // Selecting a future threshold while OFF must not change hardware.
+        return mutate_persisted_state(|state| state.bypass_threshold = threshold);
+    }
+    if enabled && old.bypass_charging != 1 && old.charging > 0 && charging_fcc_path().is_some() {
+        // While armed, threshold charging belongs to OEM, not a saved watt tier.
+        apply_charging_profile(0)?;
+    }
+    reconcile_bypass(enabled, threshold, true)?;
+    if let Err(error) = mutate_persisted_state(|state| {
+        state.bypass_charging = i32::from(enabled);
+        state.bypass_threshold = threshold;
+    }) {
+        let _ = reconcile_bypass(old.bypass_charging == 1, old.bypass_threshold, true);
+        return Err(error);
+    }
+    if !enabled && old.bypass_charging == 1 && charging_fcc_path().is_some() {
+        apply_charging_profile(normalize_charging_profile(old.charging))?;
+    }
+    wake_bypass_monitor();
+    Ok(())
+}
+
+fn valid_charging_profile(profile: i32) -> bool {
+    matches!(profile, 0 | 25 | 33 | 65 | 85 | 90)
+}
+
+fn normalize_charging_profile(profile: i32) -> i32 {
+    match profile {
+        // v1.18.x stored the old boost switch as 8. Preserve that intent as
+        // the full Rodin charging tier after upgrading.
+        8 => 90,
+        value if valid_charging_profile(value) => value,
+        _ => 0,
+    }
+}
+
+fn charging_profile_fcc_ua(profile: i32) -> Option<i64> {
+    match profile {
+        25 => Some(6_111_000),
+        33 => Some(8_067_000),
+        65 => Some(15_889_000),
+        85 => Some(20_778_000),
+        90 => Some(RODIN_MAX_FCC_UA),
+        _ => None,
+    }
+}
+
+fn read_i64(path: &Path) -> Option<i64> {
+    read_trimmed(path).ok()?.parse::<i64>().ok()
+}
+
+fn write_charging_if_present(path: &Path, value: &str) -> Result<Option<String>, String> {
+    if path.exists() {
+        write_verified(path, value).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+fn apply_charging_profile(profile: i32) -> Result<(), String> {
+    if !valid_charging_profile(profile) {
+        return Err("invalid charging profile".into());
+    }
+
+    let fcc_path = charging_fcc_path()
+        .ok_or_else(|| "Rodin FCC charging control is unavailable".to_string())?;
+
+    if profile == 0 {
+        // Release any Rodin Essential ceiling once, then return ownership to
+        // the ROM and charger controller. This does not touch thermal_remove,
+        // JEITA, OVP/OCP, or any charger-IC emergency protection.
+        let _ = write_charging_if_present(&charging_path(), "0")?;
+        let _ = write_verified(&fcc_path, &RODIN_MAX_FCC_UA.to_string())?;
+        CHARGING_LAST_USB_ONLINE.store(
+            usb("online").parse::<i32>().unwrap_or(-1),
+            Ordering::Release,
+        );
+        return Ok(());
+    }
+
+    let target = charging_profile_fcc_ua(profile)
+        .ok_or_else(|| "charging profile has no FCC mapping".to_string())?;
+
+    // Establish the current ceiling before requesting Xiaomi's authenticated
+    // fast-charge path. A lower immediate readback is valid battery/charger
+    // taper; a value above the requested ceiling is not.
+    let actual = write_verified(&fcc_path, &target.to_string())?
+        .parse::<i64>()
+        .map_err(|_| "charging FCC readback is invalid".to_string())?;
+    if actual > target {
+        return Err(format!(
+            "charging FCC verify failed: requested <= {target}, live {actual}"
+        ));
+    }
+
+    let _ = write_charging_if_present(&charging_path(), "8")?;
+    CHARGING_LAST_USB_ONLINE.store(
+        usb("online").parse::<i32>().unwrap_or(-1),
+        Ordering::Release,
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn maintain_charging_state(profile: i32, bypass_charging: i32) -> Result<(), String> {
+    let profile = normalize_charging_profile(profile);
+    let online = usb("online").parse::<i32>().unwrap_or(-1);
+    let previous_online = CHARGING_LAST_USB_ONLINE.swap(online, Ordering::AcqRel);
+
+    if bypass_charging == 1 {
+        maintain_bypass_policy();
+        if previous_online != online {
+            wake_bypass_monitor();
+        }
+        return Ok(());
+    }
+    if online != 1 || previous_online == 1 {
+        return Ok(());
+    }
+
+    if profile != 0 {
+        apply_charging_profile(profile)?;
+    }
+
+    Ok(())
+}
+
+fn normalize_reported_power_w(raw: i64) -> i32 {
+    if raw <= 0 {
+        -1
+    } else if raw <= 500 {
+        raw as i32
+    } else if raw <= 500_000 {
+        (raw / 1_000) as i32
+    } else {
+        (raw / 1_000_000) as i32
+    }
+}
+
+fn charging_adapter_watts() -> i32 {
+    [usb("apdo_max"), usb("power_max"), bms("adapting_power")]
+        .into_iter()
+        .filter_map(|value| value.parse::<i64>().ok())
+        .map(normalize_reported_power_w)
+        .max()
+        .unwrap_or(-1)
 }
 
 fn battery(name: &str) -> String {
@@ -571,6 +935,10 @@ fn battery(name: &str) -> String {
 
 fn usb(name: &str) -> String {
     read_trimmed(format!("/sys/class/power_supply/usb/{name}")).unwrap_or_else(|_| "NA".to_string())
+}
+
+fn bms(name: &str) -> String {
+    read_trimmed(format!("/sys/class/power_supply/bms/{name}")).unwrap_or_else(|_| "NA".to_string())
 }
 
 fn sanitize(value: String) -> String {
@@ -768,7 +1136,7 @@ fn restore_cpu_state() {
             set_core_ctl_enabled(false).and_then(|_| apply_saved_cpu_mask(state.cpu_online_mask));
 
         CPU_WRITE_ACK.store(if result.is_ok() { 1 } else { 0 }, Ordering::Release);
-    } else {
+    } else if state.cpu_manual == 0 {
         let result = apply_saved_cpu_mask(0xFF).and_then(|_| set_core_ctl_enabled(true));
 
         CPU_WRITE_ACK.store(if result.is_ok() { 1 } else { 0 }, Ordering::Release);
@@ -1117,7 +1485,7 @@ fn write_mi_thermal_config_mode(mode: i32) -> Result<(), String> {
         return Err(format!("invalid MI thermal config mode {mode}"));
     }
 
-    fs::write(MI_THERMAL_SCONFIG, mode.to_string())
+    service_control::write(MI_THERMAL_SCONFIG, mode.to_string())
         .map_err(|error| format!("MI thermal config write: {error}"))?;
     let actual = read_mi_thermal_config_mode()?;
     if actual != mode {
@@ -1199,7 +1567,7 @@ fn write_optional_cpu_control(path: &str, value: &str, label: &str) -> Result<()
         return Ok(());
     }
 
-    fs::write(path, value).map_err(|error| format!("{label} write: {error}"))
+    service_control::write(path, value).map_err(|error| format!("{label} write: {error}"))
 }
 
 fn apply_cluster_freq_controls_unlocked(
@@ -1215,11 +1583,11 @@ fn apply_cluster_freq_controls_unlocked(
     let path_max = format!("/sys/devices/system/cpu/cpufreq/policy{policy}/scaling_max_freq");
 
     let write_min = || {
-        fs::write(&path_min, format!("{min_khz}\n"))
+        service_control::write(&path_min, format!("{min_khz}\n"))
             .map_err(|error| format!("policy{policy} minimum write: {error}"))
     };
     let write_max = || {
-        fs::write(&path_max, format!("{max_khz}\n"))
+        service_control::write(&path_max, format!("{max_khz}\n"))
             .map_err(|error| format!("policy{policy} maximum write: {error}"))
     };
 
@@ -1458,7 +1826,7 @@ fn set_io_scheduler(scheduler: &str) -> Result<(), String> {
     }
 
     for path in &paths {
-        fs::write(path, format!("{scheduler}\n"))
+        service_control::write(path, format!("{scheduler}\n"))
             .map_err(|error| format!("write {}: {error}", path.display()))?;
         let actual = scheduler_name(path).unwrap_or_else(|| "unknown".into());
         if actual != scheduler {
@@ -1478,12 +1846,12 @@ fn write_if_present(path: &str, value: &str) -> Result<bool, String> {
     if !p.exists() {
         return Ok(false);
     }
-    fs::write(p, format!("{value}\n")).map_err(|e| format!("write {path}: {e}"))?;
+    service_control::write(p, format!("{value}\n")).map_err(|e| format!("write {path}: {e}"))?;
     Ok(true)
 }
 
 fn clear_gpu_cooling_cap() {
-    let _ = fs::write("/sys/class/thermal/cooling_device3/cur_state", "0");
+    let _ = service_control::write("/sys/class/thermal/cooling_device3/cur_state", "0");
 }
 
 fn profile_uses_ged_boost(profile: i32) -> bool {
@@ -1491,16 +1859,16 @@ fn profile_uses_ged_boost(profile: i32) -> bool {
 }
 
 fn write_beast_gpu_constraints() {
-    let _ = fs::write("/sys/class/misc/mali0/device/power_policy", "always_on");
-    let _ = fs::write("/sys/kernel/ged/hal/gpu_boost_level", "2");
-    let _ = fs::write("/sys/module/ged/parameters/ged_boost_enable", "1");
-    let _ = fs::write("/sys/module/ged/parameters/boost_gpu_enable", "1");
-    let _ = fs::write("/sys/module/ged/parameters/ged_smart_boost", "1");
-    let _ = fs::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "0");
-    let _ = fs::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "0");
-    let _ = fs::write("/sys/module/ged/parameters/gpu_bottom_freq", "1300000");
-    let _ = fs::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "1300000");
-    let _ = fs::write(
+    let _ = service_control::write("/sys/class/misc/mali0/device/power_policy", "always_on");
+    let _ = service_control::write("/sys/kernel/ged/hal/gpu_boost_level", "2");
+    let _ = service_control::write("/sys/module/ged/parameters/ged_boost_enable", "1");
+    let _ = service_control::write("/sys/module/ged/parameters/boost_gpu_enable", "1");
+    let _ = service_control::write("/sys/module/ged/parameters/ged_smart_boost", "1");
+    let _ = service_control::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "0");
+    let _ = service_control::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "0");
+    let _ = service_control::write("/sys/module/ged/parameters/gpu_bottom_freq", "1300000");
+    let _ = service_control::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "1300000");
+    let _ = service_control::write(
         "/sys/module/ged/parameters/gpu_cust_upbound_freq",
         "1300000",
     );
@@ -1531,17 +1899,17 @@ fn arm_or_lock_beast_gpu() -> bool {
     write_beast_gpu_constraints();
 
     if gpu_get_cur_freq_mhz() != 1300 {
-        let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
-        let _ = fs::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "0");
+        let _ = service_control::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
+        let _ = service_control::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "0");
         return false;
     }
 
-    let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "0");
+    let _ = service_control::write("/sys/module/ged/parameters/gpu_dvfs_enable", "0");
     gpu_get_cur_freq_mhz() == 1300 && gpu_get_dvfs_enabled() == 0
 }
 
 fn settle_beast_gpu_lock(attempts: usize, delay: Duration) -> bool {
-    let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
+    let _ = service_control::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
 
     for _ in 0..attempts {
         if arm_or_lock_beast_gpu() {
@@ -1553,7 +1921,7 @@ fn settle_beast_gpu_lock(attempts: usize, delay: Duration) -> bool {
     // Leaving DVFS enabled is intentional. The background guard will lock it
     // as soon as the GPU becomes active and GED reports OPP 0; disabling it
     // here would preserve whichever lower boot OPP happened to be current.
-    let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
+    let _ = service_control::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
     false
 }
 
@@ -1571,7 +1939,7 @@ pub fn enforce_performance_profile(profile: i32) -> bool {
         1 => {
             // Gaming Dynamic: the complete hardware OPP table under the
             // load-based governor, with GED and zero-latency power enabled.
-            let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
+            let _ = service_control::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
             let _ = gpu_write_file(
                 "/sys/class/devfreq/13000000.mali/max_freq",
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/max_freq",
@@ -1587,23 +1955,25 @@ pub fn enforce_performance_profile(profile: i32) -> bool {
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/governor",
                 "simple_ondemand",
             );
-            let _ = fs::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "40");
-            let _ = fs::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "0");
-            let _ = fs::write("/sys/module/ged/parameters/gpu_bottom_freq", "260000");
-            let _ = fs::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "260000");
-            let _ = fs::write(
+            let _ = service_control::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "40");
+            let _ = service_control::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "0");
+            let _ = service_control::write("/sys/module/ged/parameters/gpu_bottom_freq", "260000");
+            let _ =
+                service_control::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "260000");
+            let _ = service_control::write(
                 "/sys/module/ged/parameters/gpu_cust_upbound_freq",
                 "1300000",
             );
-            let _ = fs::write("/sys/class/misc/mali0/device/power_policy", "always_on");
-            let _ = fs::write("/sys/kernel/ged/hal/gpu_boost_level", "1");
-            let _ = fs::write("/sys/module/ged/parameters/ged_boost_enable", "1");
-            let _ = fs::write("/sys/module/ged/parameters/boost_gpu_enable", "1");
-            let _ = fs::write("/sys/module/ged/parameters/ged_smart_boost", "1");
+            let _ =
+                service_control::write("/sys/class/misc/mali0/device/power_policy", "always_on");
+            let _ = service_control::write("/sys/kernel/ged/hal/gpu_boost_level", "1");
+            let _ = service_control::write("/sys/module/ged/parameters/ged_boost_enable", "1");
+            let _ = service_control::write("/sys/module/ged/parameters/boost_gpu_enable", "1");
+            let _ = service_control::write("/sys/module/ged/parameters/ged_smart_boost", "1");
         }
         2 => {
             // Battery Saver: lowest governor with a 598 MHz hard ceiling.
-            let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
+            let _ = service_control::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
             let _ = gpu_write_file(
                 "/sys/class/devfreq/13000000.mali/min_freq",
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/min_freq",
@@ -1619,21 +1989,28 @@ pub fn enforce_performance_profile(profile: i32) -> bool {
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/governor",
                 "powersave",
             );
-            let _ = fs::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "40");
-            let _ = fs::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "27");
-            let _ = fs::write("/sys/module/ged/parameters/gpu_bottom_freq", "260000");
-            let _ = fs::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "260000");
-            let _ = fs::write("/sys/module/ged/parameters/gpu_cust_upbound_freq", "598000");
-            let _ = fs::write("/sys/class/misc/mali0/device/power_policy", "coarse_demand");
-            let _ = fs::write("/sys/kernel/ged/hal/gpu_boost_level", "0");
-            let _ = fs::write("/sys/module/ged/parameters/ged_boost_enable", "0");
-            let _ = fs::write("/sys/module/ged/parameters/boost_gpu_enable", "0");
-            let _ = fs::write("/sys/module/ged/parameters/ged_smart_boost", "0");
+            let _ = service_control::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "40");
+            let _ = service_control::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "27");
+            let _ = service_control::write("/sys/module/ged/parameters/gpu_bottom_freq", "260000");
+            let _ =
+                service_control::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "260000");
+            let _ = service_control::write(
+                "/sys/module/ged/parameters/gpu_cust_upbound_freq",
+                "598000",
+            );
+            let _ = service_control::write(
+                "/sys/class/misc/mali0/device/power_policy",
+                "coarse_demand",
+            );
+            let _ = service_control::write("/sys/kernel/ged/hal/gpu_boost_level", "0");
+            let _ = service_control::write("/sys/module/ged/parameters/ged_boost_enable", "0");
+            let _ = service_control::write("/sys/module/ged/parameters/boost_gpu_enable", "0");
+            let _ = service_control::write("/sys/module/ged/parameters/ged_smart_boost", "0");
         }
         _ => {
             // Stock Balanced hands DVFS back to the MediaTek power HAL. Rodin's
             // stock governor is `dummy`; the vendor service then owns live caps.
-            let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
+            let _ = service_control::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
             let _ = gpu_write_file(
                 "/sys/class/devfreq/13000000.mali/max_freq",
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/max_freq",
@@ -1649,19 +2026,23 @@ pub fn enforce_performance_profile(profile: i32) -> bool {
                 "/sys/class/misc/mali0/device/devfreq/13000000.mali/governor",
                 "dummy",
             );
-            let _ = fs::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "40");
-            let _ = fs::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "0");
-            let _ = fs::write("/sys/module/ged/parameters/gpu_bottom_freq", "260000");
-            let _ = fs::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "260000");
-            let _ = fs::write(
+            let _ = service_control::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "40");
+            let _ = service_control::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "0");
+            let _ = service_control::write("/sys/module/ged/parameters/gpu_bottom_freq", "260000");
+            let _ =
+                service_control::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "260000");
+            let _ = service_control::write(
                 "/sys/module/ged/parameters/gpu_cust_upbound_freq",
                 "1300000",
             );
-            let _ = fs::write("/sys/class/misc/mali0/device/power_policy", "coarse_demand");
-            let _ = fs::write("/sys/kernel/ged/hal/gpu_boost_level", "0");
-            let _ = fs::write("/sys/module/ged/parameters/ged_boost_enable", "0");
-            let _ = fs::write("/sys/module/ged/parameters/boost_gpu_enable", "0");
-            let _ = fs::write("/sys/module/ged/parameters/ged_smart_boost", "0");
+            let _ = service_control::write(
+                "/sys/class/misc/mali0/device/power_policy",
+                "coarse_demand",
+            );
+            let _ = service_control::write("/sys/kernel/ged/hal/gpu_boost_level", "0");
+            let _ = service_control::write("/sys/module/ged/parameters/ged_boost_enable", "0");
+            let _ = service_control::write("/sys/module/ged/parameters/boost_gpu_enable", "0");
+            let _ = service_control::write("/sys/module/ged/parameters/ged_smart_boost", "0");
         }
     }
 
@@ -1925,6 +2306,10 @@ fn write_touch_thp_rate(rate: u16) -> Result<TouchThpLayout, String> {
     }
 
     let layout = locate_touch_thp_layout()?;
+    if service_control::original("touch.thp_rate").is_none() {
+        let original = read_touch_thp_rate(layout, layout.configured_rate_addr)?;
+        service_control::remember("touch.thp_rate", serde_json::json!(original))?;
+    }
     let mut memory = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -1964,19 +2349,31 @@ fn touch_profile_rates(profile: i32) -> (i32, i32) {
     }
 }
 
+fn goodix_report_rate_hz() -> Option<u16> {
+    let raw = fs::read_to_string("/sys/devices/platform/goodix_ts.0/switch_report_rate").ok()?;
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized == "0" || normalized.contains("240hz") {
+        Some(240)
+    } else if normalized == "1" || normalized.contains("480hz") {
+        Some(480)
+    } else {
+        None
+    }
+}
+
 fn touch_profile_is_live(profile: i32) -> bool {
     let Some(expected_rate) = touch_profile_locked_rate(profile) else {
         return false;
     };
+    let panel = touch_panel_code();
     let native_matches = if vendor_binder::touch_available() {
-        locate_touch_thp_layout()
+        let thp_matches = locate_touch_thp_layout()
             .and_then(|layout| read_touch_thp_rate(layout, layout.current_rate_addr))
             .map(|rate| rate == expected_rate)
-            .unwrap_or(false)
-    } else if touch_panel_code() == 1 {
-        fs::read_to_string("/sys/devices/platform/goodix_ts.0/switch_report_rate")
-            .map(|raw| raw.trim() == if expected_rate == 240 { "0" } else { "1" })
-            .unwrap_or(false)
+            .unwrap_or(false);
+        thp_matches && (panel != 1 || goodix_report_rate_hz() == Some(expected_rate))
+    } else if panel == 1 {
+        goodix_report_rate_hz() == Some(expected_rate)
     } else {
         false
     };
@@ -2108,20 +2505,40 @@ fn apply_touch_driver_fallback(profile: i32, panel: i32) -> Result<(), String> {
     }
 
     let value = if profile == 1 { "0" } else { "1" };
-    fs::write(
+    service_control::write(
         "/sys/devices/platform/goodix_ts.0/switch_report_rate",
         value,
     )
-    .map_err(|e| format!("Goodix report-rate fallback: {e}"))
+    .map_err(|e| format!("Goodix report-rate fallback: {e}"))?;
+
+    let expected = if profile == 1 { 240 } else { 480 };
+    for _ in 0..4 {
+        std::thread::sleep(Duration::from_millis(20));
+        if goodix_report_rate_hz() == Some(expected) {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "Goodix report-rate verify failed: requested {expected}, live {:?}",
+        goodix_report_rate_hz()
+    ))
 }
 
 fn set_touch_profile(profile: i32) -> Result<(), String> {
+    if profile == 0 {
+        return release_touch_control();
+    }
     if !(1..=3).contains(&profile) {
         return Err("invalid touch profile".into());
     }
     let _guard = touch_profile_apply_lock()
         .lock()
         .map_err(|_| "touch profile apply lock poisoned".to_string())?;
+    apply_touch_profile_locked(profile)
+}
+
+fn apply_touch_profile_locked(profile: i32) -> Result<(), String> {
+    service_control::remember("touch.hal", serde_json::json!(true))?;
 
     TOUCH_APPLY_ACK.store(0, Ordering::Release);
     // Stop custom output while the Xiaomi pipeline is being reconfigured.
@@ -2158,6 +2575,13 @@ fn set_touch_profile(profile: i32) -> Result<(), String> {
             }
         }
 
+        // Goodix exposes a separate driver latch in addition to Xiaomi's THP
+        // timing block. Apply it last so the HAL sequence cannot silently
+        // return the physical panel source to 240 Hz after reporting success.
+        if panel == 1 {
+            apply_touch_driver_fallback(if profile == 3 { 2 } else { profile }, panel)?;
+        }
+
         if resampled {
             // Keep the native Xiaomi path at 480 Hz and deliver a precise
             // one-millisecond Android event stream through the same handle.
@@ -2172,7 +2596,7 @@ fn set_touch_profile(profile: i32) -> Result<(), String> {
     };
 
     let (sustained_rate, instant_rate) = touch_profile_rates(profile);
-    let _ = fs::write("/proc/touch_boost/enable", "1");
+    let _ = service_control::write("/proc/touch_boost/enable", "1");
 
     mutate_persisted_state(|s| s.touch = profile).inspect_err(|_| {
         TOUCH_APPLY_ACK.store(0, Ordering::Release);
@@ -2187,7 +2611,82 @@ fn set_touch_profile(profile: i32) -> Result<(), String> {
     Ok(())
 }
 
+fn release_touch_control() -> Result<(), String> {
+    let _guard = touch_profile_apply_lock()
+        .lock()
+        .map_err(|_| "touch profile apply lock poisoned")?;
+    touch_resampler::set_target_hz(0)?;
+    let originals = service_control::originals();
+    let mut released = Vec::new();
+    if service_control::original("touch.hal").is_some() && vendor_binder::touch_available() {
+        // Release game/super-report requests once, not on every wake or boot.
+        apply_touch_hal_profile(0)?;
+    }
+    if let Some(rate) = service_control::original("touch.thp_rate").and_then(|v| v.as_u64()) {
+        let layout = locate_touch_thp_layout()?;
+        let mut memory = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(format!("/proc/{}/mem", layout.pid))
+            .map_err(|e| e.to_string())?;
+        memory
+            .seek(SeekFrom::Start(layout.configured_rate_addr))
+            .map_err(|e| e.to_string())?;
+        memory
+            .write_all(&(rate as u16).to_le_bytes())
+            .map_err(|e| e.to_string())?;
+        if read_touch_thp_rate(layout, layout.configured_rate_addr)? != rate as u16 {
+            return Err("OEM touch timing readback mismatch".into());
+        }
+    }
+    for (key, value) in originals {
+        let touch_node = key == "/proc/touch_boost/enable"
+            || key == "/sys/devices/platform/goodix_ts.0/switch_report_rate";
+        if touch_node {
+            let original = value.as_str().ok_or("invalid original touch node")?;
+            fs::write(&key, original).map_err(|e| format!("restore {key}: {e}"))?;
+            let actual = read_trimmed(&key)?;
+            if service_control::normalized_original(Path::new(&key), &actual) != original {
+                return Err(format!("OEM touch readback mismatch: {key}"));
+            }
+        }
+        if touch_node || matches!(key.as_str(), "touch.hal" | "touch.thp_rate") {
+            released.push(key);
+        }
+    }
+    mutate_persisted_state(|state| state.touch = -1)?;
+    service_control::forget(&released)?;
+    TOUCH_STATE.store(-1, Ordering::Release);
+    TOUCH_SUSTAINED_RATE.store(-1, Ordering::Release);
+    TOUCH_INSTANT_RATE.store(-1, Ordering::Release);
+    TOUCH_CONTROL_PATH.store(0, Ordering::Release);
+    TOUCH_APPLY_ACK.store(-1, Ordering::Release);
+    Ok(())
+}
+
+fn display_mode_apply_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 fn set_display_color(mode: i32) -> Result<(), String> {
+    let _guard = display_mode_apply_lock()
+        .lock()
+        .map_err(|_| "display mode lock poisoned")?;
+    apply_display_color_locked(mode)
+}
+
+fn apply_display_color_locked(mode: i32) -> Result<(), String> {
+    if mode == -1 {
+        // Do not guess a ROM's colour mode by forcing Vivid or Original.
+        // The HAL has no portable ownership-release/get-original transaction.
+        // Relinquish persistence so the ROM can own future colour changes.
+        mutate_persisted_state(|state| state.display_color = -1)?;
+        DISPLAY_COLOR_STATE.store(-1, Ordering::Release);
+        DISPLAY_APPLY_ACK.store(-1, Ordering::Release);
+        return Ok(());
+    }
+    service_control::remember("display.hal", serde_json::json!(true))?;
     let case_id = match mode {
         0 => 2,
         1 => 0,
@@ -2205,6 +2704,20 @@ fn set_display_color(mode: i32) -> Result<(), String> {
 }
 
 fn set_display_temp(mode: i32) -> Result<(), String> {
+    let _guard = display_mode_apply_lock()
+        .lock()
+        .map_err(|_| "display mode lock poisoned")?;
+    apply_display_temp_locked(mode)
+}
+
+fn apply_display_temp_locked(mode: i32) -> Result<(), String> {
+    if mode == -1 {
+        mutate_persisted_state(|state| state.display_temp = -1)?;
+        DISPLAY_TEMP_STATE.store(-1, Ordering::Release);
+        DISPLAY_APPLY_ACK.store(-1, Ordering::Release);
+        return Ok(());
+    }
+    service_control::remember("display.hal", serde_json::json!(true))?;
     if !matches!(mode, 1..=3) {
         return Err("invalid display temperature".into());
     }
@@ -2219,6 +2732,7 @@ fn set_display_temp(mode: i32) -> Result<(), String> {
 }
 
 fn set_display_toggle(case_id: i32, enabled: bool, state: &AtomicI32) -> Result<(), String> {
+    service_control::remember("display.hal", serde_json::json!(true))?;
     let val = if enabled { 1 } else { 0 };
     if !vendor_binder::set_display_feature(case_id, val, 255) {
         DISPLAY_APPLY_ACK.store(0, Ordering::Release);
@@ -2244,6 +2758,7 @@ static PERFORMANCE_PROFILE_OK: AtomicI32 = AtomicI32::new(-1);
 static PERSISTENCE_LOADED: AtomicI32 = AtomicI32::new(0);
 static DISPLAY_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
 static TOUCH_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
+static DT2W_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
 static KEEPALIVE_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
 static KEEPALIVE_APPLY_COUNT: AtomicI32 = AtomicI32::new(0);
 static CPU_WRITE_ACK: AtomicI32 = AtomicI32::new(-1);
@@ -2271,6 +2786,8 @@ fn touch_profile_apply_lock() -> &'static Mutex<()> {
 #[derive(Clone)]
 struct PersistedState {
     charging: i32,
+    bypass_charging: i32,
+    bypass_threshold: i32,
     touch: i32,
     dt2w: i32,
     display_color: i32,
@@ -2316,17 +2833,19 @@ impl Default for PersistedState {
     fn default() -> Self {
         Self {
             charging: 0,
-            touch: 1,
-            dt2w: 1,
-            display_color: 1,
-            display_temp: 2,
+            bypass_charging: 0,
+            bypass_threshold: 0,
+            touch: -1,
+            dt2w: -1,
+            display_color: -1,
+            display_temp: -1,
             display_width: -1,
             display_height: -1,
             display_density: -1,
-            sunlight: 1,
-            silky: 0,
-            video: 0,
-            dolby: 0,
+            sunlight: -1,
+            silky: -1,
+            video: -1,
+            dolby: -1,
             expert_gamut: 1,
             expert: [128, 128, 128, 128, 0, 0, 50, 255],
             perf: 0,
@@ -2448,11 +2967,14 @@ fn state_file() -> PathBuf {
 }
 
 fn load_persisted_state() -> PersistedState {
-    let mut state = PersistedState::default();
-
     let Ok(raw) = fs::read_to_string(state_file()) else {
-        return state;
+        return cleared_device_state();
     };
+    parse_persisted_state(&raw)
+}
+
+fn parse_persisted_state(raw: &str) -> PersistedState {
+    let mut state = PersistedState::default();
 
     // State written before GPU/CPU profile isolation did not carry this key.
     // Mark an existing file as legacy until the parser finds the new marker.
@@ -2476,6 +2998,16 @@ fn load_persisted_state() -> PersistedState {
             "charging" => {
                 if let Some(v) = int_value() {
                     state.charging = v;
+                }
+            }
+            "bypass_charging" => {
+                if let Some(v) = int_value() {
+                    state.bypass_charging = if v == 1 { 1 } else { 0 };
+                }
+            }
+            "bypass_threshold" => {
+                if let Some(v) = int_value().filter(|v| bypass_policy::valid_threshold(*v)) {
+                    state.bypass_threshold = v;
                 }
             }
             "touch" => {
@@ -2590,7 +3122,13 @@ fn load_persisted_state() -> PersistedState {
             }
             "cpu_manual" => {
                 if let Some(v) = int_value() {
-                    state.cpu_manual = if v == 1 { 1 } else { 0 };
+                    state.cpu_manual = if v == -1 {
+                        -1
+                    } else if v == 1 {
+                        1
+                    } else {
+                        0
+                    };
                 }
             }
             "cpu_online_mask" => {
@@ -2684,29 +3222,32 @@ fn load_persisted_state() -> PersistedState {
         }
     }
 
+    if state.charging != -1 {
+        state.charging = normalize_charging_profile(state.charging);
+    }
     if !(1..=3).contains(&state.touch) {
-        state.touch = 1;
+        state.touch = -1;
     }
-    if state.dt2w < 0 {
-        state.dt2w = 1;
+    if !matches!(state.dt2w, -1 | 0 | 1) {
+        state.dt2w = -1;
     }
-    if state.display_color < 0 {
-        state.display_color = 1;
+    if !(-1..=2).contains(&state.display_color) {
+        state.display_color = -1;
     }
-    if state.display_temp < 0 {
-        state.display_temp = 2;
+    if !matches!(state.display_temp, -1 | 1..=3) {
+        state.display_temp = -1;
     }
-    if state.sunlight < 0 {
-        state.sunlight = 1;
+    if !matches!(state.sunlight, -1 | 0 | 1) {
+        state.sunlight = -1;
     }
-    if state.silky < 0 {
-        state.silky = 0;
+    if !matches!(state.silky, -1 | 0 | 1) {
+        state.silky = -1;
     }
-    if state.video < 0 {
-        state.video = 0;
+    if !matches!(state.video, -1 | 0 | 1) {
+        state.video = -1;
     }
-    if state.dolby < 0 {
-        state.dolby = 0;
+    if !matches!(state.dolby, -1 | 0 | 1) {
+        state.dolby = -1;
     }
 
     state
@@ -2724,6 +3265,8 @@ fn save_persisted_state(state: &PersistedState) -> Result<(), String> {
 
     let mut out = String::new();
     out.push_str(&format!("charging={}\n", state.charging));
+    out.push_str(&format!("bypass_charging={}\n", state.bypass_charging));
+    out.push_str(&format!("bypass_threshold={}\n", state.bypass_threshold));
     out.push_str(&format!("touch={}\n", state.touch));
     out.push_str(&format!("dt2w={}\n", state.dt2w));
     out.push_str(&format!("display_color={}\n", state.display_color));
@@ -2817,20 +3360,21 @@ where
 }
 
 fn set_dt2w(enabled: bool) -> Result<(), String> {
+    service_control::remember("touch.dt2w", serde_json::json!(true))?;
     let value = if enabled { 1 } else { 0 };
     let _guard = touch_profile_apply_lock()
         .lock()
         .map_err(|_| "touch apply lock poisoned".to_string())?;
 
     if !vendor_binder::set_touch_mode(0, 14, value) {
-        TOUCH_APPLY_ACK.store(0, Ordering::Release);
+        DT2W_APPLY_ACK.store(0, Ordering::Release);
         return Err("touch HAL DT2W mode14 transaction failed".into());
     }
 
     mutate_persisted_state(|s| s.dt2w = value).inspect_err(|_| {
-        TOUCH_APPLY_ACK.store(0, Ordering::Release);
+        DT2W_APPLY_ACK.store(0, Ordering::Release);
     })?;
-    TOUCH_APPLY_ACK.store(1, Ordering::Release);
+    DT2W_APPLY_ACK.store(1, Ordering::Release);
     Ok(())
 }
 
@@ -2847,6 +3391,7 @@ fn expert_value_range(channel: i32) -> Option<(i32, i32)> {
 }
 
 fn set_expert_gamut(gamut: i32) -> Result<(), String> {
+    service_control::remember("display.hal", serde_json::json!(true))?;
     if !matches!(gamut, 1..=3) {
         return Err("invalid expert gamut".into());
     }
@@ -2874,6 +3419,7 @@ fn set_expert_gamut(gamut: i32) -> Result<(), String> {
 }
 
 fn set_expert_channel(channel: i32, value: i32) -> Result<(), String> {
+    service_control::remember("display.hal", serde_json::json!(true))?;
     let display_color = persisted_state()
         .lock()
         .ok()
@@ -3039,6 +3585,7 @@ fn run_settings_command(args: &[&str]) -> Result<String, String> {
 }
 
 fn set_sunlight(enabled: bool) -> Result<(), String> {
+    service_control::remember("display.hal", serde_json::json!(true))?;
     if enabled {
         let current = run_settings_command(&["get", "system", "screen_brightness"])?
             .parse::<i32>()
@@ -3106,7 +3653,30 @@ fn record_successful_command(cmd: &str) -> Result<(), String> {
             .trim()
             .parse::<i32>()
             .map_err(|_| "charging persistence parse failed".to_string())?;
+        if !valid_charging_profile(value) {
+            return Err("charging persistence profile invalid".into());
+        }
         return mutate_persisted_state(|state| state.charging = value);
+    }
+
+    if let Some(arg) = cmd.strip_prefix("SET charging.bypass ") {
+        let value = match arg.trim() {
+            "1" => 1,
+            "0" => 0,
+            _ => return Err("bypass charging persistence state invalid".into()),
+        };
+        return mutate_persisted_state(|state| state.bypass_charging = value);
+    }
+
+    if let Some(arg) = cmd.strip_prefix("SET charging.bypass_threshold ") {
+        let value = arg
+            .trim()
+            .parse::<i32>()
+            .map_err(|_| "invalid bypass threshold")?;
+        if !bypass_policy::valid_threshold(value) {
+            return Err("invalid bypass threshold".into());
+        }
+        return mutate_persisted_state(|state| state.bypass_threshold = value);
     }
 
     if let Some(rest) = cmd.strip_prefix("SET cpu.gov ") {
@@ -3340,6 +3910,7 @@ fn apply_display_resolution(
     density: i32,
     persist: bool,
 ) -> Result<(), String> {
+    capture_window_originals()?;
     let native = width <= 0 || height <= 0 || (width == 1220 && height == 2712);
     let detected_density = DISPLAY_NATIVE_DENSITY.load(Ordering::Acquire);
     let native_density = if detected_density > 0 {
@@ -3465,6 +4036,9 @@ fn screen_is_on() -> Option<bool> {
 }
 
 fn reassert_runtime_state(force_touch: bool) -> Result<(), String> {
+    if !service_control::active() {
+        return Ok(());
+    }
     // NOTE: Refresh rate is NOT touched here. The system's own
     // DisplayModeDirector / PRIORITY_MIUI_REFRESH_RATE / thermal voter
     // handles refresh rate based on the user's choice in Settings.
@@ -3480,24 +4054,25 @@ fn reassert_runtime_state(force_touch: bool) -> Result<(), String> {
     let mut attempted = 0i32;
     let mut applied = 0i32;
 
-    if matches!(state.charging, 0 | 8) {
-        attempted += 1;
-        if write_verified(
-            &charging_path(),
-            if state.charging == 8 { "8" } else { "0" },
-        )
-        .is_ok()
-        {
-            applied += 1;
-        }
-    }
-
     if (1..=3).contains(&state.touch) {
         attempted += 1;
+        // Serialize with OEM release, then recheck ownership. A wake event
+        // queued before the user's selection must not resurrect the old mode.
+        let _touch_guard = touch_profile_apply_lock()
+            .lock()
+            .map_err(|_| "touch profile apply lock poisoned".to_string())?;
+        let owned = persisted_state()
+            .lock()
+            .map_err(|_| "persisted state lock poisoned")?
+            .touch
+            == state.touch;
         let touch_matches = TOUCH_STATE.load(Ordering::Acquire) == state.touch
             && TOUCH_APPLY_ACK.load(Ordering::Acquire) == 1
             && touch_profile_is_live(state.touch);
-        if (!force_touch && touch_matches) || set_touch_profile(state.touch).is_ok() {
+        if !owned
+            || (!force_touch && touch_matches)
+            || apply_touch_profile_locked(state.touch).is_ok()
+        {
             applied += 1;
         }
     }
@@ -3505,10 +4080,10 @@ fn reassert_runtime_state(force_touch: bool) -> Result<(), String> {
     if matches!(state.dt2w, 0 | 1) {
         attempted += 1;
         if vendor_binder::set_touch_mode(0, 14, state.dt2w) {
-            TOUCH_APPLY_ACK.store(1, Ordering::Release);
+            DT2W_APPLY_ACK.store(1, Ordering::Release);
             applied += 1;
         } else {
-            TOUCH_APPLY_ACK.store(0, Ordering::Release);
+            DT2W_APPLY_ACK.store(0, Ordering::Release);
         }
     }
 
@@ -3543,6 +4118,9 @@ fn restore_sunlight(state: &PersistedState) {
 }
 
 fn restore_persisted_state() {
+    if !service_control::active() {
+        return;
+    }
     restore_cpu_state();
 
     let mut state = persisted_state()
@@ -3567,27 +4145,57 @@ fn restore_persisted_state() {
 
     PERSISTENCE_LOADED.store(1, Ordering::Release);
 
-    if matches!(state.charging, 0 | 8) {
-        let _ = write_verified(
-            &charging_path(),
-            if state.charging == 8 { "8" } else { "0" },
-        );
+    if state.bypass_charging != 1
+        && valid_charging_profile(state.charging)
+        && CHARGING_BOOT_RESTORE_DONE
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    {
+        let _ = apply_charging_profile(state.charging);
+    }
+
+    if state.bypass_charging == 1 {
+        maintain_bypass_policy();
+        wake_bypass_monitor();
     }
 
     if (1..=3).contains(&state.touch) {
-        let _ = set_touch_profile(state.touch);
+        if let Ok(_guard) = touch_profile_apply_lock().lock() {
+            let owned = persisted_state()
+                .lock()
+                .is_ok_and(|s| s.touch == state.touch);
+            if owned {
+                let _ = apply_touch_profile_locked(state.touch);
+            }
+        }
     }
 
     if matches!(state.dt2w, 0 | 1) {
-        let _ = vendor_binder::set_touch_mode(0, 14, state.dt2w);
+        DT2W_APPLY_ACK.store(
+            if vendor_binder::set_touch_mode(0, 14, state.dt2w) {
+                1
+            } else {
+                0
+            },
+            Ordering::Release,
+        );
     }
 
-    if (0..=2).contains(&state.display_color) {
-        let _ = set_display_color(state.display_color);
-    }
-
-    if (1..=3).contains(&state.display_temp) {
-        let _ = set_display_temp(state.display_temp);
+    if let Ok(_guard) = display_mode_apply_lock().lock() {
+        if (0..=2).contains(&state.display_color)
+            && persisted_state()
+                .lock()
+                .is_ok_and(|s| s.display_color == state.display_color)
+        {
+            let _ = apply_display_color_locked(state.display_color);
+        }
+        if (1..=3).contains(&state.display_temp)
+            && persisted_state()
+                .lock()
+                .is_ok_and(|s| s.display_temp == state.display_temp)
+        {
+            let _ = apply_display_temp_locked(state.display_temp);
+        }
     }
 
     restore_sunlight(&state);
@@ -3608,7 +4216,11 @@ fn restore_persisted_state() {
         let _ = set_display_toggle(44, state.dolby == 1, &DISPLAY_DOLBY_STATE);
     }
 
-    if state.display_color == 0 {
+    let display_guard = display_mode_apply_lock().lock();
+    if display_guard.is_ok()
+        && state.display_color == 0
+        && persisted_state().lock().is_ok_and(|s| s.display_color == 0)
+    {
         if matches!(state.expert_gamut, 1..=3) {
             let _ = vendor_binder::set_display_feature(26, state.expert_gamut, 0);
         }
@@ -3624,16 +4236,27 @@ fn restore_persisted_state() {
         }
     }
 
+    drop(display_guard);
+
     if (0..=3).contains(&state.perf) {
         // GPU profiles are isolated from CPU controls. Preserve the exact
         // persisted selection while restoring the requested Mali state.
         let persisted = state.clone();
         let _ = apply_performance_profile(state.perf);
-        PERFORMANCE_STATE.store(persisted.perf, Ordering::Release);
-        if let Ok(mut guard) = persisted_state().lock() {
-            *guard = persisted.clone();
-        }
-        let _ = save_persisted_state(&persisted);
+        // Restore only profile-owned preferences. Replacing the whole old
+        // snapshot here could undo a concurrent touch/colour OEM selection.
+        let _ = mutate_persisted_state(|current| {
+            if current.perf == persisted.perf {
+                current.gpu_uncap = persisted.gpu_uncap;
+                current.gpu_min_freq_mhz = persisted.gpu_min_freq_mhz;
+                current.gpu_max_freq_mhz = persisted.gpu_max_freq_mhz;
+                current.gpu_ged_boost = persisted.gpu_ged_boost;
+                current.gpu = persisted.gpu.clone();
+                current.gpu_governor = persisted.gpu_governor.clone();
+                current.gpu_power_policy = persisted.gpu_power_policy.clone();
+                current.gpu_profile_cpu_isolated = persisted.gpu_profile_cpu_isolated;
+            }
+        });
         state = persisted;
     }
 
@@ -3654,9 +4277,11 @@ fn restore_persisted_state() {
     } else if !state.gpu.is_empty() {
         &state.gpu
     } else {
-        "simple_ondemand"
+        ""
     };
-    let _ = set_gpu_governor(target_gpu);
+    if !target_gpu.is_empty() {
+        let _ = set_gpu_governor(target_gpu);
+    }
 
     if !state.io.is_empty() {
         let _ = set_io_scheduler(&state.io);
@@ -3765,10 +4390,17 @@ fn restore_persisted_state() {
 
 fn late_boot_restore_loop() {
     // Framework and vendor power services can publish defaults after a root
-    // module starts. Repeat Rodin-owned state across that settling window,
-    // including the selected v1.18.0 touch timing profile.
+    // module starts. Repeat controls that those services may overwrite across
+    // that settling window, including the selected v1.18.0 touch timing
+    // profile. Charging is intentionally restored only once: subsequent
+    // fixed-profile reapplication is driven by actual charger reconnect
+    // events, never by this timer.
     for (attempt, delay_seconds) in [2u64, 4, 8].into_iter().enumerate() {
         std::thread::sleep(Duration::from_secs(delay_seconds));
+        let _gate = service_control::GATE.read().expect("service gate poisoned");
+        if !service_control::active() {
+            continue;
+        }
         restore_persisted_state();
         let runtime_result = reassert_runtime_state(true);
         reassert_persisted_governors();
@@ -3782,6 +4414,9 @@ fn late_boot_restore_loop() {
 }
 
 fn reassert_persisted_governors() {
+    if !service_control::active() {
+        return;
+    }
     let Ok(_profile_guard) = gpu_profile_apply_lock().try_lock() else {
         return;
     };
@@ -3791,16 +4426,6 @@ fn reassert_persisted_governors() {
         .ok()
         .map(|s| s.clone())
         .unwrap_or_default();
-
-    if matches!(state.charging, 0 | 8) {
-        let desired = if state.charging == 8 { "8" } else { "0" };
-        if read_trimmed(charging_path())
-            .map(|actual| actual != desired)
-            .unwrap_or(true)
-        {
-            let _ = write_verified(&charging_path(), desired);
-        }
-    }
 
     if state.cpu_manual == 1 {
         let desired_mask = (state.cpu_online_mask | 0x01) & 0xFF;
@@ -3828,7 +4453,7 @@ fn reassert_persisted_governors() {
     // Stock mode is owned by MediaTek's power HAL. Tuned profiles use the
     // persisted desired state as their single source of truth, so the guard
     // cannot fight a second hard-coded profile writer.
-    if state.perf != 0 {
+    if state.perf > 0 {
         let target_gpu = if !state.gpu_governor.is_empty() {
             state.gpu_governor.as_str()
         } else if !state.gpu.is_empty() {
@@ -3855,7 +4480,7 @@ fn reassert_persisted_governors() {
             // until the live frequency reaches 1300 MHz, then locks it.
             let _ = arm_or_lock_beast_gpu();
         } else if gpu_get_dvfs_enabled() != 1 {
-            let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
+            let _ = service_control::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
         }
     }
 
@@ -3863,7 +4488,7 @@ fn reassert_persisted_governors() {
     // only for Gaming Dynamic and Extreme Beast, including while Stock is
     // otherwise left under the vendor power HAL.
     let desired_ged_boost = profile_uses_ged_boost(state.perf);
-    if !gpu_boost_pipeline_matches(desired_ged_boost) {
+    if state.perf >= 0 && !gpu_boost_pipeline_matches(desired_ged_boost) {
         let _ = set_gpu_ged_boost(desired_ged_boost);
     }
 
@@ -3886,7 +4511,7 @@ fn reassert_persisted_governors() {
     } else {
         "lz4"
     };
-    if zram_get_algorithm() != desired_zram_alg {
+    if !state.zram_algorithm.is_empty() && zram_get_algorithm() != desired_zram_alg {
         let _ = set_zram_algorithm(desired_zram_alg);
     }
 
@@ -3901,6 +4526,12 @@ fn reassert_persisted_governors() {
 
 fn cpu_frequency_guard() {
     loop {
+        let service_gate = service_control::GATE.read().expect("service gate poisoned");
+        if !service_control::active() {
+            drop(service_gate);
+            service_control::wait_until_active();
+            continue;
+        }
         let has_saved_range = if let Ok(_guard) = cpu_freq_apply_lock().try_lock() {
             let state = persisted_state()
                 .lock()
@@ -3942,6 +4573,7 @@ fn cpu_frequency_guard() {
             true
         };
 
+        drop(service_gate);
         std::thread::sleep(Duration::from_millis(if has_saved_range {
             100
         } else {
@@ -3956,7 +4588,14 @@ fn gaming_dynamic_guard() {
     let mut boost_until = Instant::now();
 
     loop {
+        let service_gate = service_control::GATE.read().expect("service gate poisoned");
+        if !service_control::active() {
+            drop(service_gate);
+            service_control::wait_until_active();
+            continue;
+        }
         let Ok(profile_guard) = gpu_profile_apply_lock().try_lock() else {
+            drop(service_gate);
             std::thread::sleep(Duration::from_millis(20));
             continue;
         };
@@ -3968,7 +4607,7 @@ fn gaming_dynamic_guard() {
             .unwrap_or(0);
 
         let desired_ged_boost = profile_uses_ged_boost(profile);
-        if !gpu_boost_pipeline_matches(desired_ged_boost) {
+        if profile >= 0 && !gpu_boost_pipeline_matches(desired_ged_boost) {
             let _ = set_gpu_ged_boost(desired_ged_boost);
         }
 
@@ -3977,6 +4616,7 @@ fn gaming_dynamic_guard() {
             smoothed_load = 0;
             boost_until = Instant::now();
             drop(profile_guard);
+            drop(service_gate);
             std::thread::sleep(Duration::from_millis(100));
             continue;
         }
@@ -3984,7 +4624,7 @@ fn gaming_dynamic_guard() {
         // Gaming and Beast own only the Mali cooling device. The vendor thermal
         // services remain running for CPU and platform management while this
         // guard prevents a GPU cooling cap from replacing their 1300 MHz target.
-        let _ = fs::write("/sys/class/thermal/cooling_device3/cur_state", "0");
+        let _ = service_control::write("/sys/class/thermal/cooling_device3/cur_state", "0");
 
         if profile == 3 {
             // MediaTek's power HAL can publish its stock OPP 40 target after
@@ -3992,6 +4632,7 @@ fn gaming_dynamic_guard() {
             // only after GED confirms that OPP 0 is actually live.
             let _ = arm_or_lock_beast_gpu();
             drop(profile_guard);
+            drop(service_gate);
             std::thread::sleep(Duration::from_millis(100));
             continue;
         }
@@ -4018,7 +4659,7 @@ fn gaming_dynamic_guard() {
         };
 
         if target_opp != last_written_opp
-            && fs::write(
+            && service_control::write(
                 "/sys/kernel/ged/hal/custom_boost_gpu_freq",
                 target_opp.to_string(),
             )
@@ -4028,7 +4669,58 @@ fn gaming_dynamic_guard() {
         }
 
         drop(profile_guard);
+        drop(service_gate);
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(target_os = "android")]
+fn observe_bypass_telemetry() {
+    maintain_bypass_policy();
+    let enabled = persisted_state()
+        .lock()
+        .ok()
+        .is_some_and(|state| state.bypass_charging == 1);
+    if !enabled {
+        return;
+    }
+    if read_trimmed(Path::new("/sys/class/power_supply/usb/online")).as_deref() != Ok("1") {
+        return;
+    }
+    // Keep the kernel's measured confirmation independent of UI readers.
+    // This is observation only: no SET command, sysfs write, or reapplication.
+    let _ = read_trimmed(Path::new(
+        "/sys/class/power_supply/battery/bypass_charging_active",
+    ));
+}
+
+#[cfg(target_os = "android")]
+fn bypass_monitor_loop() {
+    let mut interval = Duration::from_secs(60);
+    loop {
+        let dirty = BYPASS_MONITOR_DIRTY
+            .lock()
+            .expect("bypass monitor poisoned");
+        let (mut dirty, _) = BYPASS_MONITOR_WAKE
+            .wait_timeout_while(dirty, interval, |dirty| !*dirty)
+            .expect("bypass monitor poisoned");
+        *dirty = false;
+        drop(dirty);
+        let _gate = service_control::GATE.read().expect("service gate poisoned");
+        let enabled = persisted_state()
+            .lock()
+            .ok()
+            .is_some_and(|state| state.bypass_charging == 1);
+        interval = if enabled && usb("online") == "1" {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_secs(60)
+        };
+        if service_control::active() && enabled {
+            // This independent reader cannot be delayed by unrelated display,
+            // touch, or GPU restoration work. Reads never rewrite the request.
+            observe_bypass_telemetry();
+        }
     }
 }
 
@@ -4052,6 +4744,13 @@ fn maintenance_loop() {
     let mut screen_was_on: Option<bool> = None;
 
     loop {
+        let gate = service_control::GATE.read().expect("service gate poisoned");
+        if !service_control::active() {
+            drop(gate);
+            service_control::wait_until_active();
+            continue;
+        }
+
         if last_guard.elapsed() >= Duration::from_millis(500) {
             reassert_persisted_governors();
             last_guard = Instant::now();
@@ -4081,11 +4780,90 @@ fn maintenance_loop() {
             last_screen_check = Instant::now();
         }
 
+        drop(gate);
         std::thread::sleep(Duration::from_millis(1500));
     }
 }
 
+#[cfg(target_os = "android")]
+fn charging_power_supply_event_loop() {
+    loop {
+        let fd = unsafe {
+            socket(
+                AF_NETLINK,
+                SOCK_DGRAM | SOCK_CLOEXEC,
+                NETLINK_KOBJECT_UEVENT,
+            )
+        };
+        if fd < 0 {
+            eprintln!(
+                "RODIN_CHARGING_UEVENT_SOCKET_FAIL {}",
+                std::io::Error::last_os_error()
+            );
+            std::thread::sleep(Duration::from_secs(2));
+            continue;
+        }
+
+        let address = SockAddrNl {
+            nl_family: AF_NETLINK as u16,
+            nl_pad: 0,
+            nl_pid: 0,
+            nl_groups: 1,
+        };
+        let bound = unsafe {
+            bind(
+                fd,
+                &address as *const _ as *const c_void,
+                std::mem::size_of::<SockAddrNl>() as u32,
+            )
+        } == 0;
+        if !bound {
+            eprintln!(
+                "RODIN_CHARGING_UEVENT_BIND_FAIL {}",
+                std::io::Error::last_os_error()
+            );
+            unsafe { close(fd) };
+            std::thread::sleep(Duration::from_secs(2));
+            continue;
+        }
+
+        let mut message = [0u8; 4096];
+        loop {
+            let count = unsafe { recv(fd, message.as_mut_ptr().cast(), message.len(), 0) };
+            if count <= 0 {
+                break;
+            }
+
+            let payload = &message[..count as usize];
+            let is_power_supply = payload
+                .split(|byte| *byte == 0)
+                .any(|field| field == b"SUBSYSTEM=power_supply");
+            if !is_power_supply {
+                continue;
+            }
+
+            let _gate = service_control::GATE.read().expect("service gate poisoned");
+            if !service_control::active() {
+                continue;
+            }
+            let (profile, bypass_charging) = persisted_state()
+                .lock()
+                .ok()
+                .map(|state| (state.charging, state.bypass_charging))
+                .unwrap_or((0, 0));
+            if let Err(error) = maintain_charging_state(profile, bypass_charging) {
+                eprintln!("RODIN_CHARGING_UEVENT_APPLY_FAIL {error}");
+            }
+        }
+
+        unsafe { close(fd) };
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
 pub fn start_background_services() {
+    #[cfg(target_os = "android")]
+    std::thread::spawn(bypass_monitor_loop);
     if std::env::var("RODIN_REVERSE_IPC").as_deref() == Ok("1") {
         std::thread::spawn(reverse_ipc_loop);
     }
@@ -4105,7 +4883,17 @@ pub fn start_background_services() {
     std::thread::spawn(maintenance_loop);
     std::thread::spawn(cpu_frequency_guard);
     std::thread::spawn(gaming_dynamic_guard);
-    std::thread::spawn(restore_persisted_state);
+    #[cfg(target_os = "android")]
+    std::thread::spawn(charging_power_supply_event_loop);
+    std::thread::spawn(|| {
+        let _gate = service_control::GATE.read().expect("service gate poisoned");
+        if service_control::release_pending() && !service_control::enabled() {
+            if restore_released_controls().is_ok() {
+                let _ = service_control::set_release_pending(false);
+            }
+        }
+        restore_persisted_state();
+    });
     std::thread::spawn(refresh_display_info);
 }
 
@@ -4205,12 +4993,13 @@ fn zram_get_mm_stat() -> ZramMmStat {
 }
 
 fn set_zram_size(size_mb: i32) -> Result<(), String> {
+    capture_zram_originals()?;
     if !(0..=32768).contains(&size_mb) {
         return Err("invalid ZRAM size".to_string());
     }
 
     // 1. Drop pagecache to relieve RAM before swapoff
-    let _ = fs::write("/proc/sys/vm/drop_caches", "3");
+    let _ = service_control::write("/proc/sys/vm/drop_caches", "3");
 
     // 2. swapoff /dev/block/zram0
     let _ = ProcessCommand::new("/system/bin/swapoff")
@@ -4218,7 +5007,8 @@ fn set_zram_size(size_mb: i32) -> Result<(), String> {
         .output();
 
     // 3. Reset zram
-    fs::write("/sys/block/zram0/reset", "1").map_err(|e| format!("zram reset failed: {e}"))?;
+    service_control::write("/sys/block/zram0/reset", "1")
+        .map_err(|e| format!("zram reset failed: {e}"))?;
 
     // 3.5. Reapply configured compression algorithm before setting disksize!
     let target_alg = persisted_state()
@@ -4232,7 +5022,7 @@ fn set_zram_size(size_mb: i32) -> Result<(), String> {
             }
         })
         .unwrap_or_else(|| "lz4".to_string());
-    fs::write("/sys/block/zram0/comp_algorithm", &target_alg)
+    service_control::write("/sys/block/zram0/comp_algorithm", &target_alg)
         .map_err(|e| format!("zram compression restore failed: {e}"))?;
     if zram_get_algorithm() != target_alg {
         return Err(format!(
@@ -4250,7 +5040,7 @@ fn set_zram_size(size_mb: i32) -> Result<(), String> {
 
     // 4. Write new disksize
     let bytes = (size_mb as u64) * 1024 * 1024;
-    fs::write("/sys/block/zram0/disksize", bytes.to_string())
+    service_control::write("/sys/block/zram0/disksize", bytes.to_string())
         .map_err(|e| format!("zram disksize failed: {e}"))?;
     if zram_get_disksize_mb() != size_mb {
         return Err(format!(
@@ -4296,6 +5086,7 @@ fn set_zram_size(size_mb: i32) -> Result<(), String> {
 }
 
 fn set_zram_algorithm(alg: &str) -> Result<(), String> {
+    capture_zram_originals()?;
     let alg = alg.trim();
     if !matches!(alg, "lz4" | "zstd" | "lzo-rle" | "lzo") {
         return Err("unsupported compression algorithm".to_string());
@@ -4303,14 +5094,15 @@ fn set_zram_algorithm(alg: &str) -> Result<(), String> {
 
     let current_size_mb = zram_get_disksize_mb();
 
-    let _ = fs::write("/proc/sys/vm/drop_caches", "3");
+    let _ = service_control::write("/proc/sys/vm/drop_caches", "3");
     let _ = ProcessCommand::new("/system/bin/swapoff")
         .arg("/dev/block/zram0")
         .output();
 
-    fs::write("/sys/block/zram0/reset", "1").map_err(|e| format!("zram reset failed: {e}"))?;
+    service_control::write("/sys/block/zram0/reset", "1")
+        .map_err(|e| format!("zram reset failed: {e}"))?;
 
-    fs::write("/sys/block/zram0/comp_algorithm", alg)
+    service_control::write("/sys/block/zram0/comp_algorithm", alg)
         .map_err(|e| format!("comp_algorithm failed: {e}"))?;
     if zram_get_algorithm() != alg {
         return Err(format!(
@@ -4321,7 +5113,7 @@ fn set_zram_algorithm(alg: &str) -> Result<(), String> {
 
     if current_size_mb > 0 {
         let bytes = (current_size_mb as u64) * 1024 * 1024;
-        fs::write("/sys/block/zram0/disksize", bytes.to_string())
+        service_control::write("/sys/block/zram0/disksize", bytes.to_string())
             .map_err(|e| format!("zram disksize restore failed: {e}"))?;
         if zram_get_disksize_mb() != current_size_mb {
             return Err(format!(
@@ -4363,7 +5155,7 @@ fn set_zram_swappiness(val: i32) -> Result<(), String> {
         return Err("invalid swappiness value (0-200)".to_string());
     }
 
-    fs::write("/proc/sys/vm/swappiness", val.to_string())
+    service_control::write("/proc/sys/vm/swappiness", val.to_string())
         .map_err(|e| format!("swappiness write failed: {e}"))?;
     if zram_get_swappiness() != val {
         return Err(format!(
@@ -4380,7 +5172,8 @@ fn set_zram_swappiness(val: i32) -> Result<(), String> {
 }
 
 fn compact_zram() -> Result<(), String> {
-    fs::write("/sys/block/zram0/compact", "1").map_err(|e| format!("compact failed: {e}"))?;
+    service_control::write("/sys/block/zram0/compact", "1")
+        .map_err(|e| format!("compact failed: {e}"))?;
     Ok(())
 }
 
@@ -4400,7 +5193,7 @@ fn gpu_write_file(primary: &str, fallback: &str, value: &str) -> Result<(), Stri
         if !Path::new(path).exists() {
             continue;
         }
-        match fs::write(path, value) {
+        match service_control::write(path, value) {
             Ok(()) => wrote = true,
             Err(error) => errors.push(format!("{path}: {error}")),
         }
@@ -4706,7 +5499,7 @@ fn set_gpu_min_freq(mhz: i32) -> Result<(), String> {
     let hz = (mhz as u64) * 1_000_000;
     let khz = (mhz as u64) * 1_000;
     let opp_boost = ((1300 - mhz) / 26).clamp(0, 40);
-    let _ = fs::write(
+    let _ = service_control::write(
         "/sys/kernel/ged/hal/custom_boost_gpu_freq",
         opp_boost.to_string(),
     );
@@ -4715,11 +5508,11 @@ fn set_gpu_min_freq(mhz: i32) -> Result<(), String> {
         "/sys/class/misc/mali0/device/devfreq/13000000.mali/min_freq",
         &hz.to_string(),
     )?;
-    let _ = fs::write(
+    let _ = service_control::write(
         "/sys/module/ged/parameters/gpu_bottom_freq",
         khz.to_string(),
     );
-    let _ = fs::write(
+    let _ = service_control::write(
         "/sys/module/ged/parameters/gpu_cust_boost_freq",
         khz.to_string(),
     );
@@ -4745,7 +5538,7 @@ fn set_gpu_max_freq(mhz: i32) -> Result<(), String> {
     let hz = (mhz as u64) * 1_000_000;
     let khz = (mhz as u64) * 1_000;
     let opp_upbound = ((1300 - mhz) / 26).clamp(0, 40);
-    let _ = fs::write(
+    let _ = service_control::write(
         "/sys/kernel/ged/hal/custom_upbound_gpu_freq",
         opp_upbound.to_string(),
     );
@@ -4754,7 +5547,7 @@ fn set_gpu_max_freq(mhz: i32) -> Result<(), String> {
         "/sys/class/misc/mali0/device/devfreq/13000000.mali/max_freq",
         &hz.to_string(),
     )?;
-    let _ = fs::write(
+    let _ = service_control::write(
         "/sys/module/ged/parameters/gpu_cust_upbound_freq",
         khz.to_string(),
     );
@@ -4812,11 +5605,11 @@ fn set_gpu_uncap(enable: bool) -> Result<(), String> {
         clear_gpu_cooling_cap();
         beast_locked = settle_beast_gpu_lock(60, Duration::from_millis(25));
     } else {
-        fs::write("/sys/class/misc/mali0/device/power_policy", "coarse_demand")
+        service_control::write("/sys/class/misc/mali0/device/power_policy", "coarse_demand")
             .map_err(|error| format!("GPU power policy write failed: {error}"))?;
-        let _ = fs::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "40");
-        let _ = fs::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "0");
-        let _ = fs::write("/sys/kernel/ged/hal/gpu_boost_level", "0");
+        let _ = service_control::write("/sys/kernel/ged/hal/custom_boost_gpu_freq", "40");
+        let _ = service_control::write("/sys/kernel/ged/hal/custom_upbound_gpu_freq", "0");
+        let _ = service_control::write("/sys/kernel/ged/hal/gpu_boost_level", "0");
         gpu_write_file(
             "/sys/class/devfreq/13000000.mali/min_freq",
             "/sys/class/misc/mali0/device/devfreq/13000000.mali/min_freq",
@@ -4827,16 +5620,16 @@ fn set_gpu_uncap(enable: bool) -> Result<(), String> {
             "/sys/class/misc/mali0/device/devfreq/13000000.mali/max_freq",
             "1300000000",
         )?;
-        let _ = fs::write("/sys/module/ged/parameters/gpu_bottom_freq", "260000");
-        let _ = fs::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "260000");
-        let _ = fs::write(
+        let _ = service_control::write("/sys/module/ged/parameters/gpu_bottom_freq", "260000");
+        let _ = service_control::write("/sys/module/ged/parameters/gpu_cust_boost_freq", "260000");
+        let _ = service_control::write(
             "/sys/module/ged/parameters/gpu_cust_upbound_freq",
             "1300000",
         );
-        let _ = fs::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
-        let _ = fs::write("/sys/module/ged/parameters/ged_boost_enable", "0");
-        let _ = fs::write("/sys/module/ged/parameters/boost_gpu_enable", "0");
-        let _ = fs::write("/sys/module/ged/parameters/ged_smart_boost", "0");
+        let _ = service_control::write("/sys/module/ged/parameters/gpu_dvfs_enable", "1");
+        let _ = service_control::write("/sys/module/ged/parameters/ged_boost_enable", "0");
+        let _ = service_control::write("/sys/module/ged/parameters/boost_gpu_enable", "0");
+        let _ = service_control::write("/sys/module/ged/parameters/ged_smart_boost", "0");
         gpu_write_file(
             "/sys/class/devfreq/13000000.mali/governor",
             "/sys/class/misc/mali0/device/devfreq/13000000.mali/governor",
@@ -4905,7 +5698,7 @@ fn set_gpu_power_policy(policy: &str) -> Result<(), String> {
         "always_on" | "1" => "always_on",
         _ => "coarse_demand",
     };
-    fs::write("/sys/class/misc/mali0/device/power_policy", valid)
+    service_control::write("/sys/class/misc/mali0/device/power_policy", valid)
         .map_err(|error| format!("GPU power policy write failed: {error}"))?;
     if gpu_get_power_policy() != valid {
         return Err(format!(
@@ -5028,6 +5821,7 @@ fn snapshot_persistence_fields() -> Vec<String> {
         ),
         format!("display_ack={}", DISPLAY_APPLY_ACK.load(Ordering::Acquire)),
         format!("touch_ack={}", TOUCH_APPLY_ACK.load(Ordering::Acquire)),
+        format!("dt2w_ack={}", DT2W_APPLY_ACK.load(Ordering::Acquire)),
         format!("cpu_manual={}", state.cpu_manual),
         format!("cpu_saved_mask={}", state.cpu_online_mask | 0x01),
         format!("cpu_write_ack={}", CPU_WRITE_ACK.load(Ordering::Acquire)),
@@ -5138,7 +5932,52 @@ fn snapshot_persistence_fields() -> Vec<String> {
 }
 
 fn snapshot() -> String {
-    let charging = read_trimmed(charging_path()).unwrap_or_else(|_| "NA".into());
+    let (charging, bypass_saved, bypass_threshold) = persisted_state()
+        .lock()
+        .ok()
+        .map(|state| {
+            (
+                normalize_charging_profile(state.charging),
+                state.bypass_charging,
+                state.bypass_threshold,
+            )
+        })
+        .unwrap_or((0, 0, 0));
+    let charging_fcc_ua = charging_fcc_path()
+        .as_deref()
+        .and_then(read_i64)
+        .unwrap_or(-1);
+    let charging_supported = i32::from(charging_fcc_path().is_some());
+    let charging_sic = read_trimmed(charging_path())
+        .ok()
+        .and_then(|value| value.parse::<i32>().ok())
+        .unwrap_or(-1);
+    let battery_voltage_uv = battery("voltage_now");
+    let battery_current_ua = battery("current_now");
+    let bypass_live = bypass_charging_state();
+    let bypass_verified = read_trimmed("/sys/class/power_supply/battery/bypass_charging_active")
+        .ok()
+        .and_then(|value| parse_kernel_bool(&value))
+        .map(i32::from)
+        .unwrap_or(-1);
+    let bypass_phase = bypass_policy::phase(
+        bypass_saved == 1,
+        bypass_threshold,
+        battery("capacity").parse().ok(),
+        usb("online").parse().unwrap_or(-1),
+        bypass_live,
+        bypass_verified,
+        battery_current_ua.parse().ok(),
+        BYPASS_POLICY_ERROR.load(Ordering::Acquire) == 1,
+    );
+    let charging_live_mw = battery_voltage_uv
+        .parse::<i64>()
+        .ok()
+        .zip(battery_current_ua.parse::<i64>().ok())
+        .map(|(voltage, current)| {
+            ((voltage as i128 * (current as i128).abs()) / 1_000_000_000) as i64
+        })
+        .unwrap_or(-1);
     let touch_hal = if vendor_binder::touch_available()
         || Path::new("/sys/devices/platform/goodix_ts.0/switch_report_rate").exists()
     {
@@ -5161,11 +6000,37 @@ fn snapshot() -> String {
             "app_client_transport={}",
             APP_CLIENT_TRANSPORT.load(Ordering::Acquire)
         ),
-        format!("charging={}", sanitize(charging)),
+        format!("charging={charging}"),
+        format!("charging_supported={charging_supported}"),
+        format!("charging_fcc_ua={charging_fcc_ua}"),
+        format!("charging_adapter_w={}", charging_adapter_watts()),
+        format!(
+            "charging_pd_auth={}",
+            usb("pd_authentication").parse::<i32>().unwrap_or(-1)
+        ),
+        format!(
+            "charging_quick_type={}",
+            usb("quick_charge_type").parse::<i32>().unwrap_or(-1)
+        ),
+        format!("charging_sic={charging_sic}"),
+        format!("charging_live_mw={charging_live_mw}"),
+        format!(
+            "bypass_charging_supported={}",
+            i32::from(bypass_charging_path().is_some())
+        ),
+        format!("bypass_charging_state={bypass_live}"),
+        format!("bypass_charging_saved={bypass_saved}"),
+        format!("bypass_charging_verified={bypass_verified}"),
+        format!("bypass_threshold={bypass_threshold}"),
+        format!("bypass_phase={bypass_phase}"),
+        format!(
+            "bypass_error={}",
+            BYPASS_POLICY_ERROR.load(Ordering::Acquire)
+        ),
         format!("cap={}", sanitize(battery("capacity"))),
         format!("temp={}", sanitize(battery("temp"))),
-        format!("voltage={}", sanitize(battery("voltage_now"))),
-        format!("current={}", sanitize(battery("current_now"))),
+        format!("voltage={}", sanitize(battery_voltage_uv)),
+        format!("current={}", sanitize(battery_current_ua)),
         format!("status={}", sanitize(battery("status"))),
         format!("health={}", sanitize(battery("health"))),
         format!(
@@ -5178,6 +6043,11 @@ fn snapshot() -> String {
                     usb("usb_type")
                 }
             })
+        ),
+        format!("service_enabled={}", i32::from(service_control::enabled())),
+        format!(
+            "service_configured={}",
+            i32::from(service_control::configured())
         ),
         format!("usb_online={}", sanitize(usb("online"))),
         format!("cpu_online={}", sanitize(read_cpu_online_mask_string())),
@@ -5221,7 +6091,377 @@ fn snapshot() -> String {
     )
 }
 
+fn capture_zram_originals() -> Result<(), String> {
+    service_control::remember(
+        "zram.original",
+        serde_json::json!({
+            "size": zram_get_disksize_mb(), "algorithm": zram_get_algorithm(),
+            "swappiness": zram_get_swappiness()
+        }),
+    )
+}
+
+fn window_override(kind: &str) -> Result<String, String> {
+    let output =
+        run_process_with_timeout("/system/bin/cmd", &["window", kind], Duration::from_secs(3))?;
+    if !output.status.success() {
+        return Err(format!("cannot capture original display {kind}"));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(text
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("Override ")
+                .and_then(|line| line.split_once(':'))
+                .map(|(_, value)| value.trim().to_string())
+        })
+        .unwrap_or_else(|| "reset".into()))
+}
+
+fn capture_window_originals() -> Result<(), String> {
+    if service_control::original("window.original").is_some() {
+        return Ok(());
+    }
+    service_control::remember(
+        "window.original",
+        serde_json::json!({"size": window_override("size")?, "density": window_override("density")?}),
+    )
+}
+
+fn capture_feature_original(cmd: &str) -> Result<(), String> {
+    if cmd.starts_with("SET system.colors") {
+        system_colors::capture_original()?;
+    }
+    Ok(())
+}
+
+fn restore_released_controls() -> Result<(), String> {
+    let _restoring = service_control::Restoration::begin();
+    let saved = persisted_state()
+        .lock()
+        .map_err(|_| "settings lock poisoned")?
+        .clone();
+    let mut errors = Vec::new();
+    let mut run = |name: &str, result: Result<(), String>| {
+        if let Err(error) = result {
+            errors.push(format!("{name}: {error}"));
+        }
+    };
+    // Never leave an adapter charge-pause request behind when control is disabled.
+    if bypass_charging_path().is_some()
+        && (saved.bypass_charging == 1 || bypass_charging_state() == 1)
+    {
+        run("bypass", apply_bypass_charging(false));
+    }
+    run("touch output", touch_resampler::set_target_hz(0));
+    if service_control::original("touch.dt2w").is_some() {
+        run(
+            "double-tap wake default",
+            if vendor_binder::set_touch_mode(0, 14, 1) {
+                Ok(())
+            } else {
+                Err("vendor touch HAL rejected default".into())
+            },
+        );
+    }
+    if service_control::original("touch.hal").is_some() {
+        if vendor_binder::touch_available() {
+            run("OEM touch", apply_touch_hal_profile(0));
+        }
+        if let Some(rate) = service_control::original("touch.thp_rate").and_then(|v| v.as_u64()) {
+            // Restore the saved timing, including OEM values outside fixed-rate presets.
+            run(
+                "touch timing",
+                (|| {
+                    let layout = locate_touch_thp_layout()?;
+                    let mut memory = OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(format!("/proc/{}/mem", layout.pid))
+                        .map_err(|e| e.to_string())?;
+                    memory
+                        .seek(SeekFrom::Start(layout.configured_rate_addr))
+                        .map_err(|e| e.to_string())?;
+                    memory
+                        .write_all(&(rate as u16).to_le_bytes())
+                        .map_err(|e| e.to_string())?;
+                    if read_touch_thp_rate(layout, layout.configured_rate_addr)? != rate as u16 {
+                        return Err("original timing readback mismatch".into());
+                    }
+                    Ok(())
+                })(),
+            );
+        }
+    }
+    // Release write-only vendor policy requests before restoring readable cpufreq nodes.
+    if persisted_cpu_ranges_active(&saved) {
+        for policy in [0, 4, 7] {
+            run(
+                "PowerHAL CPU request",
+                write_optional_cpu_control(
+                    MTK_POWERHAL_CPU_FREQ,
+                    &format!("{policy} -1 -1"),
+                    "release",
+                ),
+            );
+            run(
+                "thermal CPU request",
+                write_optional_cpu_control(
+                    MI_THERMAL_CPU_LIMITS,
+                    &format!("cpu{policy} -1"),
+                    "release",
+                ),
+            );
+        }
+        run("CPU thermal mode", restore_cpu_thermal_mode());
+    }
+    if service_control::original("display.hal").is_some() {
+        // The vendor HAL provides setters but no reliable cross-ROM getters.
+        // Use its neutral/default modes rather than inventing a captured value.
+        if vendor_binder::display_available() {
+            run("display defaults", reset_expert_display());
+            run("display color", set_display_color(1));
+            run("display temperature", set_display_temp(2));
+            run("sunlight", set_sunlight(false));
+            for (case, state) in [
+                (57, &DISPLAY_SILKY_STATE),
+                (27, &DISPLAY_VIDEO_STATE),
+                (44, &DISPLAY_DOLBY_STATE),
+            ] {
+                run(
+                    "display enhancement",
+                    set_display_toggle(case, false, state),
+                );
+            }
+        } else {
+            run(
+                "display defaults",
+                Err("display HAL unavailable; defaults were not verified".into()),
+            );
+        }
+    }
+    if let Some(original) = service_control::original("zram.original") {
+        let size = original["size"].as_i64().unwrap_or(-1) as i32;
+        let algorithm = original["algorithm"].as_str().unwrap_or("");
+        if size >= 0
+            && !algorithm.is_empty()
+            && (zram_get_disksize_mb() != size || zram_get_algorithm() != algorithm)
+        {
+            let result = mutate_persisted_state(|s| s.zram_algorithm = algorithm.into())
+                .and_then(|_| set_zram_size(size));
+            run("ZRAM", result);
+        }
+    }
+    // Open the range before restoring either end. A prior exact lock can
+    // reject the original minimum when it lies above the current maximum.
+    for (path, value) in service_control::originals() {
+        if path.ends_with("/scaling_min_freq")
+            || (path.contains("/devfreq/") && path.ends_with("/min_freq"))
+        {
+            if let Some(value) = value.as_str() {
+                let max_path = if path.ends_with("/scaling_min_freq") {
+                    path.replace("/scaling_min_freq", "/scaling_max_freq")
+                } else {
+                    path.replace("/min_freq", "/max_freq")
+                };
+                if let (Ok(minimum), Ok(maximum)) = (
+                    value.trim().parse::<i64>(),
+                    read_trimmed(&max_path)
+                        .and_then(|v| v.parse::<i64>().map_err(|e| e.to_string())),
+                ) {
+                    if minimum > maximum {
+                        run(
+                            &max_path,
+                            fs::write(&max_path, minimum.to_string()).map_err(|e| e.to_string()),
+                        );
+                    }
+                }
+                run(&path, fs::write(&path, value).map_err(|e| e.to_string()));
+            }
+        }
+    }
+    let mut original_nodes = service_control::originals();
+    // Restore manual core states while core_ctl is still paused, then hand
+    // automatic topology management back to the kernel last.
+    original_nodes
+        .sort_by_key(|(path, _)| path.contains("/core_ctl/") && path.ends_with("/enable"));
+    for (path, value) in original_nodes {
+        if !(path.starts_with("/sys/") || path.starts_with("/proc/")) {
+            continue;
+        }
+        let Some(value) = value.as_str() else {
+            continue;
+        };
+        run(
+            &path,
+            (|| {
+                fs::write(&path, value).map_err(|e| e.to_string())?;
+                let actual = read_trimmed(&path)?;
+                if service_control::normalized_original(Path::new(&path), &actual) != value {
+                    return Err(format!("readback differs: {actual}"));
+                }
+                Ok(())
+            })(),
+        );
+    }
+    if let Some(original) = service_control::original("window.original") {
+        for kind in ["size", "density"] {
+            if let Some(value) = original[kind].as_str() {
+                run(
+                    "display canvas",
+                    run_process_with_timeout(
+                        "/system/bin/cmd",
+                        &["window", kind, value],
+                        Duration::from_secs(3),
+                    )
+                    .and_then(|output| {
+                        if output.status.success() {
+                            let actual = window_override(kind)?;
+                            if actual == value {
+                                Ok(())
+                            } else {
+                                Err(format!(
+                                    "{kind} restoration mismatch: expected {value}, actual {actual}"
+                                ))
+                            }
+                        } else {
+                            Err(String::from_utf8_lossy(&output.stderr).into())
+                        }
+                    }),
+                );
+            }
+        }
+        refresh_display_info();
+    }
+    run("system colors", system_colors::restore_original());
+    // Restoring helpers must not erase preferences retained by a disable action.
+    run(
+        "saved preferences",
+        mutate_persisted_state(|state| *state = saved),
+    );
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("restoration incomplete: {}", errors.join(" | ")))
+    }
+}
+
+fn cleared_device_state() -> PersistedState {
+    PersistedState {
+        charging: -1,
+        touch: -1,
+        dt2w: -1,
+        display_color: -1,
+        display_temp: -1,
+        sunlight: -1,
+        silky: -1,
+        video: -1,
+        dolby: -1,
+        perf: -1,
+        cpu_manual: -1,
+        gpu_min_freq_mhz: -1,
+        gpu_max_freq_mhz: -1,
+        gpu_governor: String::new(),
+        gpu_ged_boost: -1,
+        gpu_power_policy: String::new(),
+        zram_size_mb: -1,
+        zram_algorithm: String::new(),
+        zram_swappiness: -1,
+        ..PersistedState::default()
+    }
+}
+
+fn clear_released_control_status() {
+    // These are applied-selection caches, not live hardware measurements.
+    // Never leave a released profile looking active after reset or disable.
+    for state in [
+        &PERFORMANCE_STATE,
+        &PERFORMANCE_PROFILE_VERIFIED,
+        &PERFORMANCE_PROFILE_OK,
+        &TOUCH_STATE,
+        &TOUCH_SUSTAINED_RATE,
+        &TOUCH_INSTANT_RATE,
+        &TOUCH_APPLY_ACK,
+        &DT2W_APPLY_ACK,
+        &DISPLAY_COLOR_STATE,
+        &DISPLAY_TEMP_STATE,
+        &DISPLAY_SUNLIGHT_STATE,
+        &DISPLAY_SILKY_STATE,
+        &DISPLAY_VIDEO_STATE,
+        &DISPLAY_DOLBY_STATE,
+        &DISPLAY_APPLY_ACK,
+        &CPU_WRITE_ACK,
+        &CPU_FREQ_WRITE_ACK,
+    ] {
+        state.store(-1, Ordering::Release);
+    }
+}
+
+fn transition_service(cmd: &str) -> Result<(), String> {
+    if cmd == "SET service.enabled 1" {
+        system_colors::restore_resume()?;
+        service_control::set_release_pending(false)?;
+        service_control::set_intent(true, service_control::configured())?;
+        restore_persisted_state();
+        return Ok(());
+    }
+    // Persist inactive intent first: a process crash/reboot cannot resume guards
+    // halfway through release. Original journal/preferences remain for retries.
+    if service_control::enabled() {
+        system_colors::capture_resume()?;
+    }
+    service_control::set_release_pending(true)?;
+    service_control::set_intent(false, service_control::configured())?;
+    restore_released_controls()?;
+    clear_released_control_status();
+    service_control::set_release_pending(false)?;
+    if cmd == "ACTION service.reset" {
+        mutate_persisted_state(|state| *state = cleared_device_state())?;
+        service_control::set_intent(false, false)?;
+        service_control::clear_originals()?;
+        service_control::set_intent(true, false)?;
+    }
+    Ok(())
+}
+
 pub fn handle_command(line: &str) -> String {
+    let cmd = line.trim();
+    if cmd == "SET service.enabled 0"
+        || cmd == "SET service.enabled 1"
+        || cmd == "ACTION service.reset"
+    {
+        let _gate = match service_control::GATE.write() {
+            Ok(gate) => gate,
+            Err(_) => return "ERR service transition lock poisoned".into(),
+        };
+        let result = transition_service(cmd);
+        return match result {
+            Ok(()) => "OK applied".into(),
+            Err(error) => format!("ERR {error}"),
+        };
+    }
+    let _gate = match service_control::GATE.read() {
+        Ok(gate) => gate,
+        Err(_) => return "ERR service transition lock poisoned".into(),
+    };
+    if cmd.starts_with("SET ") || cmd.starts_with("ACTION ") {
+        if !service_control::enabled() {
+            return "ERR Rodin Essential is disabled; enable it in Settings".into();
+        }
+        if let Err(error) = capture_feature_original(cmd) {
+            return format!("ERR {error}");
+        }
+        if !service_control::configured() {
+            if let Err(error) = service_control::set_intent(true, true) {
+                return format!("ERR {error}");
+            }
+        }
+    }
+    handle_enabled_command(line)
+}
+
+fn handle_enabled_command(line: &str) -> String {
     let cmd = line.trim();
     if cmd == "PING" {
         return format!("OK PONG {PROTOCOL_VERSION}");
@@ -5264,14 +6504,32 @@ pub fn handle_command(line: &str) -> String {
 
     let result: Result<(), String> = if let Some(arg) = cmd.strip_prefix("SET charging ") {
         let value = match arg.trim() {
-            "0" | "standard" => "0",
-            "8" | "boost" => "8",
-            _ => return "ERR invalid charging mode".into(),
+            "standard" | "adaptive" => 0,
+            "boost" => 90,
+            raw => match raw.parse::<i32>() {
+                Ok(value) => value,
+                Err(_) => return "ERR invalid charging profile".into(),
+            },
         };
-        match write_verified(&charging_path(), value) {
-            Ok(actual) if actual == value => Ok(()),
-            Ok(actual) => Err(format!("charging verify {actual}")),
-            Err(e) => Err(e),
+        let bypass_enabled = persisted_state()
+            .lock()
+            .ok()
+            .is_some_and(|state| state.bypass_charging == 1);
+        if bypass_enabled {
+            Err("disable bypass charging before changing the charging profile".into())
+        } else {
+            apply_charging_profile(value)
+        }
+    } else if let Some(arg) = cmd.strip_prefix("SET charging.bypass_threshold ") {
+        arg.trim()
+            .parse::<i32>()
+            .map_err(|_| "invalid bypass threshold".to_string())
+            .and_then(|threshold| configure_bypass(None, Some(threshold)))
+    } else if let Some(arg) = cmd.strip_prefix("SET charging.bypass ") {
+        match arg.trim() {
+            "1" => configure_bypass(Some(true), None),
+            "0" => configure_bypass(Some(false), None),
+            _ => Err("invalid bypass charging state".into()),
         }
     } else if let Some(arg) = cmd.strip_prefix("SET touch ") {
         arg.trim()
@@ -5533,17 +6791,90 @@ pub fn serve_client(stream: UnixStream) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fresh_and_partial_settings_leave_touch_and_display_to_rom() {
+        for raw in ["", "charging=0\n", "touch=0\ndisplay_temp=0\ndolby=7\n"] {
+            let state = super::parse_persisted_state(raw);
+            assert_eq!(state.touch, -1);
+            assert_eq!(state.display_color, -1);
+            assert_eq!(state.display_temp, -1);
+            assert_eq!(state.dt2w, -1);
+            assert_eq!(state.sunlight, -1);
+            assert_eq!(state.silky, -1);
+            assert_eq!(state.video, -1);
+            assert_eq!(state.dolby, -1);
+        }
+    }
+
+    #[test]
+    fn explicit_touch_and_colour_choices_survive_loading() {
+        for profile in 1..=3 {
+            let state = super::parse_persisted_state(&format!(
+                "touch={profile}\ndisplay_color=2\ndisplay_temp=3\nsilky=1\n"
+            ));
+            assert_eq!(state.touch, profile);
+            assert_eq!(state.display_color, 2);
+            assert_eq!(state.display_temp, 3);
+            assert_eq!(state.silky, 1);
+        }
+    }
+    #[test]
+    fn bypass_threshold_migrates_and_validates_without_losing_saved_intent() {
+        let legacy = super::parse_persisted_state("bypass_charging=1\n");
+        assert_eq!(legacy.bypass_threshold, 0);
+        assert_eq!(legacy.bypass_charging, 1);
+        for threshold in [0, 20, 40, 80, 90] {
+            let saved = super::parse_persisted_state(&format!(
+                "bypass_charging=1\nbypass_threshold={threshold}\n"
+            ));
+            assert_eq!(saved.bypass_threshold, threshold);
+            assert_eq!(saved.bypass_charging, 1);
+        }
+        assert_eq!(
+            super::parse_persisted_state("bypass_threshold=50\n").bypass_threshold,
+            0
+        );
+        let reset = super::cleared_device_state();
+        assert_eq!(reset.bypass_charging, 0);
+        assert_eq!(reset.bypass_threshold, 0);
+    }
+    #[test]
+    fn reset_sentinels_survive_state_loading() {
+        let state = super::parse_persisted_state(
+            "charging=-1\ntouch=-1\ndt2w=-1\ndisplay_color=-1\ndisplay_temp=-1\nsunlight=-1\nsilky=-1\nvideo=-1\ndolby=-1\ncpu_manual=-1\nperf=-1\ngpu_profile_cpu_isolated=1\n",
+        );
+        assert_eq!(state.touch, -1);
+        assert_eq!(state.charging, -1);
+        assert_eq!(state.cpu_manual, -1);
+        assert_eq!(state.display_color, -1);
+        assert_eq!(state.dt2w, -1);
+        assert_eq!(state.perf, -1);
+    }
+    #[test]
+    fn bypass_readback_accepts_explicit_kernel_booleans_only() {
+        for value in ["1", " Y\n", "true", "ON", "enabled"] {
+            assert_eq!(super::parse_kernel_bool(value), Some(true));
+        }
+        for value in ["0", " n\n", "false", "OFF", "disabled"] {
+            assert_eq!(super::parse_kernel_bool(value), Some(false));
+        }
+        for value in ["", "2", "-1", "unsupported", "1 failed", "charging"] {
+            assert_eq!(super::parse_kernel_bool(value), None);
+        }
+    }
+
     #[cfg(not(target_os = "android"))]
     use super::run_process_with_timeout;
     use super::{
-        AppUidPolicy, MI_THERMAL_NO_LIMITS_MODE, PersistedState, classify_touch_panel_version,
-        client_uid_allowed, cpu_frequency_drift_status, find_touch_thp_config_offset,
-        gaming_dynamic_target_opp, mi_thermal_cpu_limit_request,
+        AppUidPolicy, MI_THERMAL_NO_LIMITS_MODE, PersistedState, charging_profile_fcc_ua,
+        classify_touch_panel_version, client_uid_allowed, cpu_frequency_drift_status,
+        find_touch_thp_config_offset, gaming_dynamic_target_opp, mi_thermal_cpu_limit_request,
         migrate_legacy_gpu_profile_cpu_state, mtk_powerhal_cpu_range_request,
-        normalize_mi_thermal_config_mode, parse_cpu_frequency_table, parse_cpu_time_in_state,
+        normalize_charging_profile, normalize_mi_thermal_config_mode, normalize_reported_power_w,
+        package_app_id_from_packages_list, parse_cpu_frequency_table, parse_cpu_time_in_state,
         parse_ged_current_frequency_mhz, persisted_cpu_ranges_active, profile_uses_ged_boost,
         scaled_display_density, tcp_client_uid_from_table, touch_hal_profile_sequence,
-        valid_mi_thermal_config_mode, validate_cpu_frequency_range_against,
+        valid_charging_profile, valid_mi_thermal_config_mode, validate_cpu_frequency_range_against,
     };
 
     fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
@@ -5559,6 +6890,58 @@ mod tests {
         assert!(!client_uid_allowed(2_000, policy));
         assert!(!client_uid_allowed(10_321, AppUidPolicy::Reject));
         assert!(client_uid_allowed(10_321, AppUidPolicy::SelinuxOnly));
+    }
+
+    #[test]
+    fn native_socket_resolves_and_accepts_the_package_app_id_for_every_user() {
+        let packages = "android 1000 0 /data/user/0/android platform 0 1 1 1 0\n\
+io.github.neeschal.rodinessential 10228 0 /data/user/0/io.github.neeschal.rodinessential default 0 1 1 1 0\n";
+        assert_eq!(
+            package_app_id_from_packages_list(packages, "io.github.neeschal.rodinessential"),
+            Some(10_228)
+        );
+        let policy = AppUidPolicy::EnforceAppId(10_228);
+        assert!(client_uid_allowed(10_228, policy));
+        assert!(client_uid_allowed(110_228, policy));
+        assert!(!client_uid_allowed(10_229, policy));
+        assert_eq!(
+            package_app_id_from_packages_list(packages, "missing.package"),
+            None
+        );
+    }
+
+    #[test]
+    fn maps_every_charging_profile_to_rodins_verified_fcc_ceiling() {
+        assert!(valid_charging_profile(0));
+        assert!(valid_charging_profile(25));
+        assert!(valid_charging_profile(33));
+        assert!(valid_charging_profile(65));
+        assert!(valid_charging_profile(85));
+        assert!(valid_charging_profile(90));
+        assert!(!valid_charging_profile(8));
+        assert!(!valid_charging_profile(100));
+
+        assert_eq!(charging_profile_fcc_ua(0), None);
+        assert_eq!(charging_profile_fcc_ua(25), Some(6_111_000));
+        assert_eq!(charging_profile_fcc_ua(33), Some(8_067_000));
+        assert_eq!(charging_profile_fcc_ua(65), Some(15_889_000));
+        assert_eq!(charging_profile_fcc_ua(85), Some(20_778_000));
+        assert_eq!(charging_profile_fcc_ua(90), Some(22_000_000));
+    }
+
+    #[test]
+    fn migrates_the_legacy_boost_switch_to_the_full_90_watt_profile() {
+        assert_eq!(normalize_charging_profile(8), 90);
+        assert_eq!(normalize_charging_profile(33), 33);
+        assert_eq!(normalize_charging_profile(-1), 0);
+    }
+
+    #[test]
+    fn normalizes_common_vendor_power_units_to_watts() {
+        assert_eq!(normalize_reported_power_w(90), 90);
+        assert_eq!(normalize_reported_power_w(90_000), 90);
+        assert_eq!(normalize_reported_power_w(90_000_000), 90);
+        assert_eq!(normalize_reported_power_w(0), -1);
     }
 
     #[test]

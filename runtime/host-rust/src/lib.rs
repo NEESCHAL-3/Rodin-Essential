@@ -2382,36 +2382,33 @@ unsafe fn start_flutter(
         return Err(format!("dlopen(libapp.so) failed: {}", dl_error_string()));
     }
 
-    let vm_data = match unsafe { symbol(app_handle, b"_kDartVmSnapshotData\0") } {
-        Ok(value) => value,
-        Err(error) => {
-            unsafe { dlclose(app_handle) };
-            return Err(error);
-        }
-    };
+    // Flutter 3.41+ emits one unified AOT data/text pair. Earlier toolchains
+    // emitted separate VM and isolate pairs. The embedder accepts the unified
+    // pair for both VM and isolate inputs, matching Dart_LoadELF semantics.
+    let unified_data = unsafe { symbol(app_handle, b"_kDartSnapshotData\0") };
+    let unified_text = unsafe { symbol(app_handle, b"_kDartSnapshotText\0") };
 
-    let vm_instructions = match unsafe { symbol(app_handle, b"_kDartVmSnapshotInstructions\0") } {
-        Ok(value) => value,
-        Err(error) => {
-            unsafe { dlclose(app_handle) };
-            return Err(error);
-        }
-    };
-
-    let isolate_data = match unsafe { symbol(app_handle, b"_kDartIsolateSnapshotData\0") } {
-        Ok(value) => value,
-        Err(error) => {
-            unsafe { dlclose(app_handle) };
-            return Err(error);
-        }
-    };
-
-    let isolate_instructions =
-        match unsafe { symbol(app_handle, b"_kDartIsolateSnapshotInstructions\0") } {
-            Ok(value) => value,
-            Err(error) => {
-                unsafe { dlclose(app_handle) };
-                return Err(error);
+    let (vm_data, vm_instructions, isolate_data, isolate_instructions) =
+        match (unified_data, unified_text) {
+            (Ok(data), Ok(text)) => (data, text, data, text),
+            _ => {
+                let resolve = |name: &'static [u8]| unsafe { symbol(app_handle, name) };
+                match (
+                    resolve(b"_kDartVmSnapshotData\0"),
+                    resolve(b"_kDartVmSnapshotInstructions\0"),
+                    resolve(b"_kDartIsolateSnapshotData\0"),
+                    resolve(b"_kDartIsolateSnapshotInstructions\0"),
+                ) {
+                    (Ok(vm_data), Ok(vm_text), Ok(isolate_data), Ok(isolate_text)) => {
+                        (vm_data, vm_text, isolate_data, isolate_text)
+                    }
+                    _ => {
+                        unsafe { dlclose(app_handle) };
+                        return Err(
+                            "libapp.so has no supported Flutter AOT snapshot ABI".to_string()
+                        );
+                    }
+                }
             }
         };
 
@@ -2483,21 +2480,18 @@ unsafe fn start_flutter(
 
     put_usize(&mut project, OFF_PROJECT_VM_DATA, vm_data as usize);
     put_usize(&mut project, OFF_PROJECT_VM_DATA_SIZE, 0);
-
     put_usize(
         &mut project,
         OFF_PROJECT_VM_INSTRUCTIONS,
         vm_instructions as usize,
     );
     put_usize(&mut project, OFF_PROJECT_VM_INSTRUCTIONS_SIZE, 0);
-
     put_usize(
         &mut project,
         OFF_PROJECT_ISOLATE_DATA,
         isolate_data as usize,
     );
     put_usize(&mut project, OFF_PROJECT_ISOLATE_DATA_SIZE, 0);
-
     put_usize(
         &mut project,
         OFF_PROJECT_ISOLATE_INSTRUCTIONS,

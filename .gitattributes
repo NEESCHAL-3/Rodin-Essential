@@ -1,0 +1,8 @@
+# Linux build/integration scripts must remain executable text on Windows clones.
+*.sh text eol=lf
+*.py text eol=lf
+*.te text eol=lf
+*.cil text eol=lf
+*.rc text eol=lf
+*.mk text eol=lf
+android/aosp/** text eol=lf

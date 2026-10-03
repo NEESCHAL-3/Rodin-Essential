@@ -179,4 +179,15 @@ or require destructive app removal.
 The builder requires a persistent `RODIN_KEYSTORE`; it never creates a
 disposable module signing identity. Reuse the same key for all published module
 versions so Android can update the bundled application without removing user
-data.
+data. For the one signing-identity reset, the module installer first attempts a
+normal update. If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE` for a
+user-installed copy, it removes that package and installs the bundled APK while
+leaving `/data/adb/rodin-essential` untouched. This resets application-local
+preferences once. A cross-signed ROM-native system package is still rejected;
+only its ROM maintainer can replace it safely.
+
+Version 1.18.4 introduces the replacement signing identity. Its public fingerprint
+is recorded in `android/package/release-cert.sha256`. Keep the corresponding
+private keystore outside the repository and retain it for subsequent releases.
+The certificate subject retains its original development name; the fingerprint,
+not that display name, determines Android update compatibility.

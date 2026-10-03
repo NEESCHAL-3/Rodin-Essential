@@ -54,9 +54,14 @@ grep -Fq 'touch_resampler_ready' "$RODIN_ACTION"
     exit 1
 }
 
-if grep -Eq 'pm[[:space:]]+uninstall|rm[[:space:]].*io\.github\.neeschal\.rodinessential' \
-    "$RODIN_INSTALLER"; then
-    echo "Installer must never remove an existing app or its data automatically" >&2
+grep -Fq 'RODIN_INSTALL_RESULT' "$RODIN_INSTALLER"
+grep -Fq 'INSTALL_FAILED_UPDATE_INCOMPATIBLE' "$RODIN_INSTALLER"
+grep -Fq '/system/bin/pm uninstall "$RODIN_PACKAGE"' "$RODIN_INSTALLER"
+grep -Fq 'if [ "$RODIN_NATIVE_MODE" -eq 1 ]' "$RODIN_INSTALLER"
+grep -Fq 'Application-local preferences were reset once' "$RODIN_INSTALLER"
+
+if grep -Fq '/system/bin/pm uninstall -k' "$RODIN_INSTALLER"; then
+    echo "Signature migration must not retain the obsolete package signing record" >&2
     exit 1
 fi
 

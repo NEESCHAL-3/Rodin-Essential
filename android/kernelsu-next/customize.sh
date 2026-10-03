@@ -35,6 +35,8 @@ esac
 [ -f "$MODPATH/app/RodinEssential.apk" ] || abort "! Missing Rodin Essential APK"
 [ -x /system/bin/pm ] || abort "! Android package manager is unavailable"
 
+RODIN_PACKAGE=io.github.neeschal.rodinessential
+
 rodin_native_backend_present() {
     for RODIN_NATIVE_BINARY in \
         /product/bin/rodin_daemon \
@@ -49,7 +51,7 @@ rodin_native_backend_present() {
         [ -n "$(getprop "init.svc.$RODIN_NATIVE_SERVICE" 2>/dev/null)" ] && return 0
     done
 
-    RODIN_PACKAGE_PATHS="$(/system/bin/pm path io.github.neeschal.rodinessential 2>/dev/null)"
+    RODIN_PACKAGE_PATHS="$(/system/bin/pm path "$RODIN_PACKAGE" 2>/dev/null)"
     case "$RODIN_PACKAGE_PATHS" in
         *package:/product/*|*package:/system_ext/*|*package:/system/*|\
         *package:/vendor/*|*package:/odm/*) return 0 ;;
@@ -88,17 +90,38 @@ RODIN_INSTALL_RESULT="$(/system/bin/pm install --user 0 -r "$MODPATH/app/RodinEs
 case "$RODIN_INSTALL_RESULT" in
     *Success*) ;;
     *INSTALL_FAILED_UPDATE_INCOMPATIBLE*)
-        ui_print "$RODIN_INSTALL_RESULT"
         if [ "$RODIN_NATIVE_MODE" -eq 1 ]; then
+            ui_print "$RODIN_INSTALL_RESULT"
             ui_print "! The ROM-native APK uses a different signing certificate"
             ui_print "! Android cannot safely update it with the public module APK"
             ui_print "! Update that ROM build with its original signing key"
+            abort "! Android correctly refused a cross-signature system-app update"
         else
-            ui_print "! A differently signed testing copy is installed"
-            ui_print "! Uninstall that app once, then flash this same ZIP again"
-            ui_print "! Rodin daemon settings under /data/adb are not deleted"
+            ui_print "- Legacy Rodin Essential signing certificate detected"
+            ui_print "- Performing the one-time application signing migration"
+            ui_print "- Hardware profiles under /data/adb remain unchanged"
+
+            RODIN_REMOVE_RESULT="$(/system/bin/pm uninstall "$RODIN_PACKAGE" 2>&1)"
+            case "$RODIN_REMOVE_RESULT" in
+                *Success*) ;;
+                *)
+                    ui_print "$RODIN_REMOVE_RESULT"
+                    abort "! Could not remove the legacy application"
+                    ;;
+            esac
+
+            RODIN_INSTALL_RESULT="$(/system/bin/pm install --user 0 "$MODPATH/app/RodinEssential.apk" 2>&1)"
+            case "$RODIN_INSTALL_RESULT" in
+                *Success*)
+                    ui_print "- Signing migration completed"
+                    ui_print "- Application-local preferences were reset once"
+                    ;;
+                *)
+                    ui_print "$RODIN_INSTALL_RESULT"
+                    abort "! APK installation failed after signing migration"
+                    ;;
+            esac
         fi
-        abort "! Android correctly refused a cross-signature update"
         ;;
     *)
         ui_print "$RODIN_INSTALL_RESULT"
@@ -106,11 +129,11 @@ case "$RODIN_INSTALL_RESULT" in
         ;;
 esac
 
-/system/bin/pm path io.github.neeschal.rodinessential >/dev/null 2>&1 || \
+/system/bin/pm path "$RODIN_PACKAGE" >/dev/null 2>&1 || \
     abort "! Android did not register Rodin Essential"
 
 RODIN_EXPECTED_VERSION_CODE="$(sed -n 's/^versionCode=//p' "$MODPATH/module.prop" | head -n 1)"
-RODIN_INSTALLED_VERSION_CODE="$(/system/bin/dumpsys package io.github.neeschal.rodinessential 2>/dev/null \
+RODIN_INSTALLED_VERSION_CODE="$(/system/bin/dumpsys package "$RODIN_PACKAGE" 2>/dev/null \
     | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -n 1)"
 [ -n "$RODIN_EXPECTED_VERSION_CODE" ] || abort "! Module versionCode is missing"
 [ "$RODIN_INSTALLED_VERSION_CODE" = "$RODIN_EXPECTED_VERSION_CODE" ] || \

@@ -5,13 +5,30 @@ init_daemon_domain(rodin_daemon)
 # pass; the explicit connectto rule below remains the sole client allowlist.
 typeattribute rodin_daemon mlstrustedsubject;
 
+# Declared by the reviewed platform exception described in ROM_INTEGRATION.md.
+# The preserved native THP backend requires cross-UID access to the touch HAL.
+typeattribute rodin_daemon rodin_native_touch_access;
+
 type rodin_daemon_data_file, file_type, data_file_type, core_data_file_type;
 
 allow rodin_daemon self:capability {
+    dac_override
     sys_admin
     sys_nice
+    sys_ptrace
 };
 allow rodin_daemon self:unix_stream_socket create_stream_socket_perms;
+# Cable changes are delivered by the kernel power-supply uevent channel. The
+# daemon uses it only to restore a fixed charging profile after reconnecting;
+# it does not poll or monitor other processes.
+allow rodin_daemon self:netlink_kobject_uevent_socket {
+    create
+    bind
+    read
+    getattr
+    getopt
+    setopt
+};
 
 allow rodin_daemon rodin_daemon_data_file:dir create_dir_perms;
 allow rodin_daemon rodin_daemon_data_file:file create_file_perms;

@@ -11,14 +11,14 @@ Flutter AOT interface
         │ Dart FFI
         ▼
 Rust NativeActivity host
-        │ authenticated local IPC, protocol 13.5
+        │ authenticated local IPC, protocol 13.6
         ▼
 Rust rodin_daemon
         ├── sysfs / procfs / block controls
         ├── Xiaomi touch and display AIDL services
         ├── MediaTek GED and Mali devfreq
         ├── Android SettingsProvider / native palette readback
-        └── persistent state and drift reassertion
+        └── persistent state, drift guards, and power-supply events
 ```
 
 ### Android package
@@ -62,6 +62,10 @@ is replaced by daemon readback as soon as the hardware transaction completes.
 writes hardware nodes, calls vendor AIDL services, verifies readback where the
 driver exposes it, persists accepted settings, and reasserts settings when a
 vendor component rewrites them.
+
+Charging profiles use Rodin's kernel FCC and SIC interfaces directly. A
+power-supply uevent listener restores a fixed profile after a cable reconnect;
+the daemon does not poll or repeatedly overwrite the charger control loop.
 
 The daemon listens on a Linux abstract Unix socket. In an AOSP build, SELinux
 allows only the dedicated `rodin_app` domain to connect in production. The

@@ -1,7 +1,9 @@
 # AOSP ROM integration
 
-This guide integrates Rodin Essential into an Android 12 or newer source build
-for Xiaomi Rodin. The installed application remains a normal Android app. A
+This guide describes source integration for Xiaomi Rodin. Each Android release
+and vendor base requires its own complete policy build and enforcing test;
+Android 17 compatibility is not established merely by copying this template.
+The installed application remains a normal Android app. A
 separate init service runs the hardware daemon as root under its own SELinux
 domain, so the finished ROM needs no Magisk, KernelSU, root prompt, or root
 manager.
@@ -25,6 +27,17 @@ Android will not install an update signed by a different certificate. If a ROM
 previously shipped Rodin Essential with another key, keep that key or plan an
 explicit uninstall/data migration. Do not work around Android's signature
 check by automatically deleting the user's app data.
+
+For compatibility with the public KernelSU Next/Magisk module, the ROM must
+ship the exact public-release signing identity. A ROM-owned/platform key is
+not interchangeable with that identity. The module can update a matching
+ROM-native installation and share its saved daemon controls; removing the
+module restores the ROM APK and init service. Differently signed native
+installations require an update from their ROM maintainer instead.
+
+The public signing identity changed at v1.18.4. Its fingerprint is in
+`android/package/release-cert.sha256`; do not mistake the old v1.18.3 identity
+for the current one. The private release key is not distributed to maintainers.
 
 ## 2. Export a self-contained bundle
 
@@ -52,7 +65,10 @@ RodinEssential-<timestamp>/
 ├── SHA256SUMS
 ├── SIGNING-CERTIFICATE.txt
 ├── docs/
-│   └── ROM_INTEGRATION.md
+│   ├── ROM_INTEGRATION.md
+│   └── UNPACKED_ROM_INTEGRATION.md
+├── tools/
+│   └── prepare-aosp-touch-policy.py
 ├── prebuilt/
 │   ├── RodinEssential.apk
 │   ├── RodinEssential.x509.pem
@@ -201,6 +217,14 @@ proc_touch_boost
 proc_tp_file
 ```
 
+The charging controller writes
+`/sys/class/power_supply/battery/constant_charge_current` (with a `bms`
+fallback) and `/sys/class/power_supply/usb/sic_mode`. The daemon therefore
+needs write access to both `sysfs_battery_supply` and `sysfs_usb_supply`. Its
+private policy also permits read-only consumption of kernel power-supply
+uevents so a fixed profile can be restored after cable reconnect without a
+polling loop.
+
 OEM ports can rename policy types while keeping the same kernel path. Inspect
 the exact vendor image used by the ROM:
 
@@ -229,15 +253,44 @@ uses OEM mode 6 only while a custom CPU range exists and restores the previous
 mode after the last reset. Thermal daemons remain running; these permissions
 belong only to `rodin_daemon`.
 
-### 1000 Hz touch policy
+### Native touch policy and required platform review
 
-The native 240/480 Hz paths use the touch AIDL service. The v1.18.0 1000 Hz
-output path uses the daemon's narrowly labelled Rodin input-device access. The
-ROM init service sets `RODIN_TOUCH_DIRECT_INPUT=1`, so the daemon never inspects
-the touch-service process or duplicates its descriptors. The AOSP policy does
-not request `SYS_PTRACE`, `DAC_OVERRIDE`, or `DAC_READ_SEARCH`, avoiding the
-corresponding modern platform neverallows while keeping input access confined
-to `rodin_daemon`.
+The preserved native 240/480 Hz implementation uses Xiaomi's touch service and
+its private THP timing block through `/proc/<touch-hal-pid>/maps` and `mem`.
+The corresponding vendor rules permit process-memory access only to
+`hal_touchfeature_xiaomi_default`, including directory traversal. This is
+cross-UID access, not just a Binder call. Both Goodix and FocalTech support
+depends on the compatible Xiaomi THP stack; a panel name alone is insufficient.
+
+`RODIN_TOUCH_DIRECT_INPUT=1` changes the 1000 Hz output path to direct input
+access. It does **not** remove the native 240/480 Hz process-memory dependency.
+The output path is not proof of 1000 physical panel scans per second.
+
+Modern stock AOSP neverallows restrict `SYS_PTRACE` and `DAC_OVERRIDE`. Product
+and vendor allow rules alone cannot override them. To retain this backend, the
+ROM maintainer must explicitly review a platform exception. Preview it from
+the Rodin Essential checkout:
+
+```bash
+python3 tools/prepare-aosp-touch-policy.py /absolute/path/to/aosp
+# Apply only after reviewing the printed diff:
+python3 tools/prepare-aosp-touch-policy.py /absolute/path/to/aosp --apply
+```
+
+The helper declares `rodin_native_touch_access` in platform public attributes,
+excludes that attribute from the SYS_PTRACE capability neverallow, and adds it
+to the DAC_OVERRIDE allowlist. Only `rodin_daemon` is assigned the attribute in
+the product policy. It preserves the remaining neverallows and refuses unknown
+or partially modified rule layouts. It does not modify a compiled OEM policy.
+Keep this change in the ROM's platform-policy source and review it again when
+rebasing Android. Other target-specific neverallows may still reject the build.
+
+This exception is a deliberate security-policy change and may affect platform
+security certification. Passing the repository checks does not establish CTS
+or VTS compliance. Do not use `SELINUX_IGNORE_NEVERALLOWS`, `secilc -N`, a
+permissive domain, or an existing privileged domain to conceal a failure. A ROM
+that cannot accept this exception needs a proper vendor touch-HAL API instead;
+the current backend is not a policy-only, universally compliant drop-in.
 
 ## 6. Build and policy validation
 
@@ -248,13 +301,15 @@ Run the repository contract check before exporting or updating the template:
 ```
 
 For an additional platform neverallow probe, point it at the target ROM's
-compiled platform CIL:
+compiled platform CIL after the reviewed source exception:
 
 ```bash
 RODIN_PLAT_SEPOLICY_CIL=/absolute/path/to/plat_sepolicy.cil \
   ./tools/test-aosp-integration.sh
 ```
 
+The probe requires a clean baseline and checks synthetic types, not the complete
+vendor policy. A failing or incomplete baseline is a failure, never a pass.
 This probe is not a substitute for building the target device policy. In the
 ROM tree, run:
 
@@ -287,6 +342,15 @@ persisted hardware domains.
 The UI process is not the owner of active settings. Swiping it from recents,
 force-stopping it, or restarting System UI does not stop the daemon. Normal OTA
 updates retain the state file because it lives on `/data`.
+
+An enabled daemon does not mean every hardware override is enabled. OEM touch
+and display control leave the ROM in charge until the user selects an override.
+Bypass charging requires supported kernel interfaces; unsupported kernels must
+not be reported as providing direct power. The charging uevent listener handles
+cable changes independently of the UI. The master disable and reset operations
+must be tested against captured original values, not assumed fixed defaults.
+A data format clears saved user choices; the baked APK and init service remain
+but start with new default state.
 
 The public KernelSU/Magisk ZIP can temporarily update a native installation
 only when the ROM APK and release APK have the same signing certificate. The
@@ -324,7 +388,7 @@ Expected results:
 - App domain is `u:r:rodin_app:s0` with an ordinary `_app` UID.
 - Daemon executable type is `u:object_r:rodin_daemon_exec:s0`.
 - Daemon domain is `u:r:rodin_daemon:s0` and daemon UID is root.
-- Ping returns `OK PONG 13.5`.
+- Ping returns `OK PONG 13.6`.
 - State directory type is `rodin_daemon_data_file`.
 
 Verify the installed APK remains zero-DEX:
@@ -363,6 +427,10 @@ To remove the integration, remove the `PRODUCT_PACKAGES` and BoardConfig include
 lines, then delete `vendor/rodin-essential`. A clean ROM build will omit the
 components. Retain `/data/system/rodin-essential` for a future reinstall or
 remove it only through an explicit user-visible migration.
+
+For porters editing extracted ROM images, use
+[Unpacked ROM integration](UNPACKED_ROM_INTEGRATION.md). EROFS is supported by
+rebuilding the edited images offline, not by remounting it writable.
 
 Direct writes to a live `/product`, `/system_ext`, or `/odm` partition are not a
 supported release method. Dynamic partitions, AVB, snapshots, split SELinux

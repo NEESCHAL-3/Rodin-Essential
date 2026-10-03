@@ -110,6 +110,12 @@ EOF
 fi
 
 cat <<EOF
+Before building, review the native touch platform exception:
+
+  python3 vendor/rodin-essential/tools/prepare-aosp-touch-policy.py "$RODIN_AOSP_ROOT"
+
+This is a preview, not an automatic policy modification. Follow the staged
+docs/ROM_INTEGRATION.md and apply only after maintainer review.
 Then run the normal ROM build. For a focused validation first:
 
   m RodinEssential rodin_daemon rodin_ctl selinux_policy

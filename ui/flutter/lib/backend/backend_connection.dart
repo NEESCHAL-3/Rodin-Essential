@@ -16,4 +16,7 @@ enum RodinConnectionState {
   };
 
   String get badgeLabel => label.toUpperCase();
+
+  String serviceLabel({required bool enabled}) =>
+      this == online && !enabled ? 'Disabled' : label;
 }

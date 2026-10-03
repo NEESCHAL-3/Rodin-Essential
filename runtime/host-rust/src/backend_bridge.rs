@@ -16,7 +16,7 @@ const SOCKET_NAME: &str = "rodin_essentiald_v15";
 const REVERSE_SOCKET_NAME: &str = "rodin_essential_app_v15";
 const LOOPBACK_PORT: u16 = 732;
 const LOOPBACK_PRIVILEGE_PROBE_PORT: u16 = 731;
-const EXTENDED_VALUE_COUNT: usize = 105;
+const EXTENDED_VALUE_COUNT: usize = 122;
 
 #[repr(C)]
 struct SockAddrUn {
@@ -146,6 +146,7 @@ impl Cache {
 enum Command {
     Refresh,
     Charging(i32),
+    BypassCharging(i32),
     Touch(i32),
     DisplayColor(i32),
     DisplayTemp(i32),
@@ -440,7 +441,11 @@ fn connect_daemon() -> Result<Box<dyn DaemonStream>, String> {
 
 fn request(command: &str) -> Result<String, String> {
     let mut stream = connect_daemon()?;
-    if command == "GET system.colors" || command.starts_with("SET system.colors") {
+    if command == "GET system.colors"
+        || command.starts_with("SET system.colors")
+        || command.starts_with("SET service.")
+        || command == "ACTION service.reset"
+    {
         // Framework palette generation is asynchronous and includes resource
         // readback. Keep only these infrequent requests on a longer deadline;
         // hardware commands and ordinary telemetry retain their existing limit.
@@ -575,7 +580,7 @@ fn refresh(cache: &Cache) -> Result<(), String> {
             map.insert(k.to_string(), v.to_string());
         }
     }
-    if map.get("protocol").map(String::as_str) != Some("13.5") {
+    if map.get("protocol").map(String::as_str) != Some("13.6") {
         return Err("protocol mismatch".into());
     }
 
@@ -745,6 +750,22 @@ fn refresh(cache: &Cache) -> Result<(), String> {
         ("display_native_density", 78),
         ("touch_resampler_path", 79),
         ("touch_resampler_error", 80),
+        ("charging_supported", 105),
+        ("charging_fcc_ua", 106),
+        ("charging_adapter_w", 107),
+        ("charging_pd_auth", 108),
+        ("charging_quick_type", 109),
+        ("charging_sic", 110),
+        ("charging_live_mw", 111),
+        ("bypass_charging_supported", 112),
+        ("bypass_charging_state", 113),
+        ("bypass_charging_saved", 114),
+        ("bypass_charging_verified", 115),
+        ("service_enabled", 116),
+        ("service_configured", 117),
+        ("bypass_threshold", 119),
+        ("bypass_phase", 120),
+        ("bypass_error", 121),
     ];
 
     for &(key, index) in extended_fields {
@@ -820,14 +841,17 @@ fn io_name(code: i32) -> Option<&'static str> {
 fn perform(command: Command) -> Result<(), String> {
     match command {
         Command::Refresh => Ok(()),
-        Command::Charging(v) if matches!(v, 0 | 8) => {
+        Command::Charging(v) if matches!(v, 0 | 25 | 33 | 65 | 85 | 90) => {
             request(&format!("SET charging {v}")).map(|_| ())
         }
+        Command::BypassCharging(v) if matches!(v, 0 | 1) => {
+            request(&format!("SET charging.bypass {v}")).map(|_| ())
+        }
         Command::Touch(v) if (0..=7).contains(&v) => request(&format!("SET touch {v}")).map(|_| ()),
-        Command::DisplayColor(v) if (0..=2).contains(&v) => {
+        Command::DisplayColor(v) if (-1..=2).contains(&v) => {
             request(&format!("SET display.color {v}")).map(|_| ())
         }
-        Command::DisplayTemp(v) if (1..=3).contains(&v) => {
+        Command::DisplayTemp(v) if v == -1 || (1..=3).contains(&v) => {
             request(&format!("SET display.temp {v}")).map(|_| ())
         }
         Command::Sunlight(v) if matches!(v, 0 | 1) => {
@@ -1035,6 +1059,11 @@ fn perform(command: Command) -> Result<(), String> {
                     let cmd_str = format!("SET cpu.freq_reset {a}");
                     return request(&cmd_str).map(|_| ());
                 }
+                29 if matches!(a, 0 | 1) => format!("SET service.enabled {a}"),
+                30 => "ACTION service.reset".to_string(),
+                31 if matches!(a, 0 | 20 | 40 | 80 | 90) => {
+                    format!("SET charging.bypass_threshold {a}")
+                }
                 _ => return Err("invalid extended command".into()),
             };
 
@@ -1048,6 +1077,7 @@ fn rodin_command_name(command: &Command) -> &'static str {
     match command {
         Command::Refresh => "refresh",
         Command::Charging(_) => "charging",
+        Command::BypassCharging(_) => "charging.bypass",
         Command::Touch(_) => "touch",
         Command::DisplayColor(_) => "display.color",
         Command::DisplayTemp(_) => "display.temp",
@@ -1256,7 +1286,7 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
                     match refresh(&cache) {
                         Ok(()) => {
                             if !logged_pass {
-                                app_log(b"RODIN_BACKEND_APP=PASS protocol=13.5\0");
+                                app_log(b"RODIN_BACKEND_APP=PASS protocol=13.6\0");
                                 logged_pass = true;
                             }
                             logged_fail = false;
@@ -1275,7 +1305,11 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
                 }
 
                 let name = rodin_command_name(&command);
-                let charging_action = matches!(&command, Command::Charging(_));
+                let charging_action = matches!(
+                    &command,
+                    Command::Charging(_) | Command::BypassCharging(_) | Command::Extended(31, _, _)
+                );
+                let service_action = matches!(&command, Command::Extended(29 | 30, _, _));
 
                 cache.action_state.store(1, Ordering::Release);
                 if charging_action {
@@ -1286,6 +1320,9 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
 
                 match perform(command) {
                     Ok(()) => {
+                        if service_action {
+                            cache.extended[118].store(2, Ordering::Release);
+                        }
                         let elapsed = started.elapsed().as_millis();
                         cache.action_state.store(2, Ordering::Release);
                         if charging_action {
@@ -1308,6 +1345,9 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
                         }
                     }
                     Err(error) => {
+                        if service_action {
+                            cache.extended[118].store(-1, Ordering::Release);
+                        }
                         let elapsed = started.elapsed().as_millis();
                         cache.action_state.store(-1, Ordering::Release);
                         if charging_action {
@@ -1336,7 +1376,7 @@ fn worker(cache: Arc<Cache>, rx: mpsc::Receiver<Command>) {
             match refresh(&cache) {
                 Ok(()) => {
                     if !logged_pass {
-                        app_log(b"RODIN_BACKEND_APP=PASS protocol=13.5\0");
+                        app_log(b"RODIN_BACKEND_APP=PASS protocol=13.6\0");
                         logged_pass = true;
                     }
                     logged_fail = false;
@@ -1381,6 +1421,29 @@ fn send(command: Command) -> i32 {
         .unwrap_or(0)
 }
 
+fn send_charging(command: Command) -> i32 {
+    let Some(rt) = runtime() else {
+        return 0;
+    };
+    let previous = rt.cache.charging_write_state.load(Ordering::Acquire);
+    if previous == 1
+        || rt
+            .cache
+            .charging_write_state
+            .compare_exchange(previous, 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+    {
+        return 0;
+    }
+    if rt.tx.send(command).is_err() {
+        rt.cache
+            .charging_write_state
+            .store(previous, Ordering::Release);
+        return 0;
+    }
+    1
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn rodin_backend_refresh() -> i32 {
     send(Command::Refresh)
@@ -1411,7 +1474,17 @@ pub extern "C" fn rodin_backend_get_charging_mode() -> i32 {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rodin_backend_set_charging_mode(v: i32) -> i32 {
-    send(Command::Charging(v))
+    if !matches!(v, 0 | 25 | 33 | 65 | 85 | 90) {
+        return 0;
+    }
+    send_charging(Command::Charging(v))
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_backend_set_bypass_charging(v: i32) -> i32 {
+    if !matches!(v, 0 | 1) {
+        return 0;
+    }
+    send_charging(Command::BypassCharging(v))
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rodin_backend_get_battery_capacity() -> i32 {
@@ -1685,6 +1758,33 @@ pub extern "C" fn rodin_backend_extended_get(index: i32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rodin_backend_extended_set(op: i32, a: i32, b: i32) -> i32 {
+    if op == 31 {
+        if !matches!(a, 0 | 20 | 40 | 80 | 90) {
+            return 0;
+        }
+        return send_charging(Command::Extended(op, a, b));
+    }
+    if matches!(op, 29 | 30) {
+        let Some(rt) = runtime() else {
+            return 0;
+        };
+        if op == 29 && !matches!(a, 0 | 1) {
+            return 0;
+        }
+        let previous = rt.cache.extended[118].load(Ordering::Acquire);
+        if previous == 1
+            || rt.cache.extended[118]
+                .compare_exchange(previous, 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return 0;
+        }
+        let accepted = send(Command::Extended(op, a, b));
+        if accepted == 0 {
+            rt.cache.extended[118].store(previous, Ordering::Release);
+        }
+        return accepted;
+    }
     if (24..=28).contains(&op) {
         let Some(rt) = runtime() else {
             return 0;

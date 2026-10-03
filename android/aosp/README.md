@@ -13,6 +13,13 @@ certificate, while the private key remains with the ROM maintainer.
 See `docs/ROM_INTEGRATION.md` for complete build, signing, policy, validation,
 and OTA instructions.
 
+The preserved native touch backend requires a reviewed platform capability
+exception. Product/vendor policy alone is insufficient on stock AOSP. Preview
+`tools/prepare-aosp-touch-policy.py <aosp-root>` in the original project before
+building, and follow the full policy validation steps in the guide.
+For offline EROFS/ext4 image porting, see `docs/UNPACKED_ROM_INTEGRATION.md`;
+these source `.te` files cannot simply be pasted into a compiled CIL file.
+
 For a checked-out ROM tree,
 `tools/integrate-aosp-rom.sh <aosp-root> <product-makefile> <boardconfig>` builds,
 stages, and idempotently wires the bundle under `vendor/rodin-essential`.

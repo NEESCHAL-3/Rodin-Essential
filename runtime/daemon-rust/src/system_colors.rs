@@ -673,6 +673,122 @@ pub(super) fn read() -> Result<String, String> {
     read_from(&mut AndroidPaletteIo::open()?).map(|state| state.encode())
 }
 
+pub(super) fn capture_original() -> Result<(), String> {
+    let mut io = AndroidPaletteIo::open()?;
+    let user = io.environment.user;
+    let key = format!("palette.user.{user}");
+    if super::service_control::original(&key).is_some() {
+        return Ok(());
+    }
+    let theme = io.read_setting()?;
+    let contrast = command(&[
+        "settings",
+        "--user",
+        &user.to_string(),
+        "get",
+        "secure",
+        CONTRAST,
+    ])?;
+    super::service_control::remember(
+        &key,
+        serde_json::json!({"theme": theme, "contrast": (contrast != "null").then_some(contrast)}),
+    )
+}
+
+pub(super) fn restore_original() -> Result<(), String> {
+    restore_saved_palette("palette.user.")
+}
+
+pub(super) fn capture_resume() -> Result<(), String> {
+    for (key, _) in super::service_control::originals() {
+        let Some(user) = key
+            .strip_prefix("palette.user.")
+            .and_then(|s| s.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        let theme = command(&[
+            "settings",
+            "--user",
+            &user.to_string(),
+            "get",
+            "secure",
+            SETTING,
+        ])?;
+        let contrast = command(&[
+            "settings",
+            "--user",
+            &user.to_string(),
+            "get",
+            "secure",
+            CONTRAST,
+        ])?;
+        super::service_control::replace(
+            &format!("palette.resume.{user}"),
+            serde_json::json!({"theme": (theme != "null").then_some(theme), "contrast": (contrast != "null").then_some(contrast)}),
+        )?;
+    }
+    Ok(())
+}
+
+pub(super) fn restore_resume() -> Result<(), String> {
+    restore_saved_palette("palette.resume.")
+}
+
+fn restore_saved_palette(prefix: &str) -> Result<(), String> {
+    let _guard = TRANSACTION
+        .lock()
+        .map_err(|_| "palette transaction lock poisoned")?;
+    for (key, original) in super::service_control::originals() {
+        let Some(user) = key.strip_prefix(prefix).and_then(|s| s.parse::<i32>().ok()) else {
+            continue;
+        };
+        for (setting, field) in [(SETTING, "theme"), (CONTRAST, "contrast")] {
+            let desired = if field == "theme" {
+                let current = command(&["settings", "--user", &user.to_string(), "get", "secure", SETTING])?;
+                let mut merged = decode((current != "null").then_some(current.as_str()))?;
+                let baseline = decode(original[field].as_str())?;
+                for key in COLOR_KEYS {
+                    merged.remove(key);
+                    if let Some(value) = baseline.get(key) { merged.insert(key.into(), value.clone()); }
+                }
+                Some(encode(&merged))
+            } else { original[field].as_str().map(str::to_string) };
+            match desired.as_deref() {
+                Some(value) => command(&[
+                    "settings",
+                    "--user",
+                    &user.to_string(),
+                    "put",
+                    "secure",
+                    setting,
+                    value,
+                ])?,
+                None => command(&[
+                    "settings",
+                    "--user",
+                    &user.to_string(),
+                    "delete",
+                    "secure",
+                    setting,
+                ])?,
+            };
+            let actual = command(&[
+                "settings",
+                "--user",
+                &user.to_string(),
+                "get",
+                "secure",
+                setting,
+            ])?;
+            if actual != desired.as_deref().unwrap_or("null") {
+                return Err("system color restoration readback differs".into());
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn apply_wallpaper() -> Result<String, String> {
     let _guard = TRANSACTION
         .try_lock()

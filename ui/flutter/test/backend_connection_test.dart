@@ -2,6 +2,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rodin_essential_ui/backend/backend_connection.dart';
 
 void main() {
+  test('paused controls are Disabled, not Live or a fake Offline', () {
+    expect(
+      RodinConnectionState.online.serviceLabel(enabled: false),
+      'Disabled',
+    );
+    expect(RodinConnectionState.online.serviceLabel(enabled: true), 'Live');
+    expect(
+      RodinConnectionState.offline.serviceLabel(enabled: false),
+      'Offline',
+    );
+    expect(
+      RodinConnectionState.connecting.serviceLabel(enabled: false),
+      'Connecting',
+    );
+  });
   test('only a successful handshake is Live', () {
     expect(RodinConnectionState.fromNative(1), RodinConnectionState.online);
     expect(RodinConnectionState.fromNative(1).badgeLabel, 'LIVE');

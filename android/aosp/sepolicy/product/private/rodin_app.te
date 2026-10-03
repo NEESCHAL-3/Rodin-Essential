@@ -2,3 +2,6 @@ type rodin_app, domain;
 typeattribute rodin_app coredomain;
 app_domain(rodin_app)
 untrusted_app_domain(rodin_app)
+# Ordinary application networking, including the authenticated module fallback
+# when a signature-compatible module updates a ROM-native installation.
+net_domain(rodin_app)

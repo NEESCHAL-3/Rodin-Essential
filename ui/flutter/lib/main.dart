@@ -7,8 +7,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 
 import 'backend/rodin_backend.dart';
+import 'backend/bypass_telemetry.dart';
+import 'bypass_threshold_selector.dart';
 import 'backend/system_colors_library.dart';
 import 'system_colors_preview.dart';
+import 'service_confirmation.dart';
 
 part 'system_colors.dart';
 
@@ -807,10 +810,38 @@ class _RodinShellState extends State<RodinShell> {
                       ),
                     ],
                   ),
-                  bottomNavigationBar: RodinBottomBar(
-                    controller: _rootController,
-                    currentRoot: navRoot,
-                    onSelect: _selectRoot,
+                  bottomNavigationBar: Stack(
+                    children: <Widget>[
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: <Color>[
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.surface.withValues(alpha: 0),
+                                  Theme.of(context).colorScheme.surface
+                                      .withValues(alpha: isDark ? 0.74 : 0.86),
+                                  Theme.of(context).colorScheme.surface,
+                                ],
+                                stops: const <double>[0, 0.55, 1],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 24),
+                        child: RodinBottomBar(
+                          controller: _rootController,
+                          currentRoot: navRoot,
+                          onSelect: _selectRoot,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -1233,6 +1264,231 @@ class _RodinBackgroundLayer extends StatelessWidget {
   }
 }
 
+class _ServiceSettingsCard extends StatefulWidget {
+  const _ServiceSettingsCard({required this.onResetAppearance});
+  final VoidCallback onResetAppearance;
+
+  @override
+  State<_ServiceSettingsCard> createState() => _ServiceSettingsCardState();
+}
+
+class _ServiceSettingsCardState extends State<_ServiceSettingsCard> {
+  bool _pending = false;
+  bool _reset = false;
+  String? _message;
+  StreamSubscription<RodinBackendSnapshot>? _subscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscription = RodinBackend.instance.snapshots.listen((_) {
+      if (!mounted) return;
+      final int state = RodinBackend.instance.serviceActionState;
+      if (_pending && state != 1 && state != 0) {
+        if (state == 2 && _reset) {
+          widget.onResetAppearance();
+          RodinInteractionSettings.resetMotion();
+          RodinInteractionSettings.setHaptics(true);
+        }
+        setState(() {
+          _pending = false;
+          _message = state == 2
+              ? (_reset
+                    ? 'All device controls reset.'
+                    : RodinBackend.instance.serviceEnabled
+                    ? 'Rodin Essential enabled.'
+                    : 'Rodin Essential disabled. Your preferences are saved.')
+              : 'Some settings could not be restored. Rodin Essential control remains paused. Retry or check backend diagnostics.';
+        });
+      }
+    });
+  }
+
+  Future<void> _change({required bool reset, bool enable = false}) async {
+    if (_pending) return;
+    RodinHaptics.tap();
+    if (reset || !enable) {
+      final RodinAppearanceConfig appearance = RodinAppearanceScope.of(context);
+      final bool confirmed =
+          await showDialog<bool>(
+            context: context,
+            builder: (BuildContext context) => RodinAppearanceScope(
+              config: appearance,
+              child: RodinServiceConfirmation(
+                reset: reset,
+                cornerRadius: appearance.cardRadius,
+                accent: appearance.activeAccent,
+                onConfirmHaptic: RodinHaptics.confirm,
+                onCancelHaptic: RodinHaptics.back,
+                surfaceBuilder: (Widget child) => SurfaceCard(
+                  padding: const EdgeInsets.all(22),
+                  accent: appearance.activeAccent,
+                  child: child,
+                ),
+              ),
+            ),
+          ) ??
+          false;
+      if (!confirmed || !mounted) return;
+    }
+    final RodinBackend backend = RodinBackend.instance;
+    final bool accepted = reset
+        ? backend.resetAllSettings()
+        : backend.setServiceEnabled(enable);
+    setState(() {
+      _reset = reset;
+      _pending = accepted;
+      _message = accepted
+          ? null
+          : 'Backend unavailable or another operation is in progress.';
+    });
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final RodinBackend backend = RodinBackend.instance;
+    return StreamBuilder<RodinBackendSnapshot>(
+      stream: backend.snapshots,
+      initialData: backend.latest,
+      builder: (BuildContext context, AsyncSnapshot<RodinBackendSnapshot> snapshot) {
+        final Color accent = RodinAppearanceScope.of(context).activeAccent;
+        final bool connected = snapshot.data?.ready ?? false;
+        final bool known = backend.extendedValue(116) >= 0;
+        final bool enabled = backend.serviceEnabled;
+        final bool busy = _pending || backend.serviceActionState == 1;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const SectionLabel('Service & reset'),
+            const SizedBox(height: 9),
+            SurfaceCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Icon(
+                        Icons.power_settings_new_rounded,
+                        color: accent,
+                        size: 25,
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Enable Rodin Essential',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      Switch.adaptive(
+                        value: enabled,
+                        activeTrackColor: accent,
+                        onChanged: connected && known && !busy
+                            ? (bool value) =>
+                                  _change(reset: false, enable: value)
+                            : null,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    !connected
+                        ? 'Connect to the backend to manage device controls.'
+                        : !known
+                        ? 'Update the backend to use service controls.'
+                        : enabled
+                        ? 'Device controls are available. Your saved selections are restored after reboot.'
+                        : 'Background device control is paused. Open this page to enable it again.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.45,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  const Divider(height: 1),
+                  const SizedBox(height: 13),
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            const Text(
+                              'Reset all device settings',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Restore captured originals and vendor defaults. Clear all saved device overrides.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                height: 1.45,
+                                color: colors.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      IconButton.filledTonal(
+                        style: IconButton.styleFrom(
+                          foregroundColor: accent,
+                          backgroundColor: accent.withValues(alpha: 0.12),
+                        ),
+                        tooltip: 'Reset all device settings',
+                        onPressed: connected && known && !busy
+                            ? () => _change(reset: true)
+                            : null,
+                        icon: const Icon(Icons.restart_alt_rounded),
+                      ),
+                    ],
+                  ),
+                  if (busy) ...<Widget>[
+                    const SizedBox(height: 14),
+                    LinearProgressIndicator(color: accent),
+                    const SizedBox(height: 7),
+                    Text(
+                      'Applying service change…',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                  if (_message != null) ...<Widget>[
+                    const SizedBox(height: 12),
+                    Text(
+                      _message!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.45,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     required this.config,
@@ -1421,12 +1677,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       children: <Widget>[
         const RodinHeader(
           title: 'Settings',
-          subtitle: 'Theme, elements, and UI customization',
+          subtitle: 'Service controls, theme, and customization',
           large: true,
         ),
         const SizedBox(height: 10),
 
         // 1. LIVE PREVIEW CARD
+        _ServiceSettingsCard(onResetAppearance: widget.onResetAppearance),
+        const SizedBox(height: 20),
         const SectionLabel('Live preview'),
         const SizedBox(height: 8),
         SurfaceCard(
@@ -1497,7 +1755,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         const Text(
-                          'Rodin Custom Surface',
+                          'Rodin Essential Custom Surface',
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w800,
@@ -2739,7 +2997,7 @@ class _HomePulseHero extends StatelessWidget {
         final String touchDetail = switch (snapshot.touchState) {
           1 || 2 => 'Fixed target',
           3 => '1000 / 500 Hz',
-          _ => 'Adaptive',
+          _ => 'ROM control',
         };
         final int liveGpuFreq = backend.extendedValue(46) >= 260
             ? backend.extendedValue(46)
@@ -2870,7 +3128,7 @@ class _HomePulseHero extends StatelessWidget {
                                 ),
                               ),
                               const Spacer(),
-                              _HomeLiveBadge(connection: snapshot.connection),
+                              _HomeLiveBadge(snapshot: snapshot),
                             ],
                           ),
                           const SizedBox(height: 11),
@@ -3004,14 +3262,14 @@ class _HomePulseHero extends StatelessWidget {
 }
 
 class _HomeLiveBadge extends StatelessWidget {
-  const _HomeLiveBadge({required this.connection});
+  const _HomeLiveBadge({required this.snapshot});
 
-  final RodinConnectionState connection;
+  final RodinBackendSnapshot snapshot;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme colors = Theme.of(context).colorScheme;
-    final bool online = connection == RodinConnectionState.online;
+    final bool online = snapshot.controlsAvailable;
     final Color accent = online
         ? const Color(0xFF41C98A)
         : colors.onSurfaceVariant;
@@ -3033,7 +3291,7 @@ class _HomeLiveBadge extends StatelessWidget {
           ),
           const SizedBox(width: 5),
           Text(
-            connection.badgeLabel,
+            snapshot.serviceStatusBadgeLabel,
             style: TextStyle(
               fontSize: 8.8,
               fontWeight: FontWeight.w800,
@@ -3625,7 +3883,7 @@ class _LiveOverviewGrid extends StatelessWidget {
           0 => 'Original PRO',
           1 => 'Vivid',
           2 => 'Saturated',
-          _ => 'Vivid',
+          _ => 'OEM Control',
         };
 
         final String touch = _rodinTouchLabel(snapshot.touchState);
@@ -3749,7 +4007,7 @@ class _OverviewCard extends StatelessWidget {
     final ColorScheme colors = Theme.of(context).colorScheme;
 
     final Widget card = Container(
-      height: 78,
+      constraints: const BoxConstraints(minHeight: 78),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
       decoration: BoxDecoration(borderRadius: BorderRadius.circular(16)),
       child: Row(
@@ -3769,6 +4027,7 @@ class _OverviewCard extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
@@ -3785,8 +4044,6 @@ class _OverviewCard extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 15,
                     height: 1,
@@ -3797,8 +4054,6 @@ class _OverviewCard extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 9.4,
                     height: 1,
@@ -3949,7 +4204,7 @@ String _rodinTouchLabel(int profile) {
     1 => '240 Hz',
     2 => '480 Hz',
     3 => 'Super Touch',
-    _ => 'OEM Adaptive',
+    _ => 'OEM Control',
   };
 }
 
@@ -3991,7 +4246,7 @@ class HubsScreen extends StatelessWidget {
           0 => 'Original PRO',
           1 => 'Vivid',
           2 => 'Saturated',
-          _ => 'OEM Adaptive',
+          _ => 'OEM Control',
         };
         final String touchMode = _rodinTouchLabel(snapshot.touchState);
         final int zramDiskMb = backend.extendedValue(39) > 0
@@ -4015,7 +4270,7 @@ class HubsScreen extends StatelessWidget {
             _HubReveal(
               child: _HubProfileHero(
                 profile: _rodinPerformanceLabel(activePerf),
-                connection: snapshot.connection,
+                snapshot: snapshot,
                 battery: battery,
                 cores: cores,
                 gpu: gpuLabel,
@@ -4146,7 +4401,7 @@ class HubsScreen extends StatelessWidget {
                 child: _HubControlRow(
                   title: 'Diagnostics',
                   subtitle: 'Sensors and hardware health',
-                  value: snapshot.connection.label,
+                  value: snapshot.serviceStatusLabel,
                   icon: Icons.monitor_heart_rounded,
                   accent: const Color(0xFF74E6C6),
                   onTap: () => onOpen(RodinScreen.diagnostics),
@@ -4190,7 +4445,7 @@ class _HubReveal extends StatelessWidget {
 class _HubProfileHero extends StatelessWidget {
   const _HubProfileHero({
     required this.profile,
-    required this.connection,
+    required this.snapshot,
     required this.battery,
     required this.cores,
     required this.gpu,
@@ -4201,7 +4456,7 @@ class _HubProfileHero extends StatelessWidget {
   });
 
   final String profile;
-  final RodinConnectionState connection;
+  final RodinBackendSnapshot snapshot;
   final String battery;
   final String cores;
   final String gpu;
@@ -4215,7 +4470,7 @@ class _HubProfileHero extends StatelessWidget {
     final ThemeData theme = Theme.of(context);
     final ColorScheme colors = theme.colorScheme;
     final bool dark = theme.brightness == Brightness.dark;
-    final bool online = connection == RodinConnectionState.online;
+    final bool online = snapshot.controlsAvailable;
     final Color accent = colors.primary;
 
     return SurfaceCard(
@@ -4311,7 +4566,7 @@ class _HubProfileHero extends StatelessWidget {
                       ),
                       const SizedBox(width: 5),
                       Text(
-                        connection.badgeLabel,
+                        snapshot.serviceStatusBadgeLabel,
                         style: TextStyle(
                           fontSize: 9,
                           fontWeight: FontWeight.w800,
@@ -4679,6 +4934,11 @@ class SupportScreen extends StatelessWidget {
     return RodinScrollPage(
       topPadding: 16,
       children: <Widget>[
+        const RodinHeader(
+          title: 'Support',
+          subtitle: 'Community, source and system information',
+        ),
+        const SizedBox(height: 14),
         // Hero Header Card with Redesigned Flagship OEM Logo
         SurfaceCard(
           padding: const EdgeInsets.all(16),
@@ -4692,58 +4952,13 @@ class SupportScreen extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        Row(
-                          children: <Widget>[
-                            const Text(
-                              'Rodin Essential',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: -0.4,
-                              ),
-                            ),
-                            const Spacer(),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 2.5,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(
-                                  0xFF41C98A,
-                                ).withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: const Color(
-                                    0xFF41C98A,
-                                  ).withValues(alpha: 0.25),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: <Widget>[
-                                  Container(
-                                    width: 5,
-                                    height: 5,
-                                    decoration: const BoxDecoration(
-                                      color: Color(0xFF41C98A),
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  const Text(
-                                    'ROM NATIVE',
-                                    style: TextStyle(
-                                      fontSize: 8.5,
-                                      fontWeight: FontWeight.w800,
-                                      color: Color(0xFF41C98A),
-                                      letterSpacing: 0.5,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
+                        const Text(
+                          'Rodin Essential',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.4,
+                          ),
                         ),
                         const SizedBox(height: 2),
                         Text(
@@ -4760,8 +4975,12 @@ class SupportScreen extends StatelessWidget {
                           runSpacing: 4,
                           children: <Widget>[
                             StatusPill(
-                              label: 'v1.18.3',
+                              label: 'v1.18.4',
                               accent: colors.primary,
+                            ),
+                            const StatusPill(
+                              label: 'Native Service',
+                              accent: Color(0xFF41C98A),
                             ),
                             StatusPill(
                               label: 'Zero-DEX AOT',
@@ -5081,13 +5300,10 @@ class _ChargingScreenState extends State<ChargingScreen> {
 
             return RodinScrollPage(
               children: <Widget>[
-                DetailHeader(
-                  title: 'Battery & Charging',
-                  onBack: widget.onBack,
-                ),
+                DetailHeader(title: 'Charging Control', onBack: widget.onBack),
                 const SizedBox(height: 3),
                 Text(
-                  'Fast charging controls and live power status',
+                  'Rodin-native power ceilings with verified live telemetry',
                   style: TextStyle(
                     fontSize: 13.5,
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -5096,12 +5312,403 @@ class _ChargingScreenState extends State<ChargingScreen> {
                 const SizedBox(height: 10),
                 _ChargingBatteryCard(snapshot: snapshot),
                 const SizedBox(height: 9),
+                _BypassChargingCard(snapshot: snapshot),
+                const SizedBox(height: 9),
                 _ChargingModeCard(snapshot: snapshot),
               ],
             );
           },
     );
   }
+}
+
+class _BypassChargingCard extends StatefulWidget {
+  const _BypassChargingCard({required this.snapshot});
+
+  final RodinBackendSnapshot snapshot;
+
+  @override
+  State<_BypassChargingCard> createState() => _BypassChargingCardState();
+}
+
+class _BypassChargingCardState extends State<_BypassChargingCard> {
+  static const Color accent = Color(0xFF9B7CFF);
+  bool? _pending;
+  int? _thresholdPending;
+  int? _thresholdPreview;
+
+  bool get _directPowerConfirmed => isBypassDirectPowerConfirmed(
+    ready: snapshot.ready,
+    enabled: RodinBackend.instance.bypassChargingEnabled,
+    kernelActive: RodinBackend.instance.bypassHardwareActive,
+    usbOnline: snapshot.usbOnline,
+    batteryCurrentA: snapshot.batteryCurrentA,
+  );
+
+  RodinBackendSnapshot get snapshot => widget.snapshot;
+
+  @override
+  void didUpdateWidget(covariant _BypassChargingCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_pending != null &&
+        (RodinBackend.instance.bypassChargingEnabled == _pending ||
+            snapshot.chargingWriteState == -1)) {
+      _pending = null;
+    }
+    if (_thresholdPending != null &&
+        (RodinBackend.instance.bypassThreshold == _thresholdPending ||
+            snapshot.chargingWriteState == -1)) {
+      _thresholdPending = null;
+    }
+  }
+
+  String _stateLabel(bool enabled) {
+    if (!snapshot.ready) return 'BACKEND UNAVAILABLE';
+    if (!snapshot.serviceEnabled) return 'DISABLED';
+    if (_pending != null) return 'APPLYING';
+    if (!RodinBackend.instance.bypassChargingSupported) return 'NOT SUPPORTED';
+    if (!enabled) return 'OFF';
+    return switch (RodinBackend.instance.bypassPhase) {
+      1 => 'CHARGING TO THRESHOLD',
+      2 => 'ARMED',
+      4 when _directPowerConfirmed => 'DIRECT POWER',
+      5 => 'CONTROL UNAVAILABLE',
+      6 => 'BATTERY ASSIST',
+      7 => 'CHARGING DETECTED',
+      _ => 'POWER SETTLING',
+    };
+  }
+
+  String _description(bool enabled) {
+    if (!snapshot.ready) {
+      return 'Connect to the device backend to check kernel bypass support.';
+    }
+    if (!snapshot.serviceEnabled) {
+      return 'Rodin Essential is disabled. Enable it in Settings to use bypass charging.';
+    }
+    if (_pending != null) return 'Applying the kernel bypass setting…';
+    if (!RodinBackend.instance.bypassChargingSupported) {
+      return 'A compatible kernel power-path bypass node is required. '
+          'input_suspend is not used: stopping charger input alone does not '
+          'provide direct system power.';
+    }
+    if (!enabled) {
+      return 'Uses the supported kernel charge-pause power path. Select a '
+          'battery threshold, or Immediately to pause charging as soon as enabled. '
+          'Works independently of this page and the app.';
+    }
+    if (snapshot.usbOnline == 0) {
+      return 'Bypass is armed. Connect a charger to activate direct system power.';
+    }
+    final int threshold = RodinBackend.instance.bypassThreshold;
+    if (RodinBackend.instance.bypassPhase == 1) {
+      return 'OEM charging continues below $threshold%. At $threshold%, Rodin Essential '
+          'requests bypass automatically. Charging resumes only if the level '
+          'falls two percentage points below the threshold.';
+    }
+    if (RodinBackend.instance.bypassPhase == 5) {
+      return 'The saved choice is still enabled, but kernel control or battery '
+          'telemetry is unavailable. Bypass is not confirmed.';
+    }
+    if (RodinBackend.instance.bypassPhase == 6) {
+      return 'Charge pause is requested, but the battery is supplying part of '
+          'the load. Check your adapter and cable; direct power is not confirmed.';
+    }
+    if (RodinBackend.instance.bypassPhase == 7) {
+      return 'Battery current shows charging despite the bypass request. '
+          'Rodin Essential is not reporting this as working bypass.';
+    }
+    if (!_directPowerConfirmed) {
+      return 'The kernel charge-pause request is active. Power negotiation and '
+          'battery-current measurement are settling; opening this page does '
+          'not restart them.';
+    }
+    return 'Kernel bypass is enabled. External power is connected and battery '
+        'current has stayed near zero, consistent with direct system power.';
+  }
+
+  void _setEnabled(bool enabled) {
+    if (_pending != null ||
+        _thresholdPending != null ||
+        snapshot.chargingWriteState == 1 ||
+        !RodinBackend.instance.bypassChargingSupported) {
+      return;
+    }
+    setState(() => _pending = enabled);
+    RodinHaptics.toggle(enabled);
+    if (!RodinBackend.instance.setBypassCharging(enabled)) {
+      setState(() => _pending = null);
+      RodinHaptics.reject();
+      RodinBackend.instance.refresh();
+    }
+  }
+
+  void _setThreshold(int threshold) {
+    setState(() => _thresholdPreview = null);
+    if (_thresholdPending != null || !snapshot.controlsAvailable) return;
+    if (threshold == RodinBackend.instance.bypassThreshold) return;
+    RodinHaptics.segment();
+    setState(() => _thresholdPending = threshold);
+    if (!RodinBackend.instance.setBypassThreshold(threshold)) {
+      setState(() => _thresholdPending = null);
+      RodinHaptics.reject();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final bool supported = RodinBackend.instance.bypassChargingSupported;
+    final bool enabled =
+        _pending ?? RodinBackend.instance.bypassChargingEnabled;
+    final bool applying = _pending != null || snapshot.chargingWriteState == 1;
+    final String state = _stateLabel(enabled);
+
+    return SurfaceCard(
+      padding: const EdgeInsets.fromLTRB(14, 14, 10, 14),
+      accent: supported ? accent : colors.onSurfaceVariant,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: <Color>[
+                      accent.withValues(alpha: enabled ? 0.30 : 0.14),
+                      accent.withValues(alpha: enabled ? 0.09 : 0.035),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: accent.withValues(alpha: enabled ? 0.42 : 0.18),
+                  ),
+                ),
+                child: Center(
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween<double>(begin: 0, end: enabled ? 1 : 0),
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 420),
+                    curve: Curves.easeOutCubic,
+                    builder:
+                        (BuildContext context, double flow, Widget? child) {
+                          return CustomPaint(
+                            size: const Size(32, 32),
+                            painter: _BypassPowerPathPainter(
+                              color: supported
+                                  ? accent
+                                  : colors.onSurfaceVariant,
+                              flow: flow,
+                            ),
+                          );
+                        },
+                  ),
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text(
+                      'Bypass Charging',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: (enabled ? accent : colors.onSurfaceVariant)
+                            .withValues(alpha: 0.11),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        state,
+                        style: TextStyle(
+                          fontSize: 8.6,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.55,
+                          color: enabled ? accent : colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch.adaptive(
+                value: enabled,
+                onChanged: supported && snapshot.controlsAvailable
+                    ? _setEnabled
+                    : null,
+                activeThumbColor: accent,
+                activeTrackColor: accent.withValues(alpha: 0.34),
+              ),
+            ],
+          ),
+          const SizedBox(height: 11),
+          Row(
+            children: <Widget>[
+              const Expanded(
+                child: Text(
+                  'Start bypass at',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+              ),
+              Text(
+                (_thresholdPreview ??
+                            _thresholdPending ??
+                            RodinBackend.instance.bypassThreshold) <=
+                        0
+                    ? 'Immediately'
+                    : '${_thresholdPreview ?? _thresholdPending ?? RodinBackend.instance.bypassThreshold}%',
+                style: const TextStyle(
+                  color: accent,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          RodinBypassThresholdSelector(
+            value: _thresholdPending ?? RodinBackend.instance.bypassThreshold,
+            enabled:
+                supported &&
+                snapshot.controlsAvailable &&
+                !applying &&
+                _thresholdPending == null,
+            onChanged: _setThreshold,
+            onPreview: (threshold) {
+              RodinHaptics.frequentSegment();
+              setState(() => _thresholdPreview = threshold);
+            },
+            accent: accent,
+          ),
+          const SizedBox(height: 11),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+            decoration: BoxDecoration(
+              color: (supported ? accent : colors.onSurfaceVariant).withValues(
+                alpha: 0.065,
+              ),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: (supported ? accent : colors.onSurfaceVariant)
+                    .withValues(alpha: 0.16),
+              ),
+            ),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight:
+                    MediaQuery.textScalerOf(context).scale(10.7) * 1.35 * 5,
+              ),
+              child: Text(
+                _description(enabled),
+                style: TextStyle(
+                  fontSize: 10.7,
+                  height: 1.35,
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BypassPowerPathPainter extends CustomPainter {
+  const _BypassPowerPathPainter({required this.color, required this.flow});
+
+  final Color color;
+  final double flow;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.scale(size.width / 32, size.height / 32);
+    final Paint stroke = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    // Adapter feeds the system rail; the lower battery branch is isolated.
+    canvas.drawLine(const Offset(4, 7), const Offset(4, 10), stroke);
+    canvas.drawLine(const Offset(8, 7), const Offset(8, 10), stroke);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTWH(2, 10, 8, 7),
+        const Radius.circular(2),
+      ),
+      stroke,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(6, 17)
+        ..lineTo(6, 20)
+        ..quadraticBezierTo(6, 22, 8, 22)
+        ..lineTo(14, 22)
+        ..quadraticBezierTo(16, 22, 16, 20)
+        ..lineTo(16, 13)
+        ..lineTo(21, 13),
+      stroke,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTWH(21, 8, 9, 10),
+        const Radius.circular(2),
+      ),
+      stroke,
+    );
+    for (final double x in <double>[24, 27]) {
+      canvas.drawLine(Offset(x, 5.5), Offset(x, 8), stroke);
+      canvas.drawLine(Offset(x, 18), Offset(x, 20.5), stroke);
+    }
+    canvas.drawRect(const Rect.fromLTWH(24, 11, 3, 4), Paint()..color = color);
+    final Paint battery = Paint()
+      ..color = color.withValues(alpha: 0.55 - flow * 0.25)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..strokeCap = StrokeCap.round;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTWH(20, 25, 10, 5),
+        const Radius.circular(1),
+      ),
+      battery,
+    );
+    canvas.drawLine(
+      const Offset(18.5, 26.5),
+      const Offset(18.5, 28.5),
+      battery,
+    );
+    canvas.drawLine(const Offset(17, 23.5), const Offset(20, 23.5), battery);
+    if (flow > 0) {
+      canvas.drawCircle(Offset(16 + 3 * flow, 13), 2, Paint()..color = color);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BypassPowerPathPainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.flow != flow;
 }
 
 class _ChargingBatteryCard extends StatelessWidget {
@@ -5119,24 +5726,47 @@ class _ChargingBatteryCard extends StatelessWidget {
     return value == null ? '—' : '${value.toStringAsFixed(1)}°C';
   }
 
-  String _voltage() {
-    final double? value = snapshot.batteryVoltageV;
-    return value == null ? '—' : '${value.toStringAsFixed(2)} V';
-  }
-
   String _current() {
     final double? value = snapshot.batteryCurrentA;
-    return value == null ? '—' : '${value.toStringAsFixed(2)} A';
+    return value == null ? '—' : '${value.abs().toStringAsFixed(2)} A';
   }
 
   String _wattage() {
-    final double? v = snapshot.batteryVoltageV;
-    final double? a = snapshot.batteryCurrentA;
-    if (v == null || a == null || v <= 0 || a <= 0) return '—';
-    return '${(v * a).toStringAsFixed(1)} W';
+    final int milliwatts = RodinBackend.instance.chargingLiveMilliwatts;
+    if (snapshot.batteryStatus != 1 || milliwatts < 0) return '—';
+    return '${(milliwatts / 1000).toStringAsFixed(1)} W';
   }
 
+  String _adapter() {
+    final int selected = snapshot.chargingMode;
+    if (selected > 0) return '$selected W';
+    final int watts = RodinBackend.instance.chargingAdapterWatts;
+    return watts > 0 ? '$watts W' : 'Detecting';
+  }
+
+  String _adapterLabel() =>
+      snapshot.chargingMode > 0 ? 'Selected Max' : 'Adapter Max';
+
   String _status() {
+    if (snapshot.controlsAvailable &&
+        RodinBackend.instance.bypassChargingEnabled &&
+        RodinBackend.instance.bypassPhase == 4) {
+      return 'Direct power · Battery charging paused';
+    }
+    if (RodinBackend.instance.bypassChargingEnabled) {
+      switch (RodinBackend.instance.bypassPhase) {
+        case 1:
+          return 'Charging to ${RodinBackend.instance.bypassThreshold}%';
+        case 3:
+          return 'Charge pause requested · Power settling';
+        case 5:
+          return 'Bypass control unavailable';
+        case 6:
+          return 'Battery supplementing adapter power';
+        case 7:
+          return 'Charging detected · Bypass not confirmed';
+      }
+    }
     switch (snapshot.batteryStatus) {
       case 1:
         return 'Charging';
@@ -5183,7 +5813,17 @@ class _ChargingBatteryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colors = Theme.of(context).colorScheme;
-    final bool isCharging = snapshot.batteryStatus == 1;
+    final bool bypassEnabled = RodinBackend.instance.bypassChargingEnabled;
+    final int bypassPhase = RodinBackend.instance.bypassPhase;
+    final bool isBypass =
+        snapshot.ready &&
+        snapshot.serviceEnabled &&
+        bypassEnabled &&
+        bypassPhase == 4;
+    final bool isCharging =
+        snapshot.batteryStatus == 1 &&
+        !isBypass &&
+        !(bypassEnabled && <int>{3, 6}.contains(bypassPhase));
 
     return SurfaceCard(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
@@ -5222,7 +5862,10 @@ class _ChargingBatteryCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 5,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: <Widget>[
                         Text(
                           _capacity(),
@@ -5233,8 +5876,7 @@ class _ChargingBatteryCard extends StatelessWidget {
                             letterSpacing: -0.5,
                           ),
                         ),
-                        if (isCharging) ...<Widget>[
-                          const SizedBox(width: 8),
+                        if (isCharging || isBypass) ...<Widget>[
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 7,
@@ -5251,9 +5893,9 @@ class _ChargingBatteryCard extends StatelessWidget {
                                 ).withValues(alpha: 0.35),
                               ),
                             ),
-                            child: const Text(
-                              'CHARGING',
-                              style: TextStyle(
+                            child: Text(
+                              isBypass ? 'BYPASS' : 'CHARGING',
+                              style: const TextStyle(
                                 fontSize: 8.8,
                                 fontWeight: FontWeight.w900,
                                 letterSpacing: 0.6,
@@ -5267,8 +5909,6 @@ class _ChargingBatteryCard extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       '${_status()} · ${_health()}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -5279,8 +5919,10 @@ class _ChargingBatteryCard extends StatelessWidget {
                 ),
               ),
               _ChargingStatePill(
-                label: snapshot.connection.badgeLabel,
-                accent: snapshot.ready ? accent : colors.onSurfaceVariant,
+                label: snapshot.serviceStatusBadgeLabel,
+                accent: snapshot.controlsAvailable
+                    ? accent
+                    : colors.onSurfaceVariant,
               ),
             ],
           ),
@@ -5300,7 +5942,7 @@ class _ChargingBatteryCard extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: _ChargingMetric(
-                  label: 'Power Flow',
+                  label: 'Battery Input',
                   value: _wattage(),
                   icon: Icons.bolt_rounded,
                   accentColor: const Color(0xFFFFB84D),
@@ -5313,9 +5955,9 @@ class _ChargingBatteryCard extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: _ChargingMetric(
-                  label: 'Voltage',
-                  value: _voltage(),
-                  icon: Icons.electric_bolt_rounded,
+                  label: _adapterLabel(),
+                  value: _adapter(),
+                  icon: Icons.power_rounded,
                   accentColor: const Color(0xFF67C2FF),
                 ),
               ),
@@ -5409,82 +6051,169 @@ class _ChargingMetric extends StatelessWidget {
   }
 }
 
-class _ChargingModeCard extends StatelessWidget {
+Color _chargingProfileAccent(int watts) => switch (watts) {
+  0 => const Color(0xFF67C2FF),
+  25 => const Color(0xFF35C997),
+  33 => const Color(0xFF35C997),
+  65 => const Color(0xFF35C997),
+  85 => const Color(0xFF35C997),
+  90 => const Color(0xFFFFA340),
+  _ => const Color(0xFF35C997),
+};
+
+IconData _chargingProfileIcon(int watts) => switch (watts) {
+  0 => Icons.auto_awesome_rounded,
+  25 => Icons.eco_rounded,
+  33 => Icons.battery_charging_full_rounded,
+  65 => Icons.bolt_rounded,
+  85 => Icons.flash_on_rounded,
+  90 => Icons.offline_bolt_rounded,
+  _ => Icons.bolt_rounded,
+};
+
+String _chargingProfileName(int watts) => switch (watts) {
+  0 => 'OEM Adaptive',
+  25 => 'Cool Daily',
+  33 => 'Balanced Fast',
+  65 => 'Fast Daily',
+  85 => 'Near Maximum',
+  90 => 'HyperCharge',
+  _ => 'Charge Output',
+};
+
+String _chargingProfileDescription(int watts) => switch (watts) {
+  0 => 'ROM-managed charging, taper and battery care',
+  25 => 'Lower-heat everyday charging',
+  33 => 'Balanced speed and temperature',
+  65 => 'Fast daily charging with headroom',
+  85 => 'Near-maximum charging',
+  90 => 'Full software charging ceiling',
+  _ => 'Select a charging profile',
+};
+
+class _ChargingModeCard extends StatefulWidget {
   const _ChargingModeCard({required this.snapshot});
 
   final RodinBackendSnapshot snapshot;
 
-  static const Color accent = Color(0xFF35C997);
+  @override
+  State<_ChargingModeCard> createState() => _ChargingModeCardState();
+}
 
-  String _modeName() {
-    switch (snapshot.chargingMode) {
-      case 8:
-        return 'Boost';
-      case 0:
-        return 'Standard';
-      default:
-        return 'Unavailable';
+class _ChargingModeCardState extends State<_ChargingModeCard> {
+  static const Color accent = Color(0xFF35C997);
+  int? _pendingProfile;
+
+  RodinBackendSnapshot get snapshot => widget.snapshot;
+
+  @override
+  void didUpdateWidget(covariant _ChargingModeCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_pendingProfile != null &&
+        (snapshot.chargingMode == _pendingProfile ||
+            snapshot.chargingWriteState == -1)) {
+      _pendingProfile = null;
     }
   }
 
-  String _detail() {
-    if (!snapshot.ready) {
-      return 'Privileged charging backend unavailable';
+  String _detail(int selected) {
+    if (!snapshot.ready) return 'Charging backend unavailable';
+    if (!RodinBackend.instance.chargingControlSupported) {
+      return 'Rodin Essential FCC control is unavailable on this kernel';
     }
+    if (RodinBackend.instance.bypassChargingEnabled) {
+      return 'Disable Bypass Charging to use charging profiles';
+    }
+    if (snapshot.chargingWriteState == 1) {
+      return 'Applying and verifying the selected ceiling…';
+    }
+    if (snapshot.chargingWriteState == -1) {
+      return 'The requested ceiling could not be verified';
+    }
+    return selected == 0
+        ? 'ROM and battery controller manage charging'
+        : 'Rodin Essential fast-charge path · $selected W maximum';
+  }
 
-    switch (snapshot.chargingWriteState) {
-      case 1:
-        return 'Applying charging mode…';
-      case 2:
-        return 'Charging mode applied';
-      case -1:
-        return 'Could not apply charging mode';
-      default:
-        return snapshot.chargingBoost
-            ? 'Faster charging mode is active'
-            : 'Standard charging mode is active';
+  void _select(int profile) {
+    final bool allowed =
+        snapshot.controlsAvailable &&
+        RodinBackend.instance.chargingControlSupported &&
+        !RodinBackend.instance.bypassChargingEnabled &&
+        snapshot.chargingWriteState != 1;
+    if (!allowed || profile == (_pendingProfile ?? snapshot.chargingMode)) {
+      return;
+    }
+    RodinHaptics.segment();
+    setState(() => _pendingProfile = profile);
+    if (!RodinBackend.instance.setChargingProfile(profile)) {
+      setState(() => _pendingProfile = null);
+      RodinHaptics.reject();
+      RodinBackend.instance.refresh();
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme colors = Theme.of(context).colorScheme;
-    final bool busy = snapshot.chargingWriteState == 1;
-    final bool canWrite = snapshot.ready && snapshot.chargingMode >= 0 && !busy;
+    final int selected = _pendingProfile ?? snapshot.chargingMode;
+    final Color profileAccent = _chargingProfileAccent(selected);
+    final IconData profileIcon = _chargingProfileIcon(selected);
+    final bool enabled =
+        snapshot.controlsAvailable &&
+        RodinBackend.instance.chargingControlSupported &&
+        !RodinBackend.instance.bypassChargingEnabled &&
+        snapshot.chargingWriteState != 1;
 
     return SurfaceCard(
-      padding: const EdgeInsets.fromLTRB(14, 13, 10, 13),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 15),
+      accent: profileAccent,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Row(
             children: <Widget>[
               Container(
-                width: 42,
-                height: 42,
+                width: 48,
+                height: 48,
                 decoration: BoxDecoration(
-                  color: accent.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(14),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: <Color>[
+                      profileAccent.withValues(alpha: 0.22),
+                      profileAccent.withValues(alpha: 0.07),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: profileAccent.withValues(alpha: 0.28),
+                  ),
                 ),
-                child: const Icon(Icons.bolt_rounded, size: 22, color: accent),
+                child: Center(
+                  child: Icon(profileIcon, size: 24, color: profileAccent),
+                ),
               ),
               const SizedBox(width: 11),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    const Text(
-                      'Charging boost',
+                    Text(
+                      selected == 0
+                          ? 'OEM Adaptive'
+                          : selected == 90
+                          ? '90 W HyperCharge'
+                          : '$selected W Charge Limit',
                       style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: colors.onSurface,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      _detail(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      _detail(selected),
                       style: TextStyle(
                         fontSize: 11.5,
                         color: colors.onSurfaceVariant,
@@ -5493,62 +6222,524 @@ class _ChargingModeCard extends StatelessWidget {
                   ],
                 ),
               ),
-              Switch.adaptive(
-                value: snapshot.chargingBoost,
-                onChanged: RodinHaptics.toggleCallback(
-                  canWrite
-                      ? (bool enabled) {
-                          final bool queued = RodinBackend.instance
-                              .setChargingBoost(enabled);
-                          if (!queued) {
-                            RodinBackend.instance.refresh();
-                          }
-                        }
-                      : null,
+              if (snapshot.chargingWriteState == 1)
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: profileAccent,
+                  ),
                 ),
-                activeThumbColor: accent,
-                activeTrackColor: accent.withValues(alpha: 0.35),
+            ],
+          ),
+          const SizedBox(height: 13),
+          if (RodinBackend.instance.bypassChargingEnabled) ...<Widget>[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF9B7CFF).withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: const Color(0xFF9B7CFF).withValues(alpha: 0.20),
+                ),
+              ),
+              child: Row(
+                children: <Widget>[
+                  const Icon(
+                    Icons.lock_rounded,
+                    size: 16,
+                    color: Color(0xFF9B7CFF),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Charging profiles are unavailable while Bypass Charging is enabled. Disable it to change or use a charging profile.',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        height: 1.3,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 11),
+          ],
+          AnimatedOpacity(
+            duration: const Duration(milliseconds: 180),
+            opacity: enabled ? 1 : 0.46,
+            child: _ChargingAdaptiveTile(
+              selected: selected == 0,
+              enabled: enabled,
+              onTap: () => _select(0),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: <Widget>[
+              Text(
+                'FIXED POWER PROFILES',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.55,
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '5 LEVELS',
+                style: TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.45,
+                  color: colors.onSurfaceVariant.withValues(alpha: 0.72),
+                ),
               ),
             ],
           ),
+          const SizedBox(height: 8),
+          AnimatedOpacity(
+            duration: const Duration(milliseconds: 180),
+            opacity: enabled ? 1 : 0.46,
+            child: _ChargingPowerSpectrum(
+              selected: selected,
+              enabled: enabled,
+              onSelect: _select,
+            ),
+          ),
           const SizedBox(height: 10),
+          AnimatedOpacity(
+            duration: const Duration(milliseconds: 180),
+            opacity: enabled ? 1 : 0.46,
+            child: _ChargingProfileDetail(
+              watts: selected,
+              applying: snapshot.chargingWriteState == 1,
+            ),
+          ),
+          const SizedBox(height: 11),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
             decoration: BoxDecoration(
-              color: colors.surfaceContainer.withValues(alpha: 0.48),
+              color: accent.withValues(alpha: 0.07),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: colors.outline.withValues(alpha: 0.38)),
+              border: Border.all(color: accent.withValues(alpha: 0.18)),
             ),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text(
-                  'Mode',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: colors.onSurfaceVariant,
+                const Padding(
+                  padding: EdgeInsets.only(top: 1),
+                  child: Icon(
+                    Icons.info_outline_rounded,
+                    size: 15,
+                    color: accent,
                   ),
                 ),
-                const Spacer(),
-                if (busy) ...<Widget>[
-                  const SizedBox(
-                    width: 13,
-                    height: 13,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.8,
-                      color: accent,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'The selected value is a maximum. Live power follows adapter capability, battery level, temperature and charger-IC protection.',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      height: 1.35,
+                      color: colors.onSurfaceVariant,
                     ),
-                  ),
-                  const SizedBox(width: 7),
-                ],
-                Text(
-                  _modeName(),
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChargingAdaptiveTile extends StatelessWidget {
+  const _ChargingAdaptiveTile({
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const Color accent = Color(0xFF67C2FF);
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 190),
+      curve: Curves.easeOutCubic,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[
+            accent.withValues(alpha: selected ? 0.18 : 0.085),
+            colors.surfaceContainer.withValues(alpha: 0.46),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: selected
+              ? accent.withValues(alpha: 0.68)
+              : colors.outline.withValues(alpha: 0.22),
+          width: selected ? 1.3 : 0.9,
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            child: Row(
+              children: <Widget>[
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: <Color>[
+                        accent.withValues(alpha: 0.28),
+                        accent.withValues(alpha: 0.09),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: accent.withValues(alpha: 0.30)),
+                  ),
+                  child: const Icon(
+                    Icons.auto_awesome_rounded,
+                    color: accent,
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          Text(
+                            'OEM Adaptive',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                              color: selected ? accent : colors.onSurface,
+                            ),
+                          ),
+                          const SizedBox(width: 7),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: accent.withValues(alpha: 0.11),
+                              borderRadius: BorderRadius.circular(7),
+                            ),
+                            child: const Text(
+                              'AUTO',
+                              style: TextStyle(
+                                fontSize: 8,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.45,
+                                color: accent,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        _chargingProfileDescription(0),
+                        style: TextStyle(
+                          fontSize: 10.2,
+                          height: 1.2,
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: 21,
+                  height: 21,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: selected ? accent : Colors.transparent,
+                    border: Border.all(
+                      color: selected
+                          ? accent
+                          : colors.outline.withValues(alpha: 0.55),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: selected
+                      ? const Icon(
+                          Icons.check_rounded,
+                          size: 14,
+                          color: Colors.white,
+                        )
+                      : null,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChargingPowerSpectrum extends StatelessWidget {
+  const _ChargingPowerSpectrum({
+    required this.selected,
+    required this.enabled,
+    required this.onSelect,
+  });
+
+  final int selected;
+  final bool enabled;
+  final ValueChanged<int> onSelect;
+
+  static const List<int> _profiles = <int>[25, 33, 65, 85, 90];
+
+  Widget _profileTile(
+    BuildContext context, {
+    required int watts,
+    required bool active,
+  }) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final Color accent = _chargingProfileAccent(watts);
+
+    return PressScale(
+      onTap: enabled ? () => onSelect(watts) : null,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 190),
+        curve: Curves.easeOutCubic,
+        height: 76,
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 9),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: <Color>[
+              active
+                  ? accent.withValues(alpha: 0.18)
+                  : colors.surface.withValues(alpha: 0.70),
+              active
+                  ? accent.withValues(alpha: 0.07)
+                  : colors.surfaceContainer.withValues(alpha: 0.34),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(
+            color: active
+                ? accent.withValues(alpha: 0.72)
+                : colors.outline.withValues(alpha: 0.20),
+            width: active ? 1.25 : 0.8,
+          ),
+          boxShadow: active
+              ? <BoxShadow>[
+                  BoxShadow(
+                    color: accent.withValues(alpha: 0.16),
+                    blurRadius: 14,
+                    spreadRadius: -5,
+                  ),
+                ]
+              : null,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                Icon(
+                  _chargingProfileIcon(watts),
+                  size: 17,
+                  color: active
+                      ? accent
+                      : colors.onSurfaceVariant.withValues(alpha: 0.78),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  '$watts W',
+                  style: TextStyle(
+                    fontSize: 13.2,
+                    height: 1,
+                    fontWeight: FontWeight.w900,
+                    color: active ? accent : colors.onSurface,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 7),
+            Text(
+              _chargingProfileName(watts),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              style: TextStyle(
+                fontSize: 9.4,
+                height: 1.08,
+                fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+                color: active ? accent : colors.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.all(7),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainer.withValues(alpha: 0.38),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.outline.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              for (final int watts in _profiles.take(3)) ...<Widget>[
+                Expanded(
+                  child: _profileTile(
+                    context,
+                    watts: watts,
+                    active: selected == watts,
+                  ),
+                ),
+                if (watts != _profiles[2]) const SizedBox(width: 6),
+              ],
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: <Widget>[
+              for (final int watts in _profiles.skip(3)) ...<Widget>[
+                Expanded(
+                  child: _profileTile(
+                    context,
+                    watts: watts,
+                    active: selected == watts,
+                  ),
+                ),
+                if (watts != _profiles.last) const SizedBox(width: 6),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChargingProfileDetail extends StatelessWidget {
+  const _ChargingProfileDetail({required this.watts, required this.applying});
+
+  final int watts;
+  final bool applying;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final Color accent = _chargingProfileAccent(watts);
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[
+            accent.withValues(alpha: 0.15),
+            colors.surfaceContainer.withValues(alpha: 0.40),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accent.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        children: <Widget>[
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Icon(
+              applying ? Icons.sync_rounded : _chargingProfileIcon(watts),
+              size: 20,
+              color: accent,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  applying ? 'Applying…' : _chargingProfileName(watts),
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w800,
+                    color: colors.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _chargingProfileDescription(watts),
+                  style: TextStyle(
+                    fontSize: 10.2,
+                    height: 1.2,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: accent.withValues(alpha: 0.22)),
+            ),
+            child: Text(
+              watts == 0 ? 'AUTO' : '$watts W MAX',
+              style: TextStyle(
+                fontSize: 8.5,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.35,
+                color: accent,
+              ),
             ),
           ),
         ],
@@ -5630,14 +6821,14 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
     1 => '250 Hz Mode',
     2 => '500 Hz Mode',
     3 => '1000 Hz Output',
-    _ => '250 Hz Mode',
+    _ => 'OEM Control',
   };
 
   String _profileRate(int profile) => switch (profile) {
     1 => '240 Hz native timing · simple testers display about 250',
     2 => '480 Hz native timing · simple testers display about 500',
     3 => 'Precise 1 ms Android output · native source remains 480 Hz',
-    _ => '240 Hz native timing · simple testers display about 250',
+    _ => 'Rodin Essential override released · ROM-managed timing',
   };
 
   Color _profileAccent(int profile) => switch (profile) {
@@ -5651,7 +6842,7 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
     1 => Icons.sports_esports_rounded,
     2 => Icons.speed_rounded,
     3 => Icons.whatshot_rounded,
-    _ => Icons.sports_esports_rounded,
+    _ => Icons.auto_awesome_rounded,
   };
 
   @override
@@ -5663,7 +6854,7 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
         final int savedProfile =
             (1 <= snapshot.touchState && snapshot.touchState <= 3)
             ? snapshot.touchState
-            : 1;
+            : 0;
         final int activeProfile = _pendingProfile ?? savedProfile;
         final Color accent = _profileAccent(activeProfile);
         final int touchAck = backend.extendedValue(29);
@@ -5672,25 +6863,28 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
         final String panel = switch (panelCode) {
           1 => 'Goodix GT9916',
           2 => 'FocalTech',
-          _ => 'Rodin auto-detect',
+          _ => 'Panel auto-detect',
         };
         final String engine = switch (controlPath) {
           1 => 'Vendor HAL',
           2 => 'Direct driver fallback',
-          3 => 'Rodin 1 ms output scheduler',
+          3 => 'Rodin Essential 1 ms output scheduler',
           _ => snapshot.touchHal == 1 ? 'Vendor HAL ready' : 'Unavailable',
         };
         final bool applying =
-            _pendingProfile != null && snapshot.touchState != _pendingProfile;
+            _pendingProfile != null && savedProfile != _pendingProfile;
+        final bool oemManaged = activeProfile == 0 && !applying;
         final bool controlsEnabled =
-            snapshot.ready && snapshot.touchHal == 1 && !snapshot.busy;
+            snapshot.controlsAvailable &&
+            snapshot.touchHal == 1 &&
+            !snapshot.busy;
 
         return RodinScrollPage(
           children: <Widget>[
             DetailHeader(title: 'Touch Response', onBack: widget.onBack),
             const SizedBox(height: 4),
             Text(
-              'Only 250, 500, and 1000 — 250 is the default',
+              'OEM Control leaves touch timing to your ROM by default. Choose an override to save it across restarts.',
               style: TextStyle(
                 fontSize: 13.5,
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -5703,7 +6897,7 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
               title: _profileTitle(activeProfile),
               subtitle: snapshot.touchHal == 1
                   ? '${_profileRate(activeProfile)} · $panel · $engine'
-                  : 'Rodin touch engine unavailable on this vendor stack',
+                  : 'Rodin Essential touch engine unavailable on this vendor stack',
             ),
             const SizedBox(height: 12),
             _TouchProfileGrid(
@@ -5717,10 +6911,14 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
               child: Row(
                 children: <Widget>[
                   IconTile(
-                    icon: !applying && touchAck == 1
+                    icon: oemManaged
+                        ? Icons.auto_awesome_rounded
+                        : !applying && touchAck == 1
                         ? Icons.verified_rounded
                         : Icons.sync_rounded,
-                    accent: !applying && touchAck == 1
+                    accent: oemManaged
+                        ? Theme.of(context).colorScheme.primary
+                        : !applying && touchAck == 1
                         ? const Color(0xFF41C98A)
                         : const Color(0xFFFFB84D),
                     size: 44,
@@ -5731,7 +6929,9 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         Text(
-                          !applying && touchAck == 1
+                          oemManaged
+                              ? 'OEM-managed touch'
+                              : !applying && touchAck == 1
                               ? 'Profile persisted'
                               : 'Applying touch pipeline',
                           style: const TextStyle(
@@ -5741,7 +6941,9 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          !applying && touchAck == 1
+                          oemManaged
+                              ? 'No Rodin Essential fixed-rate profile is active. Your ROM manages touch timing.'
+                              : !applying && touchAck == 1
                               ? 'Reasserted after boot, screen wake, and vendor resets'
                               : 'Waiting for the panel HAL to confirm every required mode',
                           style: TextStyle(
@@ -5766,7 +6968,8 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
               subtitle: 'Double-tap the screen when locked to wake up',
               value: dt2w == 1,
               enabled: controlsEnabled,
-              stateKnown: true,
+              stateKnown: dt2w >= 0,
+              unknownLabel: 'OEM',
               onChanged: RodinBackend.instance.setDoubleTapWake,
             ),
             const SizedBox(height: 12),
@@ -5774,7 +6977,7 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
               child: _InfoBlock(
                 title: 'Tester values',
                 text:
-                    '250 uses the native 240 Hz panel target and 500 uses the native 480 Hz target; simple tester apps round those values to about 250 and 500. The 1000 option delivers a one-millisecond Android event stream from the 480 Hz native source. No Adaptive mode or instant-boost mode is applied.',
+                    '250 uses the native 240 Hz panel target and 500 uses the native 480 Hz target; simple tester apps round those values to about 250 and 500. The 1000 option delivers a one-millisecond Android event stream from the 480 Hz native source. OEM Control releases the fixed profile and returns timing to vendor management.',
               ),
             ),
           ],
@@ -5810,6 +7013,18 @@ class _TouchProfileGrid extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 9),
+        _TouchProfileTile(
+          profile: 0,
+          title: 'OEM Control',
+          rate: 'ROM-managed touch timing',
+          detail: 'Default · No fixed-rate override',
+          icon: Icons.auto_awesome_rounded,
+          accent: Theme.of(context).colorScheme.primary,
+          selected: selectedProfile == 0,
+          enabled: enabled,
+          onSelected: onSelected,
+        ),
+        const SizedBox(height: 10),
         Row(
           children: <Widget>[
             Expanded(
@@ -5957,8 +7172,6 @@ class _TouchProfileTile extends StatelessWidget {
               const SizedBox(height: 11),
               Text(
                 title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   fontSize: 13.2,
                   fontWeight: FontWeight.w800,
@@ -5967,8 +7180,6 @@ class _TouchProfileTile extends StatelessWidget {
               const SizedBox(height: 3),
               Text(
                 rate,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 11.2,
                   fontWeight: FontWeight.w700,
@@ -5978,8 +7189,6 @@ class _TouchProfileTile extends StatelessWidget {
               const SizedBox(height: 2),
               Text(
                 detail,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 10.4,
                   color: colors.onSurfaceVariant,
@@ -6111,11 +7320,12 @@ class _DisplayStudioScreenState extends State<DisplayStudioScreen> {
 
         _ChoiceCard(
           title: 'Display colour',
-          subtitle: 'Original PRO, Vivid or Saturated',
+          subtitle: 'ROM-managed by default · Optional colour override',
           icon: Icons.color_lens_rounded,
           accent: accent,
           selectedCode: snapshot.displayColor,
           options: const <_ChoiceOption>[
+            _ChoiceOption(-1, 'OEM Control'),
             _ChoiceOption(0, 'Original PRO'),
             _ChoiceOption(1, 'Vivid'),
             _ChoiceOption(2, 'Saturated'),
@@ -6127,17 +7337,26 @@ class _DisplayStudioScreenState extends State<DisplayStudioScreen> {
 
         _ChoiceCard(
           title: 'Colour temperature',
-          subtitle: 'Warm, Normal or Cold',
+          subtitle: 'ROM-managed by default · Optional temperature override',
           icon: Icons.thermostat_rounded,
           accent: const Color(0xFFFFB84D),
           selectedCode: snapshot.displayTemp,
           options: const <_ChoiceOption>[
+            _ChoiceOption(-1, 'OEM Control'),
             _ChoiceOption(1, 'Warm'),
             _ChoiceOption(2, 'Normal'),
             _ChoiceOption(3, 'Cold'),
           ],
           enabled: expertEnabled,
           onSelected: backend.setDisplayTemperature,
+        ),
+        const SizedBox(height: 9),
+        const SurfaceCard(
+          child: _InfoBlock(
+            title: 'ROM ownership',
+            text:
+                'OEM Control stops Rodin Essential from applying this setting at boot or wake. Saved overrides restore automatically. Returning to OEM does not guess your ROM’s colour profile: the current appearance can remain until your ROM reapplies its display settings.',
+          ),
         ),
         const SizedBox(height: 9),
 
@@ -6423,7 +7642,9 @@ class _DisplayStudioScreenState extends State<DisplayStudioScreen> {
           accent: accent,
           title: 'Display Engine',
           subtitle: snapshot.displayHal == 1
-              ? 'Hardware color engine active'
+              ? snapshot.displayColor == -1 && snapshot.displayTemp == -1
+                    ? 'OEM Control · Colour modes managed by your ROM'
+                    : 'Saved colour overrides · Hardware engine ready'
               : 'Display calibration unavailable',
         ),
         const SizedBox(height: 12),
@@ -6450,7 +7671,8 @@ class _DisplayStudioScreenState extends State<DisplayStudioScreen> {
           subtitle: 'Improves screen readability under bright outdoor light',
           value: snapshot.sunlight == 1,
           enabled: expertEnabled,
-          stateKnown: true,
+          stateKnown: snapshot.sunlight >= 0,
+          unknownLabel: 'OEM',
           onChanged: backend.setSunlight,
         ),
         const SizedBox(height: 9),
@@ -6462,7 +7684,8 @@ class _DisplayStudioScreenState extends State<DisplayStudioScreen> {
           subtitle: 'Smooth brightness dimming curve for low-light comfort',
           value: snapshot.silky == 1,
           enabled: expertEnabled,
-          stateKnown: true,
+          stateKnown: snapshot.silky >= 0,
+          unknownLabel: 'OEM',
           onChanged: backend.setSilky,
         ),
         const SizedBox(height: 9),
@@ -6474,7 +7697,8 @@ class _DisplayStudioScreenState extends State<DisplayStudioScreen> {
           subtitle: 'Enhance contrast and detail in movies and video playback',
           value: snapshot.video == 1,
           enabled: expertEnabled,
-          stateKnown: true,
+          stateKnown: snapshot.video >= 0,
+          unknownLabel: 'OEM',
           onChanged: backend.setVideoEnhancement,
         ),
         const SizedBox(height: 9),
@@ -6486,7 +7710,8 @@ class _DisplayStudioScreenState extends State<DisplayStudioScreen> {
           subtitle: 'Expand dynamic range and depth in HDR content',
           value: snapshot.dolby == 1,
           enabled: expertEnabled,
-          stateKnown: true,
+          stateKnown: snapshot.dolby >= 0,
+          unknownLabel: 'OEM',
           onChanged: backend.setDolbyVision,
         ),
       ],
@@ -6508,7 +7733,9 @@ class _DisplayStudioScreenState extends State<DisplayStudioScreen> {
         );
 
         final bool expertEnabled =
-            snapshot.ready && snapshot.displayHal == 1 && !snapshot.busy;
+            snapshot.controlsAvailable &&
+            snapshot.displayHal == 1 &&
+            !snapshot.busy;
 
         final Widget currentPage = _showColourModes
             ? _buildColourModes(
@@ -6676,7 +7903,7 @@ class _CpuControlScreenState extends State<CpuControlScreen> {
         final int savedMask = backend.extendedValue(36);
         final int coreCtlNodes = backend.extendedValue(37);
         final int frequencyWriteAck = backend.extendedValue(74);
-        final bool canWrite = s.ready && !s.busy;
+        final bool canWrite = s.controlsAvailable && !s.busy;
 
         int clusterCurrentMhz(Iterable<int> cores) {
           int current = -1;
@@ -6777,7 +8004,7 @@ class _CpuControlScreenState extends State<CpuControlScreen> {
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    '$totalOnline / 8 Cores Online · Live Cluster Control',
+                                    '$totalOnline / 8 Cores Online · ${s.serviceStatusLabel}',
                                     style: TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.w500,
@@ -6793,31 +8020,39 @@ class _CpuControlScreenState extends State<CpuControlScreen> {
                                 vertical: 4,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(
-                                  0xFF00E676,
-                                ).withValues(alpha: 0.15),
+                                color:
+                                    (s.controlsAvailable
+                                            ? const Color(0xFF00E676)
+                                            : colors.onSurfaceVariant)
+                                        .withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(
-                                  color: const Color(
-                                    0xFF00E676,
-                                  ).withValues(alpha: 0.3),
+                                  color:
+                                      (s.controlsAvailable
+                                              ? const Color(0xFF00E676)
+                                              : colors.onSurfaceVariant)
+                                          .withValues(alpha: 0.3),
                                 ),
                               ),
-                              child: const Row(
+                              child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: <Widget>[
                                   Icon(
                                     Icons.circle,
-                                    color: Color(0xFF00E676),
+                                    color: s.controlsAvailable
+                                        ? const Color(0xFF00E676)
+                                        : colors.onSurfaceVariant,
                                     size: 7,
                                   ),
                                   SizedBox(width: 4),
                                   Text(
-                                    'LIVE',
+                                    s.serviceStatusBadgeLabel,
                                     style: TextStyle(
                                       fontSize: 9.5,
                                       fontWeight: FontWeight.w800,
-                                      color: Color(0xFF00E676),
+                                      color: s.controlsAvailable
+                                          ? const Color(0xFF00E676)
+                                          : colors.onSurfaceVariant,
                                       letterSpacing: 0.5,
                                     ),
                                   ),
@@ -8224,7 +9459,7 @@ class _AdvancedConfigurationScreenState
               accent: const Color(0xFF46CFA1),
               selectedCode: snapshot.cpuGovernor0,
               options: cpuGovernors,
-              enabled: snapshot.ready && !snapshot.busy,
+              enabled: snapshot.controlsAvailable && !snapshot.busy,
               onSelected: (int code) => backend.setCpuGovernor(0, code),
             ),
             const SizedBox(height: 9),
@@ -8235,7 +9470,7 @@ class _AdvancedConfigurationScreenState
               accent: const Color(0xFFB087FF),
               selectedCode: snapshot.cpuGovernor4,
               options: cpuGovernors,
-              enabled: snapshot.ready && !snapshot.busy,
+              enabled: snapshot.controlsAvailable && !snapshot.busy,
               onSelected: (int code) => backend.setCpuGovernor(4, code),
             ),
             const SizedBox(height: 9),
@@ -8246,7 +9481,7 @@ class _AdvancedConfigurationScreenState
               accent: const Color(0xFFFF9F68),
               selectedCode: snapshot.cpuGovernor7,
               options: cpuGovernors,
-              enabled: snapshot.ready && !snapshot.busy,
+              enabled: snapshot.controlsAvailable && !snapshot.busy,
               onSelected: (int code) => backend.setCpuGovernor(7, code),
             ),
             const SizedBox(height: 9),
@@ -8280,7 +9515,7 @@ class _AdvancedConfigurationScreenState
               accent: Theme.of(context).colorScheme.primary,
               selectedCode: snapshot.ufsScheduler,
               options: schedulers,
-              enabled: snapshot.ready && !snapshot.busy,
+              enabled: snapshot.controlsAvailable && !snapshot.busy,
               onSelected: backend.setUfsScheduler,
             ),
             const SizedBox(height: 9),
@@ -9300,6 +10535,21 @@ class _ZramSwapScreenState extends State<ZramSwapScreen> {
       _applying = true;
     });
 
+    final bool applied = RodinBackend.instance.setZramSize(sizeMb);
+    if (!applied) {
+      setState(() {
+        _optimisticSizeMb = null;
+        _applying = false;
+      });
+      _showGlassToast(
+        'ZRAM ERROR',
+        'Kernel rejected the requested ZRAM size',
+        Icons.error_rounded,
+        const Color(0xFFFF5A64),
+      );
+      RodinBackend.instance.refresh();
+      return;
+    }
     _showGlassToast(
       'ZRAM PRESET',
       sizeMb == 0
@@ -9308,8 +10558,6 @@ class _ZramSwapScreenState extends State<ZramSwapScreen> {
       icon,
       accent,
     );
-
-    RodinBackend.instance.setZramSize(sizeMb);
     Future<void>.delayed(const Duration(milliseconds: 400), () {
       RodinBackend.instance.refresh();
       if (mounted) {
@@ -9327,6 +10575,21 @@ class _ZramSwapScreenState extends State<ZramSwapScreen> {
       _applying = true;
     });
 
+    final bool applied = RodinBackend.instance.setZramSize(sizeMb);
+    if (!applied) {
+      setState(() {
+        _optimisticSizeMb = null;
+        _applying = false;
+      });
+      _showGlassToast(
+        'ZRAM ERROR',
+        'Kernel rejected the requested custom size',
+        Icons.error_rounded,
+        const Color(0xFFFF5A64),
+      );
+      RodinBackend.instance.refresh();
+      return;
+    }
     _showGlassToast(
       'CUSTOM SWAP',
       sizeMb == 0
@@ -9335,8 +10598,6 @@ class _ZramSwapScreenState extends State<ZramSwapScreen> {
       Icons.tune_rounded,
       const Color(0xFF67C2FF),
     );
-
-    RodinBackend.instance.setZramSize(sizeMb);
     Future<void>.delayed(const Duration(milliseconds: 400), () {
       RodinBackend.instance.refresh();
       if (mounted) {
@@ -9354,14 +10615,24 @@ class _ZramSwapScreenState extends State<ZramSwapScreen> {
         ? algNames[algCode]
         : 'LZ4';
 
+    final bool applied = RodinBackend.instance.setZramAlgorithm(algCode);
+    if (!applied) {
+      setState(() => _optimisticAlgCode = null);
+      _showGlassToast(
+        'ZRAM ERROR',
+        'Kernel rejected the $name compression engine',
+        Icons.error_rounded,
+        const Color(0xFFFF5A64),
+      );
+      RodinBackend.instance.refresh();
+      return;
+    }
     _showGlassToast(
       'KERNEL ENGINE',
       'Switched Compression to $name',
       Icons.compress_rounded,
       const Color(0xFF41C98A),
     );
-
-    RodinBackend.instance.setZramAlgorithm(algCode);
     Future<void>.delayed(const Duration(milliseconds: 400), () {
       RodinBackend.instance.refresh();
     });
@@ -9371,14 +10642,24 @@ class _ZramSwapScreenState extends State<ZramSwapScreen> {
     RodinHaptics.confirm();
     setState(() => _optimisticSwappiness = swappiness);
 
+    final bool applied = RodinBackend.instance.setZramSwappiness(swappiness);
+    if (!applied) {
+      setState(() => _optimisticSwappiness = null);
+      _showGlassToast(
+        'ZRAM ERROR',
+        'Kernel rejected swappiness $swappiness',
+        Icons.error_rounded,
+        const Color(0xFFFF5A64),
+      );
+      RodinBackend.instance.refresh();
+      return;
+    }
     _showGlassToast(
       'KERNEL SWAPPINESS',
       'Swappiness Set to $swappiness',
       Icons.speed_rounded,
       const Color(0xFFFFB84D),
     );
-
-    RodinBackend.instance.setZramSwappiness(swappiness);
     RodinBackend.instance.refresh();
   }
 
@@ -9419,16 +10700,30 @@ class _ZramSwapScreenState extends State<ZramSwapScreen> {
       _customSliderMb = 8192;
     });
 
+    final bool swappinessApplied = RodinBackend.instance.setZramSwappiness(100);
+    final bool algorithmApplied = RodinBackend.instance.setZramAlgorithm(0);
+    final bool sizeApplied = RodinBackend.instance.setZramSize(8192);
+    if (!swappinessApplied || !algorithmApplied || !sizeApplied) {
+      setState(() {
+        _optimisticSizeMb = null;
+        _optimisticAlgCode = null;
+        _optimisticSwappiness = null;
+      });
+      _showGlassToast(
+        'ZRAM ERROR',
+        'One or more stock settings were rejected by the kernel',
+        Icons.error_rounded,
+        const Color(0xFFFF5A64),
+      );
+      RodinBackend.instance.refresh();
+      return;
+    }
     _showGlassToast(
       'SYSTEM RESTORE',
       'Reset to 8 GB Stock Optimal Defaults',
       Icons.restart_alt_rounded,
       const Color(0xFF41C98A),
     );
-
-    RodinBackend.instance.setZramAlgorithm(0);
-    RodinBackend.instance.setZramSwappiness(100);
-    RodinBackend.instance.setZramSize(8192);
     Future<void>.delayed(const Duration(milliseconds: 500), () {
       RodinBackend.instance.refresh();
     });
@@ -10868,6 +12163,9 @@ class _MaliGpuScreenState extends State<MaliGpuScreen> {
                   isUncapped: isUncapped,
                   isThrottledByOs: isThrottledByOs,
                   profileVerified: profileVerified,
+                  oemManaged:
+                      snapshot.performanceProfile < 0 &&
+                      _optimisticProfile == null,
                 ),
                 const SizedBox(height: 12),
 
@@ -10931,6 +12229,7 @@ class _MaliGpuScreenState extends State<MaliGpuScreen> {
     required bool isUncapped,
     required bool isThrottledByOs,
     required bool profileVerified,
+    required bool oemManaged,
   }) {
     final bool isBeast =
         activeProfile == 3 ||
@@ -11146,10 +12445,14 @@ class _MaliGpuScreenState extends State<MaliGpuScreen> {
                   isDark: isDark,
                   colors: colors,
                   label: 'PROFILE WRITE',
-                  value: isThrottledByOs
+                  value: oemManaged
+                      ? 'OEM Managed'
+                      : isThrottledByOs
                       ? 'Clock Below Target'
                       : (profileVerified ? 'Verified' : 'Applying'),
-                  accent: isThrottledByOs || !profileVerified
+                  accent: oemManaged
+                      ? colors.onSurfaceVariant
+                      : isThrottledByOs || !profileVerified
                       ? const Color(0xFFFFB84D)
                       : const Color(0xFF41C98A),
                 ),
@@ -11905,7 +13208,7 @@ class _MaliGpuScreenState extends State<MaliGpuScreen> {
             thermalState < 0
                 ? 'Unavailable'
                 : (thermalState == 0
-                      ? '0 (Rodin unrestricted override)'
+                      ? '0 (Rodin Essential unrestricted override)'
                       : '$thermalState (vendor managed)'),
           ),
           _buildDetailRow(
@@ -12113,12 +13416,16 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             HeroCard(
               icon: Icons.monitor_heart_rounded,
               accent: accent,
-              title: snapshot.ready
+              title: snapshot.ready && !snapshot.serviceEnabled
+                  ? 'Rodin Essential Disabled'
+                  : snapshot.ready
                   ? 'System Health Normal'
                   : snapshot.connection == RodinConnectionState.connecting
                   ? 'Connecting to System Service'
                   : 'System Service Unavailable',
-              subtitle: phase == 16
+              subtitle: snapshot.ready && !snapshot.serviceEnabled
+                  ? 'Hardware control is paused; enable Rodin Essential in Settings'
+                  : phase == 16
                   ? 'All hardware controllers and telemetry streams active'
                   : 'Waiting for system background service',
             ),
@@ -12128,10 +13435,12 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                 children: <Widget>[
                   _DiagnosticRow(
                     label: 'Hardware Controller',
-                    good: snapshot.ready && phase == 16,
-                    detail: snapshot.ready
+                    good: snapshot.controlsAvailable && phase == 16,
+                    detail: snapshot.ready && !snapshot.serviceEnabled
+                        ? 'Disabled'
+                        : snapshot.ready
                         ? 'Online & Ready'
-                        : snapshot.connection.label,
+                        : snapshot.serviceStatusLabel,
                   ),
                   const Divider(height: 14),
                   _DiagnosticRow(
@@ -12643,6 +13952,7 @@ class _SwitchCard extends StatelessWidget {
     required this.value,
     required this.enabled,
     required this.stateKnown,
+    this.unknownLabel = 'SESSION',
     required this.onChanged,
   });
 
@@ -12653,6 +13963,7 @@ class _SwitchCard extends StatelessWidget {
   final bool value;
   final bool enabled;
   final bool stateKnown;
+  final String unknownLabel;
   final bool Function(bool) onChanged;
 
   @override
@@ -12700,7 +14011,7 @@ class _SwitchCard extends StatelessWidget {
                     if (!stateKnown) ...<Widget>[
                       const SizedBox(width: 6),
                       StatusPill(
-                        label: 'SESSION',
+                        label: unknownLabel,
                         accent: colors.onSurfaceVariant,
                       ),
                     ],
@@ -12802,8 +14113,6 @@ class _ChoiceCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 11.2,
                         color: colors.onSurfaceVariant,
@@ -13087,6 +14396,7 @@ class RodinScrollPage extends StatefulWidget {
 }
 
 class _RodinScrollPageState extends State<RodinScrollPage> {
+  final ScrollController _scrollController = ScrollController();
   final ValueNotifier<double> _scrollPixels = ValueNotifier<double>(0);
 
   static const double _rodinPhysicalWidth = 1220;
@@ -13095,6 +14405,7 @@ class _RodinScrollPageState extends State<RodinScrollPage> {
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _scrollPixels.dispose();
     super.dispose();
   }
@@ -13237,6 +14548,8 @@ class _RodinScrollPageState extends State<RodinScrollPage> {
     final Widget scrollChild;
     if (widget.slivers != null) {
       scrollChild = CustomScrollView(
+        controller: _scrollController,
+        primary: false,
         physics: const BouncingScrollPhysics(
           parent: AlwaysScrollableScrollPhysics(),
         ),
@@ -13264,6 +14577,8 @@ class _RodinScrollPageState extends State<RodinScrollPage> {
           : <Widget>[_headerPlaceholder(header), ...widget.children.skip(1)];
 
       scrollChild = ListView(
+        controller: _scrollController,
+        primary: false,
         physics: const BouncingScrollPhysics(
           parent: AlwaysScrollableScrollPhysics(),
         ),
@@ -13589,7 +14904,7 @@ class LiveDashboardHero extends StatelessWidget {
       0 => 'Original PRO',
       1 => 'Vivid',
       2 => 'Saturated',
-      _ => '—',
+      _ => snapshot.ready ? 'OEM Control' : '—',
     };
   }
 
@@ -13598,7 +14913,7 @@ class LiveDashboardHero extends StatelessWidget {
     return _BackendSnapshotBuilder(
       builder: (RodinBackendSnapshot snapshot) {
         final ColorScheme colors = Theme.of(context).colorScheme;
-        final bool ready = snapshot.ready;
+        final bool ready = snapshot.controlsAvailable;
         final int onlineCores = _rodinOnlineCoreCount(snapshot);
         final int activePerf = snapshot.performanceProfile >= 0
             ? snapshot.performanceProfile
@@ -13705,7 +15020,7 @@ class LiveDashboardHero extends StatelessWidget {
                             ),
                             const SizedBox(width: 5),
                             Text(
-                              snapshot.connection.badgeLabel,
+                              snapshot.serviceStatusBadgeLabel,
                               style: TextStyle(
                                 fontSize: 9.5,
                                 fontWeight: FontWeight.w800,
@@ -13947,9 +15262,7 @@ class LiveDashboardHero extends StatelessWidget {
                       ),
                       const Spacer(),
                       Text(
-                        snapshot.connection == RodinConnectionState.online
-                            ? 'System online'
-                            : snapshot.connection.label,
+                        snapshot.serviceStatusLabel,
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
@@ -14068,8 +15381,6 @@ class HeroCard extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     height: 1.25,
                     fontSize: 12.3,
@@ -14199,8 +15510,6 @@ class FeatureCard extends StatelessWidget {
                   const SizedBox(height: 3),
                   Text(
                     subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 12,
                       color: colors.onSurfaceVariant,
@@ -15001,230 +16310,272 @@ class _RodinBottomBarState extends State<RodinBottomBar>
     final ColorScheme colors = theme.colorScheme;
     final bool dark = theme.brightness == Brightness.dark;
 
-    return SafeArea(
-      top: false,
-      minimum: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+    return Padding(
+      // Keep an actual gap above both gesture and three-button navigation.
+      // SafeArea.minimum uses max(), rather than adding this floating gap.
+      padding: EdgeInsets.fromLTRB(
+        10 + MediaQuery.viewPaddingOf(context).left,
+        0,
+        10 + MediaQuery.viewPaddingOf(context).right,
+        // The zero-DEX native embedder currently reports no system insets.
+        // Reserve a small gesture-strip clearance in that case as well.
+        (MediaQuery.viewPaddingOf(context).bottom > 0
+                ? MediaQuery.viewPaddingOf(context).bottom
+                : 16) +
+            12,
+      ),
       child: RepaintBoundary(
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(
-              sigmaX: 18,
-              sigmaY: 18,
-              tileMode: TileMode.clamp,
-            ),
-            child: Container(
-              height: 56,
-              padding: const EdgeInsets.all(5),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: <Color>[
-                    Colors.white.withValues(alpha: dark ? 0.075 : 0.66),
-                    colors.surface.withValues(alpha: dark ? 0.52 : 0.50),
-                    colors.surfaceContainerHighest.withValues(
-                      alpha: dark ? 0.38 : 0.32,
-                    ),
-                  ],
-                  stops: const <double>[0, 0.52, 1],
-                ),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: dark
-                      ? Colors.white.withValues(alpha: 0.16)
-                      : Colors.white.withValues(alpha: 0.74),
-                  width: 0.85,
-                ),
-                boxShadow: <BoxShadow>[
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: dark ? 0.32 : 0.14),
-                    blurRadius: 26,
-                    spreadRadius: -9,
-                    offset: const Offset(0, 10),
-                  ),
-                ],
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: Colors.black.withValues(alpha: dark ? 0.34 : 0.16),
+                blurRadius: 30,
+                spreadRadius: -10,
+                offset: const Offset(0, 11),
               ),
-              child: AnimatedBuilder(
-                animation: Listenable.merge(<Listenable>[
-                  widget.controller,
-                  _elasticity,
-                ]),
-                builder: (BuildContext context, Widget? child) {
-                  double page = _selectedIndex().toDouble();
+              BoxShadow(
+                color: colors.primary.withValues(alpha: dark ? 0.06 : 0.04),
+                blurRadius: 18,
+                spreadRadius: -10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(
+                sigmaX: 22,
+                sigmaY: 22,
+                tileMode: TileMode.clamp,
+              ),
+              child: Container(
+                height: 68,
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: <Color>[
+                      Colors.white.withValues(alpha: dark ? 0.13 : 0.80),
+                      colors.surface.withValues(alpha: dark ? 0.66 : 0.64),
+                      colors.surfaceContainerHighest.withValues(
+                        alpha: dark ? 0.50 : 0.42,
+                      ),
+                    ],
+                    stops: const <double>[0, 0.50, 1],
+                  ),
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(
+                    color: dark
+                        ? Colors.white.withValues(alpha: 0.19)
+                        : Colors.white.withValues(alpha: 0.88),
+                    width: 0.9,
+                  ),
+                ),
+                foregroundDecoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border(
+                    top: BorderSide(
+                      color: Colors.white.withValues(alpha: dark ? 0.12 : 0.62),
+                      width: 0.7,
+                    ),
+                  ),
+                ),
+                child: AnimatedBuilder(
+                  animation: Listenable.merge(<Listenable>[
+                    widget.controller,
+                    _elasticity,
+                  ]),
+                  builder: (BuildContext context, Widget? child) {
+                    double page = _selectedIndex().toDouble();
 
-                  if (widget.controller.hasClients) {
-                    try {
-                      page = widget.controller.page ?? page;
-                    } catch (_) {}
-                  }
+                    if (widget.controller.hasClients) {
+                      try {
+                        page = widget.controller.page ?? page;
+                      } catch (_) {}
+                    }
 
-                  page = page.clamp(0.0, _screens.length - 1.0).toDouble();
-                  final int lower = page.floor().clamp(0, _screens.length - 1);
-                  final int upper = page.ceil().clamp(0, _screens.length - 1);
-                  final Color indicatorColor = Color.lerp(
-                    _sectionColors[lower],
-                    _sectionColors[upper],
-                    page - lower,
-                  )!;
+                    page = page.clamp(0.0, _screens.length - 1.0).toDouble();
+                    final int lower = page.floor().clamp(
+                      0,
+                      _screens.length - 1,
+                    );
+                    final int upper = page.ceil().clamp(0, _screens.length - 1);
+                    final Color indicatorColor = Color.lerp(
+                      _sectionColors[lower],
+                      _sectionColors[upper],
+                      page - lower,
+                    )!;
 
-                  return LayoutBuilder(
-                    builder:
-                        (BuildContext context, BoxConstraints constraints) {
-                          final double itemWidth =
-                              constraints.maxWidth / _screens.length;
+                    return LayoutBuilder(
+                      builder:
+                          (BuildContext context, BoxConstraints constraints) {
+                            final double itemWidth =
+                                constraints.maxWidth / _screens.length;
 
-                          Widget navItem(int index) {
-                            final double rawFocus = (1 - (page - index).abs())
-                                .clamp(0.0, 1.0);
-                            final double focus = RodinInteractionSettings
-                                .transitionCurve
-                                .transform(rawFocus);
-                            final Color itemColor = _sectionColors[index];
-                            final Color foreground = Color.lerp(
-                              colors.onSurfaceVariant.withValues(alpha: 0.68),
-                              itemColor,
-                              focus,
-                            )!;
+                            Widget navItem(int index) {
+                              final double rawFocus = (1 - (page - index).abs())
+                                  .clamp(0.0, 1.0);
+                              final double focus = RodinInteractionSettings
+                                  .transitionCurve
+                                  .transform(rawFocus);
+                              final Color itemColor = _sectionColors[index];
+                              final Color foreground = Color.lerp(
+                                colors.onSurfaceVariant.withValues(alpha: 0.72),
+                                itemColor,
+                                focus,
+                              )!;
 
-                            return Expanded(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 2,
-                                ),
-                                child: PressScale(
-                                  onTap: () => widget.onSelect(_screens[index]),
-                                  child: SizedBox(
-                                    height: 46,
-                                    child: Center(
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: <Widget>[
-                                          Transform.scale(
-                                            scale: 0.92 + (0.13 * focus),
-                                            child: Icon(
-                                              _icons[index],
-                                              size: 20.5,
-                                              color: foreground,
-                                            ),
-                                          ),
-                                          ClipRect(
-                                            child: Align(
-                                              widthFactor: focus,
-                                              alignment: Alignment.centerLeft,
-                                              child: Opacity(
-                                                opacity: focus,
-                                                child: Padding(
-                                                  padding:
-                                                      const EdgeInsets.only(
-                                                        left: 7,
-                                                      ),
-                                                  child: Text(
-                                                    _labels[index],
-                                                    maxLines: 1,
-                                                    softWrap: false,
-                                                    style: TextStyle(
-                                                      fontSize: 11.2,
-                                                      fontWeight:
-                                                          FontWeight.w700,
-                                                      letterSpacing: -0.08,
-                                                      color: itemColor,
-                                                    ),
-                                                  ),
+                              return Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 2,
+                                  ),
+                                  child: PressScale(
+                                    onTap: () =>
+                                        widget.onSelect(_screens[index]),
+                                    child: SizedBox(
+                                      height: 56,
+                                      child: Center(
+                                        child: Transform.scale(
+                                          scale: 0.96 + (0.04 * focus),
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: <Widget>[
+                                              Icon(
+                                                _icons[index],
+                                                size: 21,
+                                                color: foreground,
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                _labels[index],
+                                                maxLines: 1,
+                                                softWrap: false,
+                                                overflow: TextOverflow.fade,
+                                                style: TextStyle(
+                                                  fontSize: 9.5,
+                                                  height: 1,
+                                                  fontWeight: focus > 0.5
+                                                      ? FontWeight.w800
+                                                      : FontWeight.w600,
+                                                  letterSpacing: -0.08,
+                                                  color: foreground,
                                                 ),
                                               ),
-                                            ),
+                                            ],
                                           ),
-                                        ],
+                                        ),
                                       ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            );
-                          }
-
-                          return GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onHorizontalDragStart: (DragStartDetails details) {
-                              _beginDrag(
-                                details.localPosition.dx,
-                                constraints.maxWidth,
                               );
-                            },
-                            onHorizontalDragUpdate:
-                                (DragUpdateDetails details) {
-                                  _updateDrag(
-                                    details.localPosition.dx,
-                                    constraints.maxWidth,
-                                    details.delta.dx,
-                                  );
-                                },
-                            onHorizontalDragEnd: (_) => _settleDrag(),
-                            onHorizontalDragCancel: _settleDrag,
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              children: <Widget>[
-                                Positioned(
-                                  left:
-                                      (itemWidth * page) +
-                                      4 -
-                                      (_elasticity.value < 0
-                                          ? _elasticity.value.abs() * 13
-                                          : 0),
-                                  top: 0,
-                                  width:
-                                      itemWidth -
-                                      8 +
-                                      (_elasticity.value.abs() * 13),
-                                  height: 46,
-                                  child: Transform.scale(
-                                    scaleY:
-                                        1 - (_elasticity.value.abs() * 0.035),
-                                    child: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          begin: Alignment.topLeft,
-                                          end: Alignment.bottomRight,
-                                          colors: <Color>[
-                                            Colors.white.withValues(
-                                              alpha: dark ? 0.10 : 0.34,
-                                            ),
-                                            colors.surface.withValues(
-                                              alpha: dark ? 0.26 : 0.28,
-                                            ),
-                                            indicatorColor.withValues(
-                                              alpha: dark ? 0.045 : 0.026,
+                            }
+
+                            return GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onHorizontalDragStart:
+                                  (DragStartDetails details) {
+                                    _beginDrag(
+                                      details.localPosition.dx,
+                                      constraints.maxWidth,
+                                    );
+                                  },
+                              onHorizontalDragUpdate:
+                                  (DragUpdateDetails details) {
+                                    _updateDrag(
+                                      details.localPosition.dx,
+                                      constraints.maxWidth,
+                                      details.delta.dx,
+                                    );
+                                  },
+                              onHorizontalDragEnd: (_) => _settleDrag(),
+                              onHorizontalDragCancel: _settleDrag,
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                children: <Widget>[
+                                  Positioned(
+                                    left:
+                                        (itemWidth * page) +
+                                        3 -
+                                        (_elasticity.value < 0
+                                            ? _elasticity.value.abs() * 11
+                                            : 0),
+                                    top: 1,
+                                    width:
+                                        itemWidth -
+                                        6 +
+                                        (_elasticity.value.abs() * 11),
+                                    height: 54,
+                                    child: Transform.scale(
+                                      scaleY:
+                                          1 - (_elasticity.value.abs() * 0.028),
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                            colors: <Color>[
+                                              Colors.white.withValues(
+                                                alpha: dark ? 0.13 : 0.48,
+                                              ),
+                                              indicatorColor.withValues(
+                                                alpha: dark ? 0.14 : 0.10,
+                                              ),
+                                              colors.surface.withValues(
+                                                alpha: dark ? 0.28 : 0.34,
+                                              ),
+                                            ],
+                                            stops: const <double>[0, 0.52, 1],
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            17 -
+                                                (_elasticity.value.abs() * 1.0),
+                                          ),
+                                          border: Border.all(
+                                            color: Color.lerp(
+                                              Colors.white.withValues(
+                                                alpha: dark ? 0.14 : 0.52,
+                                              ),
+                                              indicatorColor.withValues(
+                                                alpha: dark ? 0.24 : 0.20,
+                                              ),
+                                              0.45,
+                                            )!,
+                                            width: 0.7,
+                                          ),
+                                          boxShadow: <BoxShadow>[
+                                            BoxShadow(
+                                              color: indicatorColor.withValues(
+                                                alpha: dark ? 0.10 : 0.07,
+                                              ),
+                                              blurRadius: 12,
+                                              spreadRadius: -5,
+                                              offset: const Offset(0, 4),
                                             ),
                                           ],
-                                          stops: const <double>[0, 0.62, 1],
-                                        ),
-                                        borderRadius: BorderRadius.circular(
-                                          15 - (_elasticity.value.abs() * 1.2),
-                                        ),
-                                        border: Border.all(
-                                          color: Colors.white.withValues(
-                                            alpha: dark ? 0.11 : 0.44,
-                                          ),
-                                          width: 0.55,
                                         ),
                                       ),
                                     ),
                                   ),
-                                ),
-                                Row(
-                                  children: List<Widget>.generate(
-                                    _screens.length,
-                                    navItem,
-                                    growable: false,
+                                  Row(
+                                    children: List<Widget>.generate(
+                                      _screens.length,
+                                      navItem,
+                                      growable: false,
+                                    ),
                                   ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                  );
-                },
+                                ],
+                              ),
+                            );
+                          },
+                    );
+                  },
+                ),
               ),
             ),
           ),

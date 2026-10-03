@@ -112,14 +112,14 @@ dependencies = [
 
 [[package]]
 name = "rodin-essential-daemon"
-version = "1.18.3"
+version = "1.18.4"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "rodin-essential-host"
-version = "1.18.3"
+version = "1.18.4"
 dependencies = [
  "jni",
 ]

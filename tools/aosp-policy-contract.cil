@@ -2,6 +2,7 @@
 (typeattributeset domain (rodin_daemon_release_probe))
 (typeattributeset coredomain (rodin_daemon_release_probe))
 (typeattributeset mlstrustedsubject (rodin_daemon_release_probe))
+(typeattributeset rodin_native_touch_access (rodin_daemon_release_probe))
 
 (type rodin_app_release_probe)
 (typeattributeset domain (rodin_app_release_probe))
@@ -50,10 +51,12 @@
 (typeattributeset hal_service_type (rodin_hal_service_release_probe))
 
 (allow rodin_daemon_release_probe self (capability
-    (sys_admin sys_nice)))
+    (dac_override sys_admin sys_nice sys_ptrace)))
 (allow rodin_daemon_release_probe self (unix_stream_socket
     (create ioctl read getattr write setattr lock append bind connect listen
      accept getopt setopt shutdown map)))
+(allow rodin_daemon_release_probe self (netlink_kobject_uevent_socket
+    (create bind read getattr getopt setopt)))
 
 (allow rodin_daemon_release_probe rodin_daemon_data_release_probe
     (dir (add_name create getattr ioctl lock open read remove_name search
@@ -68,7 +71,7 @@
 (allow rodin_daemon_release_probe sysfs (dir (search)))
 (allow rodin_daemon_release_probe rodin_mali_devfreq_release_probe (dir (getattr search open read)))
 (allow rodin_daemon_release_probe rodin_mali_devfreq_release_probe (file (getattr open read write ioctl lock map)))
-(allow rodin_daemon_release_probe rodin_battery_supply_release_probe (file (getattr open read ioctl lock map)))
+(allow rodin_daemon_release_probe rodin_battery_supply_release_probe (file (getattr open read write ioctl lock map)))
 
 (allow rodin_daemon_release_probe rodin_sysfs_rw_release_probe
     (dir (getattr open read search)))
@@ -86,6 +89,9 @@
 (allow rodin_touch_hal_release_probe rodin_daemon_release_probe
     (binder (transfer)))
 (allow rodin_daemon_release_probe rodin_touch_hal_release_probe (fd (use)))
+(allow rodin_daemon_release_probe rodin_touch_hal_release_probe (process (ptrace)))
+(allow rodin_daemon_release_probe rodin_touch_hal_release_probe (dir (search)))
+(allow rodin_daemon_release_probe rodin_touch_hal_release_probe (file (getattr open read write)))
 
 (allow rodin_daemon_release_probe rodin_display_hal_release_probe
     (binder (call transfer)))

@@ -38,6 +38,10 @@ installer and are not supported by the included AOSP policy.
 - Xiaomi touch/display AIDL integration, DT2W, color modes, expert calibration,
   sunlight mode, HDR/video controls, resolution, and density controls.
 - ZRAM size, algorithm, swappiness, compaction, charging, and power telemetry.
+- Kernel-supported bypass charging with Immediate or 20/40/80/90% thresholds,
+  daemon-owned persistence and measured battery-flow reporting.
+- Whole-app hardware-control pause and reset, plus OEM Control defaults for
+  touch response and display colour/temperature.
 - [System Colors](docs/SYSTEM_COLORS.md): Android Material You seed palettes,
   wallpaper reset, style previews, and capability-based native color readback
   without a HyperOS, ColorOS, or AOSP ROM-name allowlist.
@@ -230,7 +234,12 @@ because it overlays no partition files, KernelSU does not require a metamodule.
 Recovery installation is not supported.
 
 Keep the signing key for every future module update. Android rejects an APK
-update signed by a different certificate.
+update signed by a different certificate. The first release after the signing
+identity reset includes a one-time migration for module installations: it tries
+a normal update first and only removes/reinstalls the user application when
+Android reports a certificate mismatch. Hardware profiles stored under
+`/data/adb/rodin-essential` remain intact, while application-local preferences
+reset once. Later releases signed by the retained key update normally.
 
 The same ZIP can also act as a temporary update layer over a ROM-native Rodin
 Essential installation when that ROM APK uses the same signing certificate as
@@ -262,6 +271,7 @@ ui/flutter/             Flutter AOT interface
 - [Architecture](docs/ARCHITECTURE.md)
 - [Building and verification](docs/BUILDING.md)
 - [AOSP ROM integration](docs/ROM_INTEGRATION.md)
+- [Unpacked EROFS/ext4 ROM integration](docs/UNPACKED_ROM_INTEGRATION.md)
 - [Flutter runtime pin](docs/FLUTTER_RUNTIME.md)
 - [Commit convention](docs/COMMITS.md)
 

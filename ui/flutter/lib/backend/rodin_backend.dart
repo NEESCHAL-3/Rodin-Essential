@@ -15,6 +15,7 @@ typedef _BackendSetDart = int Function(int, int, int);
 
 final class RodinBackendSnapshot {
   const RodinBackendSnapshot({
+    this.serviceEnabled = true,
     required this.connection,
     required this.actionState,
     required this.chargingWriteState,
@@ -47,6 +48,11 @@ final class RodinBackendSnapshot {
   });
 
   final RodinConnectionState connection;
+  final bool serviceEnabled;
+  bool get controlsAvailable => ready && serviceEnabled;
+  String get serviceStatusLabel =>
+      connection.serviceLabel(enabled: serviceEnabled);
+  String get serviceStatusBadgeLabel => serviceStatusLabel.toUpperCase();
   bool get ready => connection == RodinConnectionState.online;
   final int actionState;
   final int chargingWriteState;
@@ -77,7 +83,7 @@ final class RodinBackendSnapshot {
   final int dolby;
   final int performanceProfile;
 
-  bool get chargingBoost => chargingMode == 8;
+  bool get chargingBoost => chargingMode == 90;
   bool get busy => actionState == 1;
   double? get batteryTempC =>
       batteryTempTenthsC >= 0 ? batteryTempTenthsC / 10.0 : null;
@@ -127,6 +133,7 @@ final class RodinBackend {
   late _I32Dart _chargingWriteStateNative;
   late _I32Dart _chargingModeNative;
   late _SetI32Dart _setChargingModeNative;
+  late _SetI32Dart _setBypassChargingNative;
   late _I32Dart _batteryCapacityNative;
   late _I32Dart _batteryTempNative;
   late _I64Dart _batteryVoltageNative;
@@ -269,6 +276,9 @@ final class RodinBackend {
       );
       _setChargingModeNative = lib.lookupFunction<_SetI32Native, _SetI32Dart>(
         'rodin_backend_set_charging_mode',
+      );
+      _setBypassChargingNative = lib.lookupFunction<_SetI32Native, _SetI32Dart>(
+        'rodin_backend_set_bypass_charging',
       );
       _batteryCapacityNative = lib.lookupFunction<_I32Native, _I32Dart>(
         'rodin_backend_get_battery_capacity',
@@ -432,6 +442,7 @@ final class RodinBackend {
     if (!_started || _lib == null) return;
     _rememberSystemColors();
     final RodinBackendSnapshot next = RodinBackendSnapshot(
+      serviceEnabled: _backendGetNative(116) != 0,
       connection: RodinConnectionState.fromNative(_readyNative()),
       actionState: _actionStateNative(),
       chargingWriteState: _chargingWriteStateNative(),
@@ -478,8 +489,32 @@ final class RodinBackend {
     return true;
   }
 
-  bool setChargingBoost(bool enabled) =>
-      _queue(_setChargingModeNative(enabled ? 8 : 0));
+  bool setChargingProfile(int watts) {
+    if (!const <int>{0, 25, 33, 65, 85, 90}.contains(watts)) return false;
+    return _queue(_setChargingModeNative(watts));
+  }
+
+  bool setChargingBoost(bool enabled) => setChargingProfile(enabled ? 90 : 0);
+
+  bool get chargingControlSupported => extendedValue(105) == 1;
+  int get chargingFccUa => extendedValue(106);
+  int get chargingAdapterWatts => extendedValue(107);
+  bool get chargingPdAuthenticated => extendedValue(108) == 1;
+  int get chargingQuickType => extendedValue(109);
+  int get chargingSicMode => extendedValue(110);
+  int get chargingLiveMilliwatts => extendedValue(111);
+  bool get bypassChargingSupported => extendedValue(112) == 1;
+  int get bypassChargingState => extendedValue(113);
+  bool get bypassChargingEnabled => bypassChargingSaved == 1;
+  int get bypassChargingSaved => extendedValue(114);
+  bool get bypassHardwareActive => extendedValue(115) == 1;
+  int get bypassThreshold => extendedValue(119);
+  int get bypassPhase => extendedValue(120);
+  bool setBypassThreshold(int percent) =>
+      const <int>{0, 20, 40, 80, 90}.contains(percent) &&
+      setExtendedOperation(31, percent);
+  bool setBypassCharging(bool enabled) =>
+      _queue(_setBypassChargingNative(enabled ? 1 : 0));
   bool setTouchProfile(int profile) {
     if (profile < 0 || profile > 7) return false;
     return _queue(_setTouchStateNative(profile));
@@ -499,6 +534,7 @@ final class RodinBackend {
     if (_latest.performanceProfile != profile) {
       _latest = RodinBackendSnapshot(
         connection: _latest.connection,
+        serviceEnabled: _latest.serviceEnabled,
         actionState: _latest.actionState,
         chargingWriteState: _latest.chargingWriteState,
         chargingMode: _latest.chargingMode,
@@ -629,6 +665,12 @@ final class RodinBackend {
       setExtendedOperation(3, channel, value);
 
   bool resetExpertDisplay() => setExtendedOperation(4, 0);
+
+  bool get serviceEnabled => extendedValue(116) == 1;
+  int get serviceActionState => extendedValue(118);
+  bool setServiceEnabled(bool enabled) =>
+      setExtendedOperation(29, enabled ? 1 : 0);
+  bool resetAllSettings() => setExtendedOperation(30, 0);
 
   bool setCpuManualMode(bool enabled) =>
       setExtendedOperation(7, enabled ? 1 : 0);
