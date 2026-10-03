@@ -62,36 +62,36 @@ focused panels for each subsystem.
 <p align="center"><sub><b>Home</b> - Device Pulse and quick controls&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Control Hubs</b> - Hardware subsystem navigation</sub></p>
 
 <p align="center">
-  <a href="docs/screenshots/cpu.jpg"><img src="docs/screenshots/cpu.jpg" alt="CPU controls" width="150"></a>
+  <a href="docs/screenshots/cpu.png"><img src="docs/screenshots/cpu.png" alt="CPU controls" width="150"></a>
   &nbsp;&nbsp;
-  <a href="docs/screenshots/gpu.jpg"><img src="docs/screenshots/gpu.jpg" alt="GPU controls" width="150"></a>
+  <a href="docs/screenshots/gpu.png"><img src="docs/screenshots/gpu.png" alt="GPU controls" width="150"></a>
   &nbsp;&nbsp;
-  <a href="docs/screenshots/touch.jpg"><img src="docs/screenshots/touch.jpg" alt="Touch controls" width="150"></a>
+  <a href="docs/screenshots/touch.png"><img src="docs/screenshots/touch.png" alt="Touch controls" width="150"></a>
 </p>
 <p align="center"><sub><b>CPU</b> - Core and frequency control&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>GPU</b> - Mali profiles and GED&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Touch</b> - Response profiles</sub></p>
 
 <p align="center">
-  <a href="docs/screenshots/display.jpg"><img src="docs/screenshots/display.jpg" alt="Display controls" width="150"></a>
+  <a href="docs/screenshots/display.png"><img src="docs/screenshots/display.png" alt="Display controls" width="150"></a>
   &nbsp;&nbsp;
-  <a href="docs/screenshots/battery.jpg"><img src="docs/screenshots/battery.jpg" alt="Battery controls" width="150"></a>
+  <a href="docs/screenshots/battery.png"><img src="docs/screenshots/battery.png" alt="Battery controls" width="150"></a>
   &nbsp;&nbsp;
-  <a href="docs/screenshots/zram.jpg"><img src="docs/screenshots/zram.jpg" alt="ZRAM controls" width="150"></a>
+  <a href="docs/screenshots/zram.png"><img src="docs/screenshots/zram.png" alt="ZRAM controls" width="150"></a>
 </p>
 <p align="center"><sub><b>Display</b> - Color and HDR tuning&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Battery</b> - Charging telemetry&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>ZRAM</b> - Memory compression</sub></p>
 
 <p align="center">
-  <a href="docs/screenshots/diagnostics.jpg"><img src="docs/screenshots/diagnostics.jpg" alt="Diagnostics" width="150"></a>
+  <a href="docs/screenshots/diagnostics.png"><img src="docs/screenshots/diagnostics.png" alt="Diagnostics" width="150"></a>
   &nbsp;&nbsp;
-  <a href="docs/screenshots/support.jpg"><img src="docs/screenshots/support.jpg" alt="Support and project information" width="150"></a>
+  <a href="docs/screenshots/support.png"><img src="docs/screenshots/support.png" alt="Support and project information" width="150"></a>
 </p>
 <p align="center"><sub><b>Diagnostics</b> - Runtime health checks&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Support</b> - Community and safety information</sub></p>
 
 <p align="center">
-  <a href="docs/screenshots/system-colors.jpg"><img src="docs/screenshots/system-colors.jpg" alt="System Colors" width="150"></a>
+  <a href="docs/screenshots/system-colors.png"><img src="docs/screenshots/system-colors.png" alt="System Colors" width="150"></a>
   &nbsp;&nbsp;
-  <a href="docs/screenshots/advanced-configuration.jpg"><img src="docs/screenshots/advanced-configuration.jpg" alt="Advanced Configuration" width="150"></a>
+  <a href="docs/screenshots/advanced-configuration.png"><img src="docs/screenshots/advanced-configuration.png" alt="Advanced Configuration" width="150"></a>
   &nbsp;&nbsp;
-  <a href="docs/screenshots/resolution.jpg"><img src="docs/screenshots/resolution.jpg" alt="Resolution controls" width="150"></a>
+  <a href="docs/screenshots/resolution.png"><img src="docs/screenshots/resolution.png" alt="Resolution controls" width="150"></a>
 </p>
 <p align="center"><sub><b>System Colors</b> - Material You palette control&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Advanced Configuration</b> - CPU governors and device tuning&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>Resolution</b> - Canvas, density, and refresh settings</sub></p>
 
