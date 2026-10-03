@@ -14,7 +14,9 @@ Released on 4 October 2026.
 - OEM Control choices for touch sampling, display colour and temperature.
   Fresh or missing settings leave those features under ROM ownership; existing
   explicit choices remain saved.
-- A stock-EEA unpacked-ROM integration kit with partition copy destinations,
+- System Colors: system-wide Material You palettes with custom seed colours,
+  wallpaper-based colours, palette styles, fine-tuning and reset controls.
+- An unpacked-ROM integration package with partition copy destinations,
   filesystem metadata, certificate-bound application policy and a full porter
   guide. Its prepared policies target OS3.0.302.0.WOJEUXM, not arbitrary ports.
 - AOSP integration instructions and a scoped platform-policy preparation helper
