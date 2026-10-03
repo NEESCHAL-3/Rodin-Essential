@@ -29,8 +29,10 @@ def main():
     assert not report["newStrictFailureRules"]
     assert report["policyCompileExitCodes"]["stock-runtime-mode"] == 0
     assert report["policyCompileExitCodes"]["rodin-runtime-mode"] == 0
-    suffix = "" if (directory / "Rodin-Essential-Stock-EEA-v1.18.4.zip").exists() else "-local-test"
-    with zipfile.ZipFile(directory / f"Rodin-Essential-Stock-EEA-v1.18.4{suffix}.zip") as rom, \
+    published_rom = directory / "Rodin-Essential-ROM-Integration-v1.18.4.zip"
+    suffix = "" if published_rom.exists() else "-local-test"
+    rom_path = published_rom if published_rom.exists() else directory / "Rodin-Essential-Stock-EEA-v1.18.4-local-test.zip"
+    with zipfile.ZipFile(rom_path) as rom, \
          zipfile.ZipFile(directory / f"Rodin-Essential-KernelSU-Next-Magisk-v1.18.4{suffix}.zip") as module:
         assert rom.testzip() is None and module.testzip() is None
         root = "copy-to-extracted-rom/product/"

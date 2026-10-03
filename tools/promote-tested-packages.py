@@ -59,7 +59,8 @@ def main():
         builder.write(stage / "SHA256SUMS", "".join(
             f"{builder.digest(path)}  {path.relative_to(stage).as_posix()}\n"
             for path in sorted(stage.rglob("*")) if path.is_file()))
-        output = args.destination / f"{basename}-v1.18.4.zip"
+        release_basename = "Rodin-Essential-ROM-Integration" if kind == "rom" else basename
+        output = args.destination / f"{release_basename}-v1.18.4.zip"
         builder.archive(stage, output)
         builder.write(output.with_suffix(".zip.sha256"), builder.digest(output) + "  " + output.name + "\n")
         print(output.name, builder.digest(output))
