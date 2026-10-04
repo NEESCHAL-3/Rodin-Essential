@@ -12,6 +12,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     parser.add_argument("destination", type=Path)
+    parser.add_argument("--apksigner", type=Path, required=True, help="Android SDK apksigner for ROM payload certificate verification")
     args = parser.parse_args()
     project = Path(__file__).resolve().parents[1]
     args.source.resolve().relative_to(project / "out/local-test-packages")
@@ -25,8 +26,8 @@ def main():
     spec = importlib.util.spec_from_file_location("builder", project / "tools/prepare-stock-rom-test-kit.py")
     builder = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(builder)
-    for kind, basename in (("module", "Rodin-Essential-KernelSU-Next-Magisk"),
-                           ("rom", "Rodin-Essential-Stock-EEA")):
+    # Never promote a target ROM's complete policy into the public archive.
+    for kind, basename in (("module", "Rodin-Essential-KernelSU-Next-Magisk"),):
         source = args.source / f"{basename}-v1.18.4-local-test.zip"
         stage = args.destination / kind
         stage.mkdir()
@@ -39,32 +40,24 @@ def main():
                 data = archive.read(entry)
                 if kind == "module" and entry.filename in ("customize.sh", "service.sh", "action.sh", "uninstall.sh", "module.prop", "skip_mount"):
                     assert data == (project / "android/kernelsu-next" / entry.filename).read_text().replace("\r\n", "\n").encode(), "Installer source drift"
-                if kind == "rom" and entry.filename == "FULL-GUIDE.md":
-                    data = (project / "docs/STOCK_ROM_PORTER_GUIDE.md").read_text().replace("\r\n", "\n").encode()
-                if kind == "rom" and entry.filename == "README.txt":
-                    data = data.replace(b"LOCAL STOCK ROM TEST KIT", b"STOCK EEA ROM INTEGRATION KIT")
-                    data = data.replace(
-                        b"Both local test\npackages use the same current Windows test signing key, NOT the old public\nrelease key.",
-                        b"Both release\npackages use the same v1.18.4 replacement signing identity. This differs\nfrom the v1.18.3 public release key.")
                 target = stage / entry.filename
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
         for relative, expected in report["payload"].items():
-            if kind == "module":
-                target = stage / relative
-            else:
-                relative = "app/RodinEssential/RodinEssential.apk" if relative.startswith("app/") else relative
-                target = stage / "copy-to-extracted-rom/product" / relative
+            target = stage / relative
             assert builder.digest(target) == expected, "Tested binary payload changed"
         builder.write(stage / "SHA256SUMS", "".join(
             f"{builder.digest(path)}  {path.relative_to(stage).as_posix()}\n"
             for path in sorted(stage.rglob("*")) if path.is_file()))
-        release_basename = "Rodin-Essential-ROM-Integration" if kind == "rom" else basename
-        output = args.destination / f"{release_basename}-v1.18.4.zip"
+        output = args.destination / f"{basename}-v1.18.4.zip"
         builder.archive(stage, output)
         builder.write(output.with_suffix(".zip.sha256"), builder.digest(output) + "  " + output.name + "\n")
         print(output.name, builder.digest(output))
     builder.write(args.destination / "VALIDATION.json", json.dumps(report, indent=2) + "\n")
+    spec = importlib.util.spec_from_file_location("rom_builder", project / "tools/build-rom-integration-package.py")
+    rom_builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rom_builder)
+    rom_builder.build(output, args.destination, args.apksigner)
 
 
 if __name__ == "__main__":

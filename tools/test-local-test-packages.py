@@ -52,22 +52,33 @@ def main():
             for name in libraries:
                 aligned_elf(apk.read(name))
             assert b"13.6" in apk.read("lib/arm64-v8a/librodin_essential_host.so")
-        mac = ET.fromstring(rom.read(root + "etc/selinux/product_mac_permissions.xml"))
+        fragments_only = 'PACKAGE.json' in rom.namelist()
+        if fragments_only:
+            assert not any(Path(name).name in ('plat_sepolicy.cil', 'vendor_sepolicy.cil', 'product_sepolicy.cil', 'precompiled_sepolicy') for name in rom.namelist())
+            assert len([name for name in rom.namelist() if name.endswith('.cil')]) == 1
+        mac = ET.fromstring(rom.read('policy/product_mac_permissions.additions.xml' if fragments_only else root + "etc/selinux/product_mac_permissions.xml"))
         mapping = [signer for signer in mac.findall("signer")
                    if signer.find("package[@name='io.github.neeschal.rodinessential']") is not None]
         assert len(mapping) == 1
         certificate = bytes.fromhex(mapping[0].attrib["signature"])
         assert hashlib.sha256(certificate).hexdigest() == report["apkSignerSha256"]
-        seapp = rom.read(root + "etc/selinux/product_seapp_contexts").decode()
+        seapp = rom.read('policy/product_seapp_contexts.additions' if fragments_only else root + "etc/selinux/product_seapp_contexts").decode()
         assert "domain=rodin_app type=app_data_file levelFrom=all" in seapp
-        policy = rom.read(root + "etc/selinux/product_sepolicy.cil").decode()
+        policy = rom.read('policy/rodin-essential.cil' if fragments_only else root + "etc/selinux/product_sepolicy.cil").decode()
         assert "(allow rodin_app rodin_daemon (unix_stream_socket (connectto)))" in policy
         assert "(allow untrusted_app_all rodin_daemon" not in policy
         rc = rom.read(root + "etc/init/rodin_daemon.rc").decode()
         assert "service rodin_daemon /product/bin/rodin_daemon" in rc
         assert "on property:sys.boot_completed=1" in rc
         assert "/data/adb" not in rc and "seclabel u:r:su" not in rc
-        assert len(rom.read("REMOVE-BEFORE-COPY.txt").decode().splitlines()) == 3
+        if fragments_only:
+            assert 'tools/merge-unpacked-rom-policy.py' in rom.namelist()
+            assert 'REMOVE-BEFORE-COPY.txt' not in rom.namelist()
+            for line in rom.read('SHA256SUMS').decode().splitlines():
+                digest, name = line.split('  ', 1)
+                assert hashlib.sha256(rom.read(name)).hexdigest() == digest
+        else:
+            assert len(rom.read("REMOVE-BEFORE-COPY.txt").decode().splitlines()) == 3
         prop = module.read("module.prop").decode()
         assert "version=v1.18.4\n" in prop and "versionCode=11804\n" in prop
         for name in module.namelist():

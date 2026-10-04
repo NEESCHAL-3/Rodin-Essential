@@ -1,9 +1,9 @@
 # Unpacked ROM integration
 
-For the prepared stock EEA test kit, follow
-[the step-by-step porter guide](STOCK_ROM_PORTER_GUIDE.md). It distinguishes
-runtime files from ROM-kitchen metadata and explains why the kit does not
-replace `vendor_sepolicy.cil`.
+For the ROM integration package, follow
+[the step-by-step porter guide](UNPACKED_ROM_PORTER_GUIDE.md). The archive contains
+only Rodin Essential policy additions. Its merger uses the target ROM's complete
+split policy; no platform/vendor policy from another ROM is distributed.
 
 This workflow is for porters editing extracted Rodin ROM images on a PC. It is
 separate from AOSP source integration and from the KernelSU/Magisk module.
@@ -150,20 +150,21 @@ and every present system_ext/product/odm policy and mapping. The vendor mapping
 version comes from `vendor/etc/selinux/plat_sepolicy_vers.txt`; it is not the
 Android marketing version.
 
-Compile the unmodified baseline first, then the edited set. Both must succeed
-with neverallow checking enabled. A standalone platform probe is insufficient.
+Compile the unmodified baseline first, then the edited set. Prefer successful
+strict checking of both. The packaged tool allows an explicit exception for
+pre-existing target conflicts only; see the porter guide. New conflicts always
+block deployment. A standalone platform probe is insufficient.
 Do not flash when the baseline is incomplete, a type is unresolved, the compiler
 fails, or an AVC workaround has not been reviewed. Validate the contexts and
 seapp assignment against the resulting policy as well.
 
 ### Precompiled policy cache
 
-#### Stock Rodin EEA OS3.0.302.0.WOJEUXM
+#### Target ROM cache inventory
 
-Inspection of this stock `super.img` found exactly these three cache files in
-ODM. After the replacement policy has been validated, remove these files from
-the **extracted ROM tree before copying the prepared integration and rebuilding
-the images**:
+The merge tool inventories the target's ODM/vendor cache files. After the
+replacement policy has been validated, remove the listed files from the
+**extracted ROM tree before rebuilding**. Typical ODM paths are:
 
 ```text
 odm/etc/selinux/precompiled_sepolicy

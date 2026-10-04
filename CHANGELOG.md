@@ -18,7 +18,8 @@ Released on 4 October 2026.
   wallpaper-based colours, palette styles, fine-tuning and reset controls.
 - An unpacked-ROM integration package with partition copy destinations,
   filesystem metadata, certificate-bound application policy and a full porter
-  guide. Its prepared policies target OS3.0.302.0.WOJEUXM, not arbitrary ports.
+  guide. It contains Rodin-only policy additions and a merge tool using the
+  porter's own target ROM policies, not whole-ROM replacement policies.
 - AOSP integration instructions and a scoped platform-policy preparation helper
   for the native touch timing interface.
 

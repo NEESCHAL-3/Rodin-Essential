@@ -271,7 +271,8 @@ ui/flutter/             Flutter AOT interface
 - [Architecture](docs/ARCHITECTURE.md)
 - [Building and verification](docs/BUILDING.md)
 - [AOSP ROM integration](docs/ROM_INTEGRATION.md)
-- [Unpacked EROFS/ext4 ROM integration](docs/UNPACKED_ROM_INTEGRATION.md)
+- [Unpacked EROFS/ext4 ROM integration](docs/UNPACKED_ROM_PORTER_GUIDE.md): Rodin-only
+  additions and a merge tool using the porter's own ROM policy.
 - [Flutter runtime pin](docs/FLUTTER_RUNTIME.md)
 - [Commit convention](docs/COMMITS.md)
 
