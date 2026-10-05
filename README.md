@@ -54,29 +54,31 @@ installer and are not supported by the included AOSP policy.
 The redesigned interface groups live device telemetry and hardware tuning into
 focused panels for each subsystem.
 
-<table>
+<table align="center">
   <tr>
-    <td align="center"><a href="docs/screenshots/home-redesigned.png"><img src="docs/screenshots/home-redesigned.png" alt="Home dashboard" width="150"></a><br><sub><b>Home</b> - Device Pulse and quick controls</sub></td>
-    <td align="center"><a href="docs/screenshots/control-hubs-redesigned.png"><img src="docs/screenshots/control-hubs-redesigned.png" alt="Control hubs" width="150"></a><br><sub><b>Control Hubs</b> - Hardware subsystem navigation</sub></td>
+    <td align="center" width="33%"><a href="docs/screenshots/home-redesigned.png"><img src="docs/screenshots/home-redesigned.png" alt="Home dashboard" width="150"></a><br><sub><b>Home</b> - Device Pulse and quick controls</sub></td>
+    <td align="center" width="33%"><a href="docs/screenshots/control-hubs-redesigned.png"><img src="docs/screenshots/control-hubs-redesigned.png" alt="Control hubs" width="150"></a><br><sub><b>Control Hubs</b> - Hardware subsystem navigation</sub></td>
+    <td width="33%"></td>
   </tr>
   <tr>
-    <td align="center"><a href="docs/screenshots/cpu.png"><img src="docs/screenshots/cpu.png" alt="CPU controls" width="150"></a><br><sub><b>CPU</b> - Core and frequency control</sub></td>
-    <td align="center"><a href="docs/screenshots/gpu.png"><img src="docs/screenshots/gpu.png" alt="GPU controls" width="150"></a><br><sub><b>GPU</b> - Mali profiles and GED</sub></td>
-    <td align="center"><a href="docs/screenshots/touch.png"><img src="docs/screenshots/touch.png" alt="Touch controls" width="150"></a><br><sub><b>Touch</b> - Response profiles</sub></td>
+    <td align="center" width="33%"><a href="docs/screenshots/cpu.png"><img src="docs/screenshots/cpu.png" alt="CPU controls" width="150"></a><br><sub><b>CPU</b> - Core and frequency control</sub></td>
+    <td align="center" width="33%"><a href="docs/screenshots/gpu.png"><img src="docs/screenshots/gpu.png" alt="GPU controls" width="150"></a><br><sub><b>GPU</b> - Mali profiles and GED</sub></td>
+    <td align="center" width="33%"><a href="docs/screenshots/touch.png"><img src="docs/screenshots/touch.png" alt="Touch controls" width="150"></a><br><sub><b>Touch</b> - Response profiles</sub></td>
   </tr>
   <tr>
-    <td align="center"><a href="docs/screenshots/display.png"><img src="docs/screenshots/display.png" alt="Display controls" width="150"></a><br><sub><b>Display</b> - Color and HDR tuning</sub></td>
-    <td align="center"><a href="docs/screenshots/battery.png"><img src="docs/screenshots/battery.png" alt="Battery controls" width="150"></a><br><sub><b>Battery</b> - Charging telemetry</sub></td>
-    <td align="center"><a href="docs/screenshots/zram.png"><img src="docs/screenshots/zram.png" alt="ZRAM controls" width="150"></a><br><sub><b>ZRAM</b> - Memory compression</sub></td>
+    <td align="center" width="33%"><a href="docs/screenshots/display.png"><img src="docs/screenshots/display.png" alt="Display controls" width="150"></a><br><sub><b>Display</b> - Color and HDR tuning</sub></td>
+    <td align="center" width="33%"><a href="docs/screenshots/battery.png"><img src="docs/screenshots/battery.png" alt="Battery controls" width="150"></a><br><sub><b>Battery</b> - Charging telemetry</sub></td>
+    <td align="center" width="33%"><a href="docs/screenshots/zram.png"><img src="docs/screenshots/zram.png" alt="ZRAM controls" width="150"></a><br><sub><b>ZRAM</b> - Memory compression</sub></td>
   </tr>
   <tr>
-    <td align="center"><a href="docs/screenshots/diagnostics.png"><img src="docs/screenshots/diagnostics.png" alt="Diagnostics" width="150"></a><br><sub><b>Diagnostics</b> - Runtime health checks</sub></td>
-    <td align="center"><a href="docs/screenshots/support.png"><img src="docs/screenshots/support.png" alt="Support and project information" width="150"></a><br><sub><b>Support</b> - Community and safety information</sub></td>
+    <td align="center" width="33%"><a href="docs/screenshots/diagnostics.png"><img src="docs/screenshots/diagnostics.png" alt="Diagnostics" width="150"></a><br><sub><b>Diagnostics</b> - Runtime health checks</sub></td>
+    <td align="center" width="33%"><a href="docs/screenshots/support.png"><img src="docs/screenshots/support.png" alt="Support and project information" width="150"></a><br><sub><b>Support</b> - Community and safety information</sub></td>
+    <td width="33%"></td>
   </tr>
   <tr>
-    <td align="center"><a href="docs/screenshots/system-colors.png"><img src="docs/screenshots/system-colors.png" alt="System Colors" width="150"></a><br><sub><b>System Colors</b> - Material You palette control</sub></td>
-    <td align="center"><a href="docs/screenshots/advanced-configuration.png"><img src="docs/screenshots/advanced-configuration.png" alt="Advanced Configuration" width="150"></a><br><sub><b>Advanced Configuration</b> - CPU governors and device tuning</sub></td>
-    <td align="center"><a href="docs/screenshots/resolution.png"><img src="docs/screenshots/resolution.png" alt="Resolution controls" width="150"></a><br><sub><b>Resolution</b> - Canvas, density, and refresh settings</sub></td>
+    <td align="center" width="33%"><a href="docs/screenshots/system-colors.png"><img src="docs/screenshots/system-colors.png" alt="System Colors" width="150"></a><br><sub><b>System Colors</b> - Material You palette control</sub></td>
+    <td align="center" width="33%"><a href="docs/screenshots/advanced-configuration.png"><img src="docs/screenshots/advanced-configuration.png" alt="Advanced Configuration" width="150"></a><br><sub><b>Advanced Configuration</b> - CPU governors and device tuning</sub></td>
+    <td align="center" width="33%"><a href="docs/screenshots/resolution.png"><img src="docs/screenshots/resolution.png" alt="Resolution controls" width="150"></a><br><sub><b>Resolution</b> - Canvas, density, and refresh settings</sub></td>
   </tr>
 </table>
 
