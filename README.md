@@ -54,7 +54,7 @@ installer and are not supported by the included AOSP policy.
 The redesigned interface groups live device telemetry and hardware tuning into
 focused panels for each subsystem.
 
-<table align="center" border="0" cellpadding="8" cellspacing="0">
+<table align="center" style="border: 0; border-collapse: collapse;">
   <tr>
     <td align="center"><a href="docs/screenshots/home-redesigned.png"><img src="docs/screenshots/home-redesigned.png" alt="Home dashboard" width="150"></a><br><sub><b>Home</b> - Device Pulse and quick controls</sub></td>
     <td align="center"><a href="docs/screenshots/control-hubs-redesigned.png"><img src="docs/screenshots/control-hubs-redesigned.png" alt="Control hubs" width="150"></a><br><sub><b>Control Hubs</b> - Hardware subsystem navigation</sub></td>
