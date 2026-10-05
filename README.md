@@ -77,6 +77,7 @@ focused panels for each subsystem.
     <td align="center"><a href="docs/screenshots/resolution.png"><img src="docs/screenshots/resolution.png" alt="Resolution controls" width="150"></a><br><sub><b>Resolution</b> - Canvas, density, and refresh settings</sub></td>
     <td align="center"><a href="docs/screenshots/additional-screen-1.png"><img src="docs/screenshots/additional-screen-1.png" alt="Additional screen 1" width="150"></a><br><sub><b>Additional Screen 1</b> - Device configuration</sub></td>
     <td align="center"><a href="docs/screenshots/additional-screen-2.png"><img src="docs/screenshots/additional-screen-2.png" alt="Additional screen 2" width="150"></a><br><sub><b>Additional Screen 2</b> - Device configuration</sub></td>
+    <td align="center"><a href="docs/screenshots/system-colors-updated.png"><img src="docs/screenshots/system-colors-updated.png" alt="Updated System Colors" width="150"></a><br><sub><b>System Colors</b> - Updated palette controls</sub></td>
   </tr>
 </table>
 
