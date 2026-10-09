@@ -2,10 +2,14 @@ import 'dart:io';
 import 'dart:convert';
 import 'dart:ui' as ui;
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:flutter/scheduler.dart';
 import 'release_identity.dart';
+import 'page_motion.dart';
+import 'motion_diagnostics.dart';
 
 import 'backend/rodin_backend.dart';
 import 'backend/bypass_telemetry.dart';
@@ -15,6 +19,10 @@ import 'system_colors_preview.dart';
 import 'service_confirmation.dart';
 
 part 'system_colors.dart';
+part 'per_app_controls.dart';
+part 'easter_eggs.dart';
+part 'aurora_drift.dart';
+part 'subsystem_clocks.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -179,6 +187,7 @@ class RodinEssentialApp extends StatelessWidget {
         return MaterialApp(
           title: 'Rodin Essential',
           debugShowCheckedModeBanner: false,
+          scrollBehavior: const RodinScrollBehavior(),
           themeMode: themeMode,
           theme: _theme(
             brightness: Brightness.light,
@@ -268,7 +277,8 @@ class RodinShell extends StatefulWidget {
   State<RodinShell> createState() => _RodinShellState();
 }
 
-class _RodinShellState extends State<RodinShell> {
+class _RodinShellState extends State<RodinShell>
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   static const List<RodinScreen> _rootOrder = <RodinScreen>[
     RodinScreen.home,
     RodinScreen.hubs,
@@ -288,8 +298,10 @@ class _RodinShellState extends State<RodinShell> {
   bool _rootSwipeLocked = false;
   bool _rootNavAnimating = false;
   RodinScreen? _rootNavTarget;
+  int _bypassFocusRevision = 0;
   late final VoidCallback _interactionRevisionListener;
   Timer? _nativeBackPoll;
+  late final AnimationController _backSettle;
 
   File get _appearanceFile {
     final Directory parent = Directory.systemTemp.parent;
@@ -308,6 +320,12 @@ class _RodinShellState extends State<RodinShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _backSettle = AnimationController.unbounded(vsync: this, value: 0)
+      ..addListener(
+        () =>
+            RodinBackMotion.progress.value = _backSettle.value.clamp(0.0, 1.0),
+      );
 
     _interactionRevisionListener = () {
       if (!mounted) {
@@ -321,18 +339,71 @@ class _RodinShellState extends State<RodinShell> {
 
     RodinInteractionSettings.load();
     RodinBackend.instance.setBackIntercept(false);
+    RodinBackend.instance.listenBackGesture(_handleBackGesture);
+    _startBackPolling();
 
-    _nativeBackPoll = Timer.periodic(const Duration(milliseconds: 32), (_) {
-      if (!mounted || !RodinBackend.instance.consumeBackRequest()) {
+    _loadAppearance();
+  }
+
+  void _startBackPolling() {
+    _nativeBackPoll?.cancel();
+    _nativeBackPoll = Timer.periodic(const Duration(milliseconds: 16), (_) {
+      if (!mounted) return;
+      final backend = RodinBackend.instance;
+      if (backend.consumeBypassSettingsRequest()) {
+        _backSettle.stop();
+        _backSettle.value = 0;
+        _openDetail(RodinScreen.charging);
+        setState(() => _bypassFocusRevision++);
         return;
       }
-
-      if (_screen != RodinScreen.home) {
+      final packet = backend.consumeBackGesture();
+      final requested = backend.consumeBackRequest();
+      if (packet != 0) {
+        _handleBackGesture(packet);
+      } else if (requested && _screen != RodinScreen.home) {
+        RodinBackMotion.committedProgress = 0;
         _back();
       }
     });
+  }
 
-    _loadAppearance();
+  void _handleBackGesture(int packet) {
+    if (!mounted) return;
+    final phase = packet >> 16;
+    if (phase == 1 || phase == 2) {
+      if (phase == 1) RodinMotionDiagnostics.begin((packet & 32768) != 0);
+      _backSettle.stop();
+      RodinBackMotion.committedProgress = 0;
+      RodinBackMotion.nested = RodinNestedBackController.canPreview;
+      RodinBackMotion.rightEdge = (packet & 32768) != 0;
+      if (!Navigator.of(context).canPop())
+        _backSettle.value = (packet & 32767) / 10000.0;
+    } else if (phase == 3) {
+      RodinMotionDiagnostics.end();
+      _backSettle.animateWith(RodinMotion.cancelBack(_backSettle.value));
+    } else if (phase == 4 && _screen != RodinScreen.home) {
+      RodinMotionDiagnostics.end();
+      _backSettle.stop();
+      RodinBackMotion.rightEdge = (packet & 32768) != 0;
+      RodinBackMotion.committedProgress = _backSettle.value.clamp(0.0, 1.0);
+      _back();
+      _backSettle.value = 0;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _startBackPolling();
+    } else {
+      _nativeBackPoll?.cancel();
+      _nativeBackPoll = null;
+      // An interrupted edge gesture must not keep a frozen page on resume.
+      _backSettle.stop();
+      _backSettle.value = 0;
+      RodinBackMotion.committedProgress = 0;
+    }
   }
 
   Future<void> _loadAppearance() async {
@@ -520,6 +591,10 @@ class _RodinShellState extends State<RodinShell> {
       return;
     }
 
+    RodinBackMotion.committedProgress = 0;
+    RodinMotionDiagnostics.begin(false, label: 'open-${screen.name}');
+    RodinMotionDiagnostics.end();
+
     setState(() {
       if (_screen.isRoot) {
         _detailBackTarget = _screen;
@@ -549,6 +624,12 @@ class _RodinShellState extends State<RodinShell> {
   }
 
   void _back() {
+    // A confirmation/sheet owns Back before a nested hardware page does.
+    final NavigatorState navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop();
+      return;
+    }
     if (RodinNestedBackController.handleBack()) {
       return;
     }
@@ -588,9 +669,13 @@ class _RodinShellState extends State<RodinShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     RodinBackend.instance.setBackIntercept(false);
+    RodinBackend.instance.stopBackGesture();
     _nativeBackPoll?.cancel();
     _nativeBackPoll = null;
+    _backSettle.dispose();
+    RodinBackMotion.progress.value = 0;
     _rootController.dispose();
     _appearance.dispose();
     RodinInteractionSettings.revision.removeListener(
@@ -657,7 +742,10 @@ class _RodinShellState extends State<RodinShell> {
   Widget _detailBody(RodinScreen screen) {
     switch (screen) {
       case RodinScreen.charging:
-        return ChargingScreen(onBack: _back);
+        return ChargingScreen(
+          onBack: _back,
+          focusRequest: _bypassFocusRevision,
+        );
       case RodinScreen.touchBoost:
         return TouchBoostScreen(onBack: _back);
       case RodinScreen.displayStudio:
@@ -712,67 +800,43 @@ class _RodinShellState extends State<RodinShell> {
                         child: Stack(
                           fit: StackFit.expand,
                           children: <Widget>[
-                            _rootPager(),
-                            AnimatedSwitcher(
-                              duration: RodinInteractionSettings.motionDuration(
-                                360,
+                            TickerMode(
+                              enabled: current.isRoot,
+                              child: IgnorePointer(
+                                ignoring: !current.isRoot,
+                                child: _rootPager(),
                               ),
+                            ),
+                            AnimatedSwitcher(
+                              duration: MediaQuery.disableAnimationsOf(context)
+                                  ? Duration.zero
+                                  : RodinInteractionSettings.motionDuration(
+                                      320,
+                                    ),
                               reverseDuration:
-                                  RodinInteractionSettings.motionDuration(260),
+                                  MediaQuery.disableAnimationsOf(context)
+                                  ? Duration.zero
+                                  : RodinInteractionSettings.motionDuration(
+                                      220,
+                                    ),
                               switchInCurve: Curves.linear,
                               switchOutCurve: Curves.linear,
                               transitionBuilder:
                                   (Widget child, Animation<double> animation) {
-                                    final CurvedAnimation movement =
-                                        CurvedAnimation(
-                                          parent: animation,
-                                          curve: RodinInteractionSettings
-                                              .transitionCurve,
-                                          reverseCurve: const Cubic(
-                                            0.40,
-                                            0.00,
-                                            1.00,
-                                            1.00,
-                                          ),
-                                        );
-                                    final CurvedAnimation opacity =
-                                        CurvedAnimation(
-                                          parent: animation,
-                                          curve: const Interval(
-                                            0.0,
-                                            0.78,
-                                            curve: Curves.easeOutCubic,
-                                          ),
-                                          reverseCurve: const Interval(
-                                            0.12,
-                                            1.0,
-                                            curve: Curves.easeInCubic,
-                                          ),
-                                        );
-                                    final Animation<Offset> slide =
-                                        Tween<Offset>(
-                                          begin: Offset(
-                                            RodinInteractionSettings
-                                                .detailSlideDistance,
-                                            0,
-                                          ),
-                                          end: Offset.zero,
-                                        ).animate(movement);
-                                    final Animation<double>
-                                    scale = Tween<double>(
-                                      begin: RodinInteractionSettings.pageScale,
-                                      end: 1,
-                                    ).animate(movement);
-
-                                    return FadeTransition(
-                                      opacity: opacity,
-                                      child: ScaleTransition(
-                                        scale: scale,
-                                        child: SlideTransition(
-                                          position: slide,
-                                          child: child,
-                                        ),
-                                      ),
+                                    if (child.key ==
+                                        const ValueKey<String>(
+                                          'no-detail-overlay',
+                                        )) {
+                                      return child;
+                                    }
+                                    return RodinDetailTransition(
+                                      animation: animation,
+                                      previewThrough: true,
+                                      forward: !current.isRoot,
+                                      active:
+                                          child.key ==
+                                          ValueKey<RodinScreen>(current),
+                                      child: RodinPredictivePlane(child: child),
                                     );
                                   },
                               child: current.isRoot
@@ -1311,7 +1375,7 @@ class _ServiceSettingsCardState extends State<_ServiceSettingsCard> {
     if (reset || !enable) {
       final RodinAppearanceConfig appearance = RodinAppearanceScope.of(context);
       final bool confirmed =
-          await showDialog<bool>(
+          await showRodinDialog<bool>(
             context: context,
             builder: (BuildContext context) => RodinAppearanceScope(
               config: appearance,
@@ -4425,9 +4489,16 @@ class _HubReveal extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final moving =
+        RodinMotionViewportScope.inFlightOf(context) ||
+        !TickerMode.valuesOf(context).enabled;
     return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0, end: 1),
-      duration: RodinInteractionSettings.motionDuration(duration),
+      tween: Tween<double>(begin: moving ? 1 : 0, end: 1),
+      // A sliding page is already being revealed by the finger. Never keep
+      // its content transparent behind a muted first-visit arrival ticker.
+      duration: moving
+          ? Duration.zero
+          : RodinInteractionSettings.motionDuration(duration),
       curve: RodinInteractionSettings.transitionCurve,
       child: child,
       builder: (BuildContext context, double value, Widget? child) {
@@ -5271,7 +5342,12 @@ class _CommunityCard extends StatelessWidget {
 }
 
 class ChargingScreen extends StatefulWidget {
-  const ChargingScreen({required this.onBack, super.key});
+  const ChargingScreen({
+    required this.onBack,
+    this.focusRequest = 0,
+    super.key,
+  });
+  final int focusRequest;
 
   final VoidCallback onBack;
 
@@ -5280,10 +5356,32 @@ class ChargingScreen extends StatefulWidget {
 }
 
 class _ChargingScreenState extends State<ChargingScreen> {
+  final GlobalKey _bypassKey = GlobalKey();
+
+  void _focusBypass() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final target = _bypassKey.currentContext;
+      if (mounted && target != null) {
+        Scrollable.ensureVisible(
+          target,
+          alignment: 0.16,
+          duration: Duration.zero,
+        );
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant ChargingScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.focusRequest != oldWidget.focusRequest) _focusBypass();
+  }
+
   @override
   void initState() {
     super.initState();
     RodinBackend.instance.refresh();
+    if (widget.focusRequest > 0) _focusBypass();
   }
 
   @override
@@ -5313,7 +5411,10 @@ class _ChargingScreenState extends State<ChargingScreen> {
                 const SizedBox(height: 10),
                 _ChargingBatteryCard(snapshot: snapshot),
                 const SizedBox(height: 9),
-                _BypassChargingCard(snapshot: snapshot),
+                KeyedSubtree(
+                  key: _bypassKey,
+                  child: _BypassChargingCard(snapshot: snapshot),
+                ),
                 const SizedBox(height: 9),
                 _ChargingModeCard(snapshot: snapshot),
               ],
@@ -7208,10 +7309,17 @@ class RodinNestedBackController {
 
   static Object? _owner;
   static bool Function()? _handler;
+  static bool Function()? _canPreview;
+  static bool get canPreview => _canPreview?.call() ?? false;
 
-  static void attach(Object owner, bool Function() handler) {
+  static void attach(
+    Object owner,
+    bool Function() handler, {
+    bool Function()? canPreview,
+  }) {
     _owner = owner;
     _handler = handler;
+    _canPreview = canPreview;
   }
 
   static void detach(Object owner) {
@@ -7221,6 +7329,7 @@ class RodinNestedBackController {
 
     _owner = null;
     _handler = null;
+    _canPreview = null;
   }
 
   static bool handleBack() {
@@ -7251,7 +7360,11 @@ class _DisplayStudioScreenState extends State<DisplayStudioScreen> {
   void initState() {
     super.initState();
 
-    RodinNestedBackController.attach(this, _consumeNestedBack);
+    RodinNestedBackController.attach(
+      this,
+      _consumeNestedBack,
+      canPreview: () => _showColourModes,
+    );
 
     RodinBackend.instance.refresh();
   }
@@ -13906,12 +14019,10 @@ class _BackendSnapshotBuilder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<RodinBackendSnapshot>(
+    return RodinMotionStreamBuilder<RodinBackendSnapshot>(
       stream: RodinBackend.instance.snapshots,
-      initialData: RodinBackend.instance.latest,
-      builder:
-          (BuildContext context, AsyncSnapshot<RodinBackendSnapshot> async) =>
-              builder(async.data ?? RodinBackend.instance.latest),
+      readLatest: () => RodinBackend.instance.latest,
+      builder: builder,
     );
   }
 }

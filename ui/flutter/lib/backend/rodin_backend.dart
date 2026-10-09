@@ -12,6 +12,11 @@ typedef _BackendGetNative = ffi.Int32 Function(ffi.Int32);
 typedef _BackendGetDart = int Function(int);
 typedef _BackendSetNative = ffi.Int32 Function(ffi.Int32, ffi.Int32, ffi.Int32);
 typedef _BackendSetDart = int Function(int, int, int);
+typedef _BackEventNative = ffi.Void Function(ffi.Int32);
+typedef _BackListenerNative =
+    ffi.Void Function(ffi.Pointer<ffi.NativeFunction<_BackEventNative>>);
+typedef _BackListenerDart =
+    void Function(ffi.Pointer<ffi.NativeFunction<_BackEventNative>>);
 
 final class RodinBackendSnapshot {
   const RodinBackendSnapshot({
@@ -178,6 +183,10 @@ final class RodinBackend {
   late _BackendSetDart _backendSetNative;
   late _SetI32Dart _setBackInterceptNative;
   late _I32Dart _consumeBackRequestNative;
+  _I32Dart? _consumeBackGestureNative;
+  _I32Dart? _consumeBypassSettingsNative;
+  _BackListenerDart? _setBackListenerNative;
+  ffi.NativeCallable<_BackEventNative>? _backListener;
 
   RodinBackendSnapshot _latest = const RodinBackendSnapshot(
     connection: RodinConnectionState.connecting,
@@ -412,6 +421,22 @@ final class RodinBackend {
       _consumeBackRequestNative = lib.lookupFunction<_I32Native, _I32Dart>(
         'rodin_host_consume_back_request',
       );
+      if (lib.providesSymbol('rodin_host_consume_bypass_settings_request')) {
+        _consumeBypassSettingsNative = lib.lookupFunction<_I32Native, _I32Dart>(
+          'rodin_host_consume_bypass_settings_request',
+        );
+      }
+      if (lib.providesSymbol('rodin_host_consume_back_gesture')) {
+        _consumeBackGestureNative = lib.lookupFunction<_I32Native, _I32Dart>(
+          'rodin_host_consume_back_gesture',
+        );
+      }
+      if (lib.providesSymbol('rodin_host_set_back_listener')) {
+        _setBackListenerNative = lib
+            .lookupFunction<_BackListenerNative, _BackListenerDart>(
+              'rodin_host_set_back_listener',
+            );
+      }
 
       _photoPermissionStateNative = lib.lookupFunction<_I32Native, _I32Dart>(
         'rodin_host_photo_permission_state',
@@ -594,6 +619,25 @@ final class RodinBackend {
   bool consumeBackRequest() {
     if (!_started) return false;
     return _consumeBackRequestNative() == 1;
+  }
+
+  int consumeBackGesture() => _consumeBackGestureNative?.call() ?? 0;
+  bool consumeBypassSettingsRequest() =>
+      _consumeBypassSettingsNative?.call() == 1;
+
+  bool listenBackGesture(void Function(int) onEvent) {
+    stopBackGesture();
+    if (!_started || _setBackListenerNative == null) return false;
+    final callback = ffi.NativeCallable<_BackEventNative>.listener(onEvent);
+    _backListener = callback;
+    _setBackListenerNative!(callback.nativeFunction);
+    return true;
+  }
+
+  void stopBackGesture() {
+    _setBackListenerNative?.call(ffi.nullptr);
+    _backListener?.close();
+    _backListener = null;
   }
 
   int extendedValue(int key) {
@@ -801,6 +845,7 @@ final class RodinBackend {
   }
 
   void dispose() {
+    stopBackGesture();
     _paletteMonitor?.dispose();
     _contrastMonitor?.dispose();
     _timer?.cancel();
