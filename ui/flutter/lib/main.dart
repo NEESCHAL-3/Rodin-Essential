@@ -7945,50 +7945,32 @@ class _DisplayStudioScreenState extends State<DisplayStudioScreen> {
               );
 
         return AnimatedSwitcher(
-          duration: RodinInteractionSettings.motionDuration(500),
-          reverseDuration: RodinInteractionSettings.motionDuration(460),
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : RodinInteractionSettings.motionDuration(320),
+          reverseDuration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : RodinInteractionSettings.motionDuration(220),
           layoutBuilder: (Widget? currentChild, List<Widget> previousChildren) {
-            return ClipRect(child: currentChild ?? const SizedBox.shrink());
+            return rodinDetailLayout(
+              currentChild,
+              previousChildren,
+              forward: _colourTransitionForward,
+            );
           },
           transitionBuilder: (Widget child, Animation<double> animation) {
-            const Curve relaxedCurve = Cubic(0.16, 1.0, 0.30, 1.0);
-
-            final CurvedAnimation movement = CurvedAnimation(
-              parent: animation,
-              curve: relaxedCurve,
-            );
-
-            final CurvedAnimation opacity = CurvedAnimation(
-              parent: animation,
-              curve: const Interval(0.0, 0.86, curve: Curves.easeOutCubic),
-            );
-
-            final Animation<Offset> slide = Tween<Offset>(
-              begin: Offset(_colourTransitionForward ? 0.040 : -0.040, 0.002),
-              end: Offset.zero,
-            ).animate(movement);
-
-            final Animation<double> fade = Tween<double>(
-              begin: 0.94,
-              end: 1,
-            ).animate(opacity);
-
-            final Animation<double> scale = Tween<double>(
-              begin: 0.998,
-              end: 1,
-            ).animate(movement);
-
-            return ClipRect(
-              child: FadeTransition(
-                opacity: fade,
-                child: ScaleTransition(
-                  scale: scale,
-                  alignment: _colourTransitionForward
-                      ? Alignment.centerRight
-                      : Alignment.centerLeft,
-                  child: SlideTransition(position: slide, child: child),
-                ),
-              ),
+            return RodinDetailTransition(
+              animation: animation,
+              previewThrough: true,
+              forward: _colourTransitionForward,
+              active:
+                  child.key ==
+                  ValueKey<String>(
+                    _showColourModes
+                        ? 'display-studio-colour-modes'
+                        : 'display-studio-root',
+                  ),
+              child: child,
             );
           },
           child: KeyedSubtree(
@@ -7997,7 +7979,18 @@ class _DisplayStudioScreenState extends State<DisplayStudioScreen> {
                   ? 'display-studio-colour-modes'
                   : 'display-studio-root',
             ),
-            child: currentPage,
+            child: RodinPredictivePlane(
+              nested: true,
+              destination: _showColourModes
+                  ? _buildDisplayStudioRoot(
+                      context,
+                      snapshot,
+                      backend,
+                      expertEnabled,
+                    )
+                  : null,
+              child: currentPage,
+            ),
           ),
         );
       },
