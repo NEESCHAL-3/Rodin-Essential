@@ -3,8 +3,8 @@
 import argparse
 import base64
 import hashlib
-import io
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -39,8 +39,12 @@ def build(module, output, apksigner):
             target.write_bytes(data)
             payload[source] = hashlib.sha256(data).hexdigest()
     apk = stage / 'copy-to-extracted-rom/product/app/RodinEssential/RodinEssential.apk'
-    with zipfile.ZipFile(io.BytesIO(apk.read_bytes())) as archive:
-        assert not any(name.endswith('.dex') for name in archive.namelist()), 'Unexpected DEX'
+    # The production tile and predictive Back use two framework adapters.
+    # Validate their strict allowlist instead of the retired zero-DEX contract.
+    environment = os.environ.copy()
+    environment['ANDROID_SDK_ROOT'] = str(apksigner.resolve().parents[2])
+    subprocess.run(['bash', str(project / 'tools/check-platform-dex.sh'), str(apk)],
+                   check=True, env=environment)
     result = subprocess.run([str(apksigner), 'verify', '--print-certs-pem', str(apk)], check=True, capture_output=True, text=True)
     certificates = re.findall(r'-----BEGIN CERTIFICATE-----\s*(.*?)\s*-----END CERTIFICATE-----', result.stdout, re.S)
     assert len(certificates) == 1, 'Expected one signing certificate'

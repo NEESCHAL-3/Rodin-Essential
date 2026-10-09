@@ -48,7 +48,11 @@ RODIN_EXPECTED_CODE="$(printf '%d%02d%02d' \
     exit 1
 }
 
-grep -Fq "label: 'v$RODIN_CARGO_VERSION'" "$RODIN_MAIN" || {
+grep -Fq "const String rodinVersionName = '$RODIN_CARGO_VERSION';" \
+    "$RODIN_ROOT/ui/flutter/lib/release_identity.dart" && \
+grep -Fq "const int rodinVersionCode = $RODIN_MODULE_CODE;" \
+    "$RODIN_ROOT/ui/flutter/lib/release_identity.dart" && \
+grep -Fq "version: 'v\$rodinVersionName'" "$RODIN_MAIN" || {
     echo "In-app release label is not synchronized" >&2
     exit 1
 }
