@@ -111,6 +111,9 @@
 (allow rodin_daemon_release_probe settings_service (service_manager (find)))
 (allow rodin_daemon_release_probe window_service (service_manager (find)))
 (allow rodin_daemon_release_probe activity_service (service_manager (find)))
+(allow rodin_daemon_release_probe package_service (service_manager (find)))
+(allow rodin_daemon_release_probe logd (unix_stream_socket (connectto)))
+(allow rodin_daemon_release_probe logdr_socket (sock_file (write)))
 (allow rodin_daemon_release_probe overlay_service (service_manager (find)))
 (allow rodin_daemon_release_probe system_file
     (file (execute execute_no_trans getattr map open read)))

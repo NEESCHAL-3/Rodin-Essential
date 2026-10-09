@@ -33,6 +33,12 @@ allow rodin_daemon swap_block_device:blk_file rw_file_perms;
 # their exact subtrees so the coredomain never receives generic sysfs access.
 type sysfs_rodin_mali_devfreq, fs_type, sysfs_type;
 type sysfs_rodin_touch, fs_type, sysfs_type;
+type sysfs_rodin_subsystem, fs_type, sysfs_type;
+type sysfs_rodin_subsystem_floor, fs_type, sysfs_type;
+allow rodin_daemon sysfs_rodin_subsystem:dir r_dir_perms;
+allow rodin_daemon sysfs_rodin_subsystem:file r_file_perms;
+# Only supported devfreq floor requests are writable, not force/voltage nodes.
+allow rodin_daemon sysfs_rodin_subsystem_floor:file rw_file_perms;
 
 allow rodin_daemon sysfs:dir search;
 allow rodin_daemon sysfs_rodin_mali_devfreq:dir r_dir_perms;

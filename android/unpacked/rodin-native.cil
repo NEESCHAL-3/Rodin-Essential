@@ -9,6 +9,8 @@
 (typeattribute rodin_app_ptrace_forbidden)
 (type sysfs_rodin_mali_devfreq)
 (type sysfs_rodin_touch)
+(type sysfs_rodin_subsystem)
+(type sysfs_rodin_subsystem_floor)
 (roletype object_r rodin_daemon)
 (roletype object_r rodin_daemon_exec)
 (roletype object_r rodin_daemon_data_file)
@@ -16,6 +18,8 @@
 (roletype object_r rodin_app_userfaultfd)
 (roletype object_r sysfs_rodin_mali_devfreq)
 (roletype object_r sysfs_rodin_touch)
+(roletype object_r sysfs_rodin_subsystem)
+(roletype object_r sysfs_rodin_subsystem_floor)
 (typeattributeset domain (rodin_daemon rodin_app))
 (typeattributeset coredomain (rodin_daemon rodin_app))
 (typeattributeset mlstrustedsubject (rodin_daemon))
@@ -29,6 +33,8 @@
 (typeattributeset core_data_file_type (rodin_daemon_data_file))
 (typeattributeset fs_type (sysfs_rodin_mali_devfreq sysfs_rodin_touch))
 (typeattributeset sysfs_type (sysfs_rodin_mali_devfreq sysfs_rodin_touch))
+(typeattributeset fs_type (sysfs_rodin_subsystem sysfs_rodin_subsystem_floor))
+(typeattributeset sysfs_type (sysfs_rodin_subsystem sysfs_rodin_subsystem_floor))
 
 ; Equivalent app_domain essentials; Android's existing app rules still apply.
 (typetransition rodin_app tmpfs file appdomain_tmpfs)
@@ -69,6 +75,10 @@
 (allow rodin_daemon settings_service (service_manager (find)))
 (allow rodin_daemon window_service (service_manager (find)))
 (allow rodin_daemon activity_service (service_manager (find)))
+(allow rodin_daemon package_service (service_manager (find)))
+; Passive foreground event stream for Per-App Controls.
+(allow rodin_daemon logd (unix_stream_socket (connectto)))
+(allow rodin_daemon logdr_socket (sock_file (read write open getattr)))
 (allow rodin_daemon overlay_service (service_manager (find)))
 (allow rodin_daemon system_file (file (getattr open read execute map execute_no_trans)))
 (allow rodin_daemon toolbox_exec (file (getattr open read execute map execute_no_trans)))
@@ -115,6 +125,17 @@
 (genfscon sysfs "/devices/platform/soc/13000000.mali/devfreq/13000000.mali" (u object_r sysfs_rodin_mali_devfreq ((s0) (s0))))
 (genfscon sysfs "/devices/platform/13000000.mali/devfreq/13000000.mali" (u object_r sysfs_rodin_mali_devfreq ((s0) (s0))))
 (genfscon sysfs "/devices/platform/goodix_ts.0" (u object_r sysfs_rodin_touch ((s0) (s0))))
+
+; Subsystem metadata is read-only; requests are confined to min_freq/max_freq.
+(allow rodin_daemon sysfs_rodin_subsystem (dir (search getattr open read)))
+(allow rodin_daemon sysfs_rodin_subsystem (file (read getattr open)))
+(allow rodin_daemon sysfs_rodin_subsystem_floor (file (read write getattr open)))
+(genfscon sysfs "/devices/platform/soc/1c00f000.dvfsrc/mtk-dvfsrc-devfreq/devfreq/mtk-dvfsrc-devfreq" (u object_r sysfs_rodin_subsystem ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc/1c00f000.dvfsrc/mtk-dvfsrc-devfreq/devfreq/mtk-dvfsrc-devfreq/min_freq" (u object_r sysfs_rodin_subsystem_floor ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc/1c00f000.dvfsrc/mtk-dvfsrc-devfreq/devfreq/mtk-dvfsrc-devfreq/max_freq" (u object_r sysfs_rodin_subsystem_floor ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc/112b0000.ufshci/devfreq/112b0000.ufshci" (u object_r sysfs_rodin_subsystem ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc/112b0000.ufshci/devfreq/112b0000.ufshci/min_freq" (u object_r sysfs_rodin_subsystem_floor ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc/112b0000.ufshci/devfreq/112b0000.ufshci/max_freq" (u object_r sysfs_rodin_subsystem_floor ((s0) (s0))))
 
 ; Xiaomi vendor services and narrowly scoped native THP timing access.
 (allow rodin_daemon vendor_hal_displayfeature_xiaomi_service (service_manager (find)))

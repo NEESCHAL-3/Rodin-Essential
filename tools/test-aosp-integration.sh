@@ -93,9 +93,17 @@ if grep -Eq 'allow[[:space:]]+(appdomain|untrusted_app)[[:space:]]+rodin_daemon'
     exit 1
 fi
 
-if grep -Eq '(^|[[:space:]])permissive[[:space:]]+rodin_daemon|sysfs_batteryinfo|allow[[:space:]]+rodin_daemon[[:space:]]+sysfs:file|package_service|ctl_(start|stop)_prop' \
+if grep -Eq '(^|[[:space:]])permissive[[:space:]]+rodin_daemon|sysfs_batteryinfo|allow[[:space:]]+rodin_daemon[[:space:]]+sysfs:file|ctl_(start|stop)_prop' \
     "$RODIN_AOSP"/sepolicy/{product/private,product/public,vendor}/*; then
     echo "AOSP policy contains an unsafe or obsolete grant" >&2
+    exit 1
+fi
+
+# Installed-app discovery now needs lookup, not package mutation privileges.
+grep -Fxq 'allow rodin_daemon package_service:service_manager find;' "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
+grep -Fxq 'read_logd(rodin_daemon)' "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"
+if grep 'package_service' "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te" | grep -Fvx 'allow rodin_daemon package_service:service_manager find;'; then
+    echo "Package discovery must use only the scoped service lookup grant" >&2
     exit 1
 fi
 

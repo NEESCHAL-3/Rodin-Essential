@@ -5,3 +5,11 @@ genfscon sysfs /devices/platform/13000000.mali/devfreq/13000000.mali u:object_r:
 
 # Goodix fallback used when a port omits Xiaomi's TouchFeature service.
 genfscon sysfs /devices/platform/goodix_ts.0 u:object_r:sysfs_rodin_touch:s0
+
+# Memory/storage: metadata is read-only, only min_freq/max_freq are writable.
+genfscon sysfs /devices/platform/soc/1c00f000.dvfsrc/mtk-dvfsrc-devfreq/devfreq/mtk-dvfsrc-devfreq u:object_r:sysfs_rodin_subsystem:s0
+genfscon sysfs /devices/platform/soc/1c00f000.dvfsrc/mtk-dvfsrc-devfreq/devfreq/mtk-dvfsrc-devfreq/min_freq u:object_r:sysfs_rodin_subsystem_floor:s0
+genfscon sysfs /devices/platform/soc/1c00f000.dvfsrc/mtk-dvfsrc-devfreq/devfreq/mtk-dvfsrc-devfreq/max_freq u:object_r:sysfs_rodin_subsystem_floor:s0
+genfscon sysfs /devices/platform/soc/112b0000.ufshci/devfreq/112b0000.ufshci u:object_r:sysfs_rodin_subsystem:s0
+genfscon sysfs /devices/platform/soc/112b0000.ufshci/devfreq/112b0000.ufshci/min_freq u:object_r:sysfs_rodin_subsystem_floor:s0
+genfscon sysfs /devices/platform/soc/112b0000.ufshci/devfreq/112b0000.ufshci/max_freq u:object_r:sysfs_rodin_subsystem_floor:s0
