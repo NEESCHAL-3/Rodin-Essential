@@ -850,6 +850,7 @@ struct EglState {
     surface: usize,
     context: usize,
     resource_surface: usize,
+    raster_fallback_surface: usize,
     resource_context: usize,
     retired_surfaces: Vec<usize>,
     surface_generation: u64,
@@ -1861,11 +1862,26 @@ unsafe fn init_egl(state: *mut HostState, window: *mut ANativeWindow) -> Result<
             ));
         }
 
+        // The raster and upload contexts run on different threads, so they must
+        // never share one current pbuffer. Keep the raster context usable when
+        // Android temporarily removes its window (Home/Recents/predictive exit).
+        let raster_fallback = unsafe { eglCreatePbufferSurface(display, config, pbuffer_attribs.as_ptr()) };
+        if raster_fallback.is_null() {
+            unsafe {
+                eglDestroySurface(display, resource_surface);
+                eglDestroyContext(display, resource_context);
+                eglDestroyContext(display, context);
+                eglTerminate(display);
+            }
+            return Err(format!("eglCreatePbufferSurface(raster) failed {}", egl_error_hex()));
+        }
+
         egl.display = display as usize;
         egl.config = config as usize;
         egl.context = context as usize;
         egl.resource_context = resource_context as usize;
         egl.resource_surface = resource_surface as usize;
+        egl.raster_fallback_surface = raster_fallback as usize;
 
         log_str(&format!("EGL_CONTEXTS=PASS version={major}.{minor}"));
     }
@@ -2027,6 +2043,9 @@ unsafe fn destroy_egl_all(state: *mut HostState) {
         if egl.resource_surface != 0 {
             eglDestroySurface(display, egl.resource_surface as *mut c_void);
         }
+        if egl.raster_fallback_surface != 0 {
+            eglDestroySurface(display, egl.raster_fallback_surface as *mut c_void);
+        }
         if egl.resource_context != 0 {
             eglDestroyContext(display, egl.resource_context as *mut c_void);
         }
@@ -2062,7 +2081,8 @@ unsafe extern "C" fn egl_make_current(user_data: *mut c_void) -> bool {
         // context is still current here, detach it on its owning thread before
         // reclaiming retired window surfaces.
         let cleared = unsafe {
-            eglMakeCurrent(display, ptr::null_mut(), ptr::null_mut(), ptr::null_mut()) != EGL_FALSE
+            let fallback = egl.raster_fallback_surface as *mut c_void;
+            eglMakeCurrent(display, fallback, fallback, egl.context as *mut c_void) != EGL_FALSE
         };
 
         if cleared && !egl.retired_surfaces.is_empty() {
@@ -2075,7 +2095,7 @@ unsafe extern "C" fn egl_make_current(user_data: *mut c_void) -> bool {
             log_str(&format!("EGL_RASTER_DETACH=PASS retired={retired_count}"));
         }
 
-        return false;
+        return cleared;
     }
 
     let surface = egl.surface as *mut c_void;
