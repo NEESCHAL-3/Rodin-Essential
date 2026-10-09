@@ -38,7 +38,7 @@ installer and are not supported by the included AOSP policy.
 - Touch profiles for 240 Hz native timing, 480 Hz native timing, and the
   original v1.18.0 one-millisecond Android output stream generated from the
   native 480 Hz source.
-- Xiaomi touch/display AIDL integration, DT2W, color modes, expert calibration,
+- Xiaomi touch/display AIDL integration, color modes, expert calibration,
   sunlight mode, HDR/video controls, resolution, and density controls.
 - ZRAM size, algorithm, swappiness, compaction, charging, and power telemetry.
 - Kernel-supported bypass charging with Immediate or 20/40/80/90% thresholds,

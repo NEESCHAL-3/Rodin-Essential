@@ -45,6 +45,11 @@ void main() {
     expect(find.text('250 Hz'), findsOneWidget);
     expect(find.text('500 Hz'), findsOneWidget);
     expect(find.text('1000 Hz'), findsOneWidget);
+    final scroll = tester.state<ScrollableState>(find.byType(Scrollable).first);
+    scroll.position.jumpTo(scroll.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    expect(find.text('Double tap to wake'), findsNothing);
+    expect(find.byIcon(Icons.wb_twilight_rounded), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });

@@ -55,10 +55,13 @@ fn control() -> &'static Mutex<Control> {
             .as_ref()
             .and_then(|v| v["configured"].as_bool())
             .unwrap_or_else(|| super::state_file().exists());
-        let originals = parsed
+        let mut originals = parsed
             .as_ref()
             .and_then(|v| v["originals"].as_object().cloned())
             .unwrap_or_default();
+        // Discard the retired control's journal entry on upgrade. Never guess
+        // a ROM default or send a touch HAL transaction for that old intent.
+        originals.remove("touch.dt2w");
         let release_pending = parsed
             .as_ref()
             .and_then(|v| v["release_pending"].as_bool())

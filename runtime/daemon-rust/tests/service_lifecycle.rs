@@ -81,7 +81,6 @@ fn service_lifecycle_survives_process_restart() {
         "display_width=-1",
         "display_height=-1",
         "display_density=-1",
-        "dt2w=-1",
         "sunlight=-1",
         "silky=-1",
         "video=-1",
@@ -113,5 +112,6 @@ fn service_lifecycle_survives_process_restart() {
     // Only remove the exact temporary test directory created above.
     fs::remove_file(dir.join("state.conf")).unwrap();
     fs::remove_file(dir.join("service.json")).unwrap();
+    fs::remove_file(dir.join("app-profiles.json")).unwrap();
     fs::remove_dir(dir).unwrap();
 }

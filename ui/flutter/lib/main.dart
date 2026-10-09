@@ -7025,7 +7025,6 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
     return _BackendSnapshotBuilder(
       builder: (RodinBackendSnapshot snapshot) {
         final RodinBackend backend = RodinBackend.instance;
-        final int dt2w = RodinBackend.instance.extendedValue(1);
         final int savedProfile =
             (1 <= snapshot.touchState && snapshot.touchState <= 3)
             ? snapshot.touchState
@@ -7134,18 +7133,6 @@ class _TouchBoostScreenState extends State<TouchBoostScreen> {
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 12),
-            _SwitchCard(
-              icon: Icons.wb_twilight_rounded,
-              accent: const Color(0xFF67C2FF),
-              title: 'Double tap to wake',
-              subtitle: 'Double-tap the screen when locked to wake up',
-              value: dt2w == 1,
-              enabled: controlsEnabled,
-              stateKnown: dt2w >= 0,
-              unknownLabel: 'OEM',
-              onChanged: RodinBackend.instance.setDoubleTapWake,
             ),
             const SizedBox(height: 12),
             const SurfaceCard(

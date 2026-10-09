@@ -2775,7 +2775,6 @@ static PERFORMANCE_PROFILE_OK: AtomicI32 = AtomicI32::new(-1);
 static PERSISTENCE_LOADED: AtomicI32 = AtomicI32::new(0);
 static DISPLAY_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
 static TOUCH_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
-static DT2W_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
 static KEEPALIVE_APPLY_ACK: AtomicI32 = AtomicI32::new(-1);
 static KEEPALIVE_APPLY_COUNT: AtomicI32 = AtomicI32::new(0);
 static CPU_WRITE_ACK: AtomicI32 = AtomicI32::new(-1);
@@ -2807,7 +2806,6 @@ struct PersistedState {
     bypass_charging: i32,
     bypass_threshold: i32,
     touch: i32,
-    dt2w: i32,
     display_color: i32,
     display_temp: i32,
     display_width: i32,
@@ -2854,7 +2852,6 @@ impl Default for PersistedState {
             bypass_charging: 0,
             bypass_threshold: 0,
             touch: -1,
-            dt2w: -1,
             display_color: -1,
             display_temp: -1,
             display_width: -1,
@@ -3031,11 +3028,6 @@ fn parse_persisted_state(raw: &str) -> PersistedState {
             "touch" => {
                 if let Some(v) = int_value() {
                     state.touch = v;
-                }
-            }
-            "dt2w" => {
-                if let Some(v) = int_value() {
-                    state.dt2w = v;
                 }
             }
             "display_color" => {
@@ -3246,9 +3238,6 @@ fn parse_persisted_state(raw: &str) -> PersistedState {
     if !(1..=3).contains(&state.touch) {
         state.touch = -1;
     }
-    if !matches!(state.dt2w, -1 | 0 | 1) {
-        state.dt2w = -1;
-    }
     if !(-1..=2).contains(&state.display_color) {
         state.display_color = -1;
     }
@@ -3290,7 +3279,6 @@ fn save_persisted_state(state: &PersistedState) -> Result<(), String> {
     out.push_str(&format!("bypass_charging={}\n", state.bypass_charging));
     out.push_str(&format!("bypass_threshold={}\n", state.bypass_threshold));
     out.push_str(&format!("touch={}\n", state.touch));
-    out.push_str(&format!("dt2w={}\n", state.dt2w));
     out.push_str(&format!("display_color={}\n", state.display_color));
     out.push_str(&format!("display_temp={}\n", state.display_temp));
     out.push_str(&format!("display_width={}\n", state.display_width));
@@ -3380,25 +3368,6 @@ where
         save_persisted_state(&candidate)?;
     }
     *guard = candidate;
-    Ok(())
-}
-
-fn set_dt2w(enabled: bool) -> Result<(), String> {
-    service_control::remember("touch.dt2w", serde_json::json!(true))?;
-    let value = if enabled { 1 } else { 0 };
-    let _guard = touch_profile_apply_lock()
-        .lock()
-        .map_err(|_| "touch apply lock poisoned".to_string())?;
-
-    if !vendor_binder::set_touch_mode(0, 14, value) {
-        DT2W_APPLY_ACK.store(0, Ordering::Release);
-        return Err("touch HAL DT2W mode14 transaction failed".into());
-    }
-
-    mutate_persisted_state(|s| s.dt2w = value).inspect_err(|_| {
-        DT2W_APPLY_ACK.store(0, Ordering::Release);
-    })?;
-    DT2W_APPLY_ACK.store(1, Ordering::Release);
     Ok(())
 }
 
@@ -4101,16 +4070,6 @@ fn reassert_runtime_state(force_touch: bool) -> Result<(), String> {
         }
     }
 
-    if matches!(state.dt2w, 0 | 1) {
-        attempted += 1;
-        if vendor_binder::set_touch_mode(0, 14, state.dt2w) {
-            DT2W_APPLY_ACK.store(1, Ordering::Release);
-            applied += 1;
-        } else {
-            DT2W_APPLY_ACK.store(0, Ordering::Release);
-        }
-    }
-
     let ok = attempted > 0 && applied == attempted;
 
     KEEPALIVE_APPLY_ACK.store(if ok { 1 } else { 0 }, Ordering::Release);
@@ -4192,17 +4151,6 @@ fn restore_persisted_state() {
                 let _ = apply_touch_profile_locked(state.touch);
             }
         }
-    }
-
-    if matches!(state.dt2w, 0 | 1) {
-        DT2W_APPLY_ACK.store(
-            if vendor_binder::set_touch_mode(0, 14, state.dt2w) {
-                1
-            } else {
-                0
-            },
-            Ordering::Release,
-        );
     }
 
     if let Ok(_guard) = display_mode_apply_lock().lock() {
@@ -5791,7 +5739,6 @@ fn snapshot_persistence_fields() -> Vec<String> {
 
     vec![
         "phase=16".to_string(),
-        format!("dt2w={}", state.dt2w),
         format!("expert_gamut={}", state.expert_gamut),
         format!("expert_1={}", state.expert[0]),
         format!("expert_2={}", state.expert[1]),
@@ -5847,7 +5794,6 @@ fn snapshot_persistence_fields() -> Vec<String> {
         ),
         format!("display_ack={}", DISPLAY_APPLY_ACK.load(Ordering::Acquire)),
         format!("touch_ack={}", TOUCH_APPLY_ACK.load(Ordering::Acquire)),
-        format!("dt2w_ack={}", DT2W_APPLY_ACK.load(Ordering::Acquire)),
         format!("cpu_manual={}", state.cpu_manual),
         format!("cpu_saved_mask={}", state.cpu_online_mask | 0x01),
         format!("cpu_write_ack={}", CPU_WRITE_ACK.load(Ordering::Acquire)),
@@ -6181,16 +6127,6 @@ fn restore_released_controls() -> Result<(), String> {
         run("bypass", apply_bypass_charging(false));
     }
     run("touch output", touch_resampler::set_target_hz(0));
-    if service_control::original("touch.dt2w").is_some() {
-        run(
-            "double-tap wake default",
-            if vendor_binder::set_touch_mode(0, 14, 1) {
-                Ok(())
-            } else {
-                Err("vendor touch HAL rejected default".into())
-            },
-        );
-    }
     if service_control::original("touch.hal").is_some() {
         if vendor_binder::touch_available() {
             run("OEM touch", apply_touch_hal_profile(0));
@@ -6377,7 +6313,6 @@ fn cleared_device_state() -> PersistedState {
     PersistedState {
         charging: -1,
         touch: -1,
-        dt2w: -1,
         display_color: -1,
         display_temp: -1,
         sunlight: -1,
@@ -6409,7 +6344,6 @@ fn clear_released_control_status() {
         &TOUCH_SUSTAINED_RATE,
         &TOUCH_INSTANT_RATE,
         &TOUCH_APPLY_ACK,
-        &DT2W_APPLY_ACK,
         &DISPLAY_COLOR_STATE,
         &DISPLAY_TEMP_STATE,
         &DISPLAY_SUNLIGHT_STATE,
@@ -6599,12 +6533,6 @@ fn handle_enabled_command(line: &str) -> String {
             .parse::<i32>()
             .map_err(|_| "invalid touch profile".to_string())
             .and_then(set_touch_profile)
-    } else if let Some(arg) = cmd.strip_prefix("SET touch.dt2w ") {
-        match arg.trim() {
-            "1" => set_dt2w(true),
-            "0" => set_dt2w(false),
-            _ => Err("invalid DT2W state".into()),
-        }
     } else if let Some(arg) = cmd.strip_prefix("SET display.expert.gamut ") {
         arg.trim()
             .parse::<i32>()
@@ -6893,7 +6821,6 @@ mod tests {
             assert_eq!(state.touch, -1);
             assert_eq!(state.display_color, -1);
             assert_eq!(state.display_temp, -1);
-            assert_eq!(state.dt2w, -1);
             assert_eq!(state.sunlight, -1);
             assert_eq!(state.silky, -1);
             assert_eq!(state.video, -1);
@@ -6936,13 +6863,12 @@ mod tests {
     #[test]
     fn reset_sentinels_survive_state_loading() {
         let state = super::parse_persisted_state(
-            "charging=-1\ntouch=-1\ndt2w=-1\ndisplay_color=-1\ndisplay_temp=-1\nsunlight=-1\nsilky=-1\nvideo=-1\ndolby=-1\ncpu_manual=-1\nperf=-1\ngpu_profile_cpu_isolated=1\n",
+            "charging=-1\ntouch=-1\ndisplay_color=-1\ndisplay_temp=-1\nsunlight=-1\nsilky=-1\nvideo=-1\ndolby=-1\ncpu_manual=-1\nperf=-1\ngpu_profile_cpu_isolated=1\n",
         );
         assert_eq!(state.touch, -1);
         assert_eq!(state.charging, -1);
         assert_eq!(state.cpu_manual, -1);
         assert_eq!(state.display_color, -1);
-        assert_eq!(state.dt2w, -1);
         assert_eq!(state.perf, -1);
     }
     #[test]

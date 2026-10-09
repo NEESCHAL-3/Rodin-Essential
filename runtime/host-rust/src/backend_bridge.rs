@@ -754,7 +754,7 @@ fn refresh(cache: &Cache) -> Result<(), String> {
         .store(parse_i32(map.get("perf")), Ordering::Release);
     let extended_fields: &[(&str, usize)] = &[
         ("phase", 0),
-        ("dt2w", 1),
+        // Slot 1 is retired; retain the other indices for ABI compatibility.
         ("expert_gamut", 2),
         ("expert_1", 3),
         ("expert_2", 4),
@@ -960,7 +960,6 @@ fn perform(command: Command) -> Result<(), String> {
         }
         Command::Extended(op, a, b) => {
             let command = match op {
-                1 if matches!(a, 0 | 1) => format!("SET touch.dt2w {a}"),
                 2 if matches!(a, 1..=3) => {
                     format!("SET display.expert.gamut {a}")
                 }

@@ -101,7 +101,7 @@ configuration.
 
 Persisted domains include performance profile, GPU bounds/governor/GED/power
 policy, CPU governors and ranges, online-core mask, UFS scheduler, touch
-profile, DT2W, display settings, charging, and ZRAM.
+profile, display settings, charging, and ZRAM.
 
 System Colors is deliberately separate: Android's per-user SettingsProvider
 persists the palette and SystemUI generates the tonal overlays. There is no

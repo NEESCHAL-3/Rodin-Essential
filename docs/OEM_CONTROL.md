@@ -1,7 +1,7 @@
 # OEM-controlled touch and display
 
-Fresh installations and missing settings leave touch sampling, double-tap-to-wake,
-display colour, temperature and display enhancements under ROM control. A value
+Fresh installations and missing settings leave touch sampling, display colour,
+temperature and display enhancements under ROM control. A value
 of `-1` in the saved state means no Rodin Essential override; it does not mean the hardware
 feature is disabled.
 

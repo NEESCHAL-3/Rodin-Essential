@@ -700,9 +700,6 @@ final class RodinBackend {
     return _queueSystemColors(24, seed, style);
   }
 
-  bool setDoubleTapWake(bool enabled) =>
-      setExtendedOperation(1, enabled ? 1 : 0);
-
   bool setExpertGamut(int gamut) => setExtendedOperation(2, gamut);
 
   bool setExpertChannel(int channel, int value) =>
