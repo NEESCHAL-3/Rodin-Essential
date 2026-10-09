@@ -27,6 +27,7 @@ import 'system_colors_preview.dart';
 import 'service_confirmation.dart';
 import 'bottom_feedback.dart';
 import 'slider_style.dart';
+import 'surface_lines.dart';
 
 part 'system_colors.dart';
 part 'per_app_controls.dart';
@@ -277,6 +278,10 @@ class RodinEssentialApp extends StatelessWidget {
       ),
       textTheme: textTheme.apply(bodyColor: onSurface, displayColor: onSurface),
       sliderTheme: rodinSliderTheme(accent: primary, outline: outline),
+      dividerTheme: DividerThemeData(
+        color: RodinSurfaceLines.divider(scheme),
+        thickness: 0.8,
+      ),
     );
   }
 }
@@ -2911,7 +2916,7 @@ class _RodinGalleryBrowserState extends State<_RodinGalleryBrowser> {
                 ],
               ),
             ),
-            Divider(height: 1, color: colors.outline.withValues(alpha: 0.34)),
+            Divider(height: 1, color: RodinSurfaceLines.divider(colors)),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
@@ -3431,8 +3436,8 @@ class _HomeHeroMetric extends StatelessWidget {
           color: colors.surface.withValues(alpha: 0.52),
           borderRadius: BorderRadius.circular(13),
           border: Border.all(
-            color: colors.outline.withValues(alpha: 0.16),
-            width: 0.7,
+            color: RodinSurfaceLines.inset(colors),
+            width: 0.85,
           ),
         ),
         child: Row(
@@ -3625,7 +3630,7 @@ class _HomeCoreVisualizer extends StatelessWidget {
       decoration: BoxDecoration(
         color: colors.surface.withValues(alpha: 0.45),
         borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: colors.outline.withValues(alpha: 0.17)),
+        border: Border.all(color: RodinSurfaceLines.inset(colors), width: 0.85),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -3699,7 +3704,7 @@ class _HomeQuickActions extends StatelessWidget {
           Container(
             width: 1,
             height: 42,
-            color: colors.outline.withValues(alpha: 0.18),
+            color: RodinSurfaceLines.divider(colors),
           ),
           Expanded(
             child: _HomeQuickAction(
@@ -3713,7 +3718,7 @@ class _HomeQuickActions extends StatelessWidget {
           Container(
             width: 1,
             height: 42,
-            color: colors.outline.withValues(alpha: 0.18),
+            color: RodinSurfaceLines.divider(colors),
           ),
           Expanded(
             child: _HomeQuickAction(
@@ -3808,8 +3813,8 @@ class _HomeShortcutPanel extends StatelessWidget {
       padding: const EdgeInsets.only(left: 47),
       child: Divider(
         height: 1,
-        thickness: 0.65,
-        color: colors.outline.withValues(alpha: 0.20),
+        thickness: 0.8,
+        color: RodinSurfaceLines.divider(colors),
       ),
     );
 
@@ -4078,7 +4083,7 @@ class _LiveOverviewGrid extends StatelessWidget {
                   Container(
                     width: 1,
                     height: 54,
-                    color: colors.outline.withValues(alpha: 0.18),
+                    color: RodinSurfaceLines.divider(colors),
                   ),
                   Expanded(
                     child: _OverviewCard(
@@ -4094,8 +4099,8 @@ class _LiveOverviewGrid extends StatelessWidget {
               ),
               Divider(
                 height: 1,
-                thickness: 0.65,
-                color: colors.outline.withValues(alpha: 0.18),
+                thickness: 0.8,
+                color: RodinSurfaceLines.divider(colors),
               ),
               Row(
                 children: <Widget>[
@@ -4115,7 +4120,7 @@ class _LiveOverviewGrid extends StatelessWidget {
                   Container(
                     width: 1,
                     height: 54,
-                    color: colors.outline.withValues(alpha: 0.18),
+                    color: RodinSurfaceLines.divider(colors),
                   ),
                   Expanded(
                     child: _OverviewCard(
@@ -4740,8 +4745,8 @@ class _HubMetric extends StatelessWidget {
           color: colors.surface.withValues(alpha: 0.50),
           borderRadius: BorderRadius.circular(13),
           border: Border.all(
-            color: colors.outline.withValues(alpha: 0.18),
-            width: 0.7,
+            color: RodinSurfaceLines.inset(colors),
+            width: 0.85,
           ),
         ),
         child: Row(
@@ -4867,8 +4872,8 @@ class _HubControlDivider extends StatelessWidget {
       padding: const EdgeInsets.only(left: 52),
       child: Divider(
         height: 1,
-        thickness: 0.65,
-        color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.20),
+        thickness: 0.8,
+        color: RodinSurfaceLines.divider(Theme.of(context).colorScheme),
       ),
     );
   }
@@ -6102,7 +6107,7 @@ class _ChargingBatteryCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          Divider(height: 1, color: colors.outline.withValues(alpha: 0.22)),
+          Divider(height: 1, color: RodinSurfaceLines.divider(colors)),
           const SizedBox(height: 12),
           Row(
             children: <Widget>[
@@ -6177,7 +6182,7 @@ class _ChargingMetric extends StatelessWidget {
       decoration: BoxDecoration(
         color: colors.surfaceContainer.withValues(alpha: 0.45),
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: colors.outline.withValues(alpha: 0.24)),
+        border: Border.all(color: RodinSurfaceLines.inset(colors)),
       ),
       child: Row(
         children: <Widget>[
@@ -6792,7 +6797,7 @@ class _ChargingPowerSpectrum extends StatelessWidget {
       decoration: BoxDecoration(
         color: colors.surfaceContainer.withValues(alpha: 0.38),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: colors.outline.withValues(alpha: 0.18)),
+        border: Border.all(color: RodinSurfaceLines.inset(colors)),
       ),
       child: Column(
         children: <Widget>[
@@ -15269,7 +15274,7 @@ class _PulseChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: colors.surfaceContainer.withValues(alpha: 0.34),
         borderRadius: BorderRadius.circular(99),
-        border: Border.all(color: colors.outline.withValues(alpha: 0.28)),
+        border: Border.all(color: RodinSurfaceLines.inset(colors)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -15618,9 +15623,7 @@ class SurfaceCard extends StatelessWidget {
         ),
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(
-          color: dark
-              ? Colors.white.withValues(alpha: 0.12)
-              : Colors.white.withValues(alpha: 0.86),
+          color: RodinSurfaceLines.border(colors),
           width: 0.85,
         ),
         boxShadow: <BoxShadow>[
@@ -15664,7 +15667,7 @@ class SurfaceCard extends StatelessWidget {
         color: dark ? const Color(0xFF101419) : const Color(0xFFF0F4F8),
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(
-          color: dark ? const Color(0xFF202730) : const Color(0xFFD2DCE7),
+          color: RodinSurfaceLines.border(colors),
         ),
         boxShadow: dark
             ? const <BoxShadow>[]
@@ -15688,7 +15691,7 @@ class SurfaceCard extends StatelessWidget {
               ),
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(
-          color: dark ? const Color(0xFF222222) : const Color(0xFFD6E1ED),
+          color: RodinSurfaceLines.border(colors),
         ),
         boxShadow: dark
             ? const <BoxShadow>[]

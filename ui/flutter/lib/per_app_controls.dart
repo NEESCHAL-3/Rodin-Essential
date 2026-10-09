@@ -594,8 +594,8 @@ class _PerAppControlsScreenState extends State<PerAppControlsScreen> {
                         padding: const EdgeInsets.only(left: 62),
                         child: Divider(
                           height: 1,
-                          thickness: 0.5,
-                          color: colors.outlineVariant.withValues(alpha: 0.35),
+                          thickness: 0.8,
+                          color: RodinSurfaceLines.divider(colors),
                         ),
                       ),
                   ],
