@@ -4474,7 +4474,7 @@ class HubsScreen extends StatelessWidget {
                     _HubControlRow(
                       title: 'Touch Response',
                       subtitle: '$touchMode · Sampling and instant boost',
-                      icon: Icons.bolt_rounded,
+                      icon: Icons.swipe_rounded,
                       accent: const Color(0xFF41C98A),
                       onTap: () => onOpen(RodinScreen.touchBoost),
                     ),
@@ -14077,7 +14077,10 @@ class _CpuStatusRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Row(
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 6,
+                  runSpacing: 4,
                   children: <Widget>[
                     Text(
                       'CPU$cpu',
@@ -14150,38 +14153,46 @@ class _DiagnosticRow extends StatelessWidget {
   final String label;
   final bool good;
   final String detail;
-
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: <Widget>[
-        Icon(
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Icon(
           good ? Icons.check_circle_rounded : Icons.error_outline_rounded,
           size: 18,
           color: good ? const Color(0xFF41C98A) : const Color(0xFFFFB84D),
         ),
-        const SizedBox(width: 9),
-        Expanded(
-          child: Text(
-            label,
-            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            detail,
-            textAlign: TextAlign.end,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 11.5,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
+      const SizedBox(width: 10),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ),
+            const SizedBox(height: 3),
+            Text(
+              detail,
+              softWrap: true,
+              style: TextStyle(
+                fontSize: 11.5,
+                height: 1.45,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
 }
 
 class DetailScreen extends StatelessWidget {
@@ -15320,9 +15331,15 @@ class HeroCard extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: <Color>[
-            accent.withValues(alpha: dark ? 0.20 : 0.12),
+            Color.alphaBlend(
+              accent.withValues(alpha: dark ? 0.20 : 0.12),
+              colors.surface,
+            ),
             colors.surface,
-            colors.secondary.withValues(alpha: dark ? 0.05 : 0.03),
+            Color.alphaBlend(
+              colors.secondary.withValues(alpha: dark ? 0.05 : 0.03),
+              colors.surface,
+            ),
           ],
           stops: const <double>[0, 0.60, 1],
         ),
@@ -15556,10 +15573,9 @@ class HubRow extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 11.5,
+                      height: 1.35,
                       color: colors.onSurfaceVariant,
                     ),
                   ),
@@ -15607,7 +15623,10 @@ class SurfaceCard extends StatelessWidget {
           end: Alignment.bottomRight,
           colors: <Color>[
             colors.surface.withValues(alpha: dark ? 0.68 : 0.80),
-            activeAccent.withValues(alpha: dark ? 0.075 : 0.045),
+            Color.alphaBlend(
+              activeAccent.withValues(alpha: dark ? 0.075 : 0.045),
+              colors.surface.withValues(alpha: dark ? 0.64 : 0.76),
+            ),
             colors.surface.withValues(alpha: dark ? 0.48 : 0.66),
           ],
           stops: const <double>[0, 0.56, 1],
@@ -15735,12 +15754,12 @@ class IconTile extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: <Color>[
-            accent.withValues(alpha: 0.13),
-            colors.surface.withValues(alpha: 0.42),
+            Color.alphaBlend(accent.withValues(alpha: 0.30), colors.surface),
+            Color.alphaBlend(accent.withValues(alpha: 0.12), colors.surface),
           ],
         ),
-        borderRadius: BorderRadius.circular(size * 0.36),
-        border: Border.all(color: accent.withValues(alpha: 0.14), width: 0.75),
+        borderRadius: BorderRadius.circular(size * 0.30),
+        border: Border.all(color: accent.withValues(alpha: 0.32), width: 0.85),
         boxShadow: <BoxShadow>[
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.045),
