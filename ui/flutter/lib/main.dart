@@ -15,6 +15,7 @@ import 'release_identity.dart';
 import 'page_motion.dart';
 import 'root_pager.dart';
 import 'touch_light.dart';
+import 'hub_headline.dart';
 import 'motion_diagnostics.dart';
 
 import 'backend/rodin_backend.dart';
@@ -4635,7 +4636,6 @@ class _HubProfileHero extends StatelessWidget {
     required this.onCpu,
     required this.onGpu,
   });
-
   final String profile;
   final RodinBackendSnapshot snapshot;
   final String battery;
@@ -4648,156 +4648,70 @@ class _HubProfileHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    final ColorScheme colors = theme.colorScheme;
-    final bool dark = theme.brightness == Brightness.dark;
-    final bool online = snapshot.controlsAvailable;
-    final Color accent = colors.primary;
-
+    final colors = Theme.of(context).colorScheme;
     return SurfaceCard(
-      padding: EdgeInsets.zero,
-      accent: accent,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: <Color>[
-              accent.withValues(alpha: dark ? 0.12 : 0.095),
-              colors.surface.withValues(alpha: dark ? 0.36 : 0.62),
-              const Color(0xFFB087FF).withValues(alpha: dark ? 0.055 : 0.04),
+      accent: colors.primary,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'HARDWARE CONTROLS',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 120),
+                child: _HomeLiveBadge(snapshot: snapshot),
+              ),
             ],
           ),
-          borderRadius: BorderRadius.circular(
-            RodinAppearanceScope.of(context).cardRadius,
+          const SizedBox(height: 10),
+          const HubHeadline(),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _HubMetric(
+                  label: 'BATTERY',
+                  value: battery,
+                  icon: Icons.battery_5_bar_rounded,
+                  accent: const Color(0xFF41C98A),
+                  onTap: onBattery,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _HubMetric(
+                  label: 'CPU',
+                  value: cores,
+                  icon: Icons.memory_rounded,
+                  accent: const Color(0xFF67C2FF),
+                  onTap: onCpu,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _HubMetric(
+                  label: 'GPU',
+                  value: gpu,
+                  icon: Icons.sports_esports_rounded,
+                  accent: gpuAccent,
+                  onTap: onGpu,
+                ),
+              ),
+            ],
           ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Row(
-              children: <Widget>[
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: accent.withValues(alpha: 0.18)),
-                  ),
-                  child: Icon(
-                    Icons.dashboard_customize_rounded,
-                    size: 18,
-                    color: accent,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        'CURRENT SYSTEM PROFILE',
-                        style: TextStyle(
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.72,
-                          color: colors.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        profile,
-                        style: const TextStyle(
-                          fontSize: 21,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: -0.55,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 9,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: (online ? const Color(0xFF41C98A) : colors.outline)
-                        .withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: (online ? const Color(0xFF41C98A) : colors.outline)
-                          .withValues(alpha: 0.28),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          color: online
-                              ? const Color(0xFF41C98A)
-                              : colors.onSurfaceVariant,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 5),
-                      Text(
-                        snapshot.serviceStatusBadgeLabel,
-                        style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.45,
-                          color: online
-                              ? const Color(0xFF41C98A)
-                              : colors.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: _HubMetric(
-                    label: 'BATTERY',
-                    value: battery,
-                    icon: Icons.battery_5_bar_rounded,
-                    accent: const Color(0xFF41C98A),
-                    onTap: onBattery,
-                  ),
-                ),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: _HubMetric(
-                    label: 'CPU',
-                    value: cores,
-                    icon: Icons.memory_rounded,
-                    accent: const Color(0xFF67C2FF),
-                    onTap: onCpu,
-                  ),
-                ),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: _HubMetric(
-                    label: 'MALI GPU',
-                    value: gpu,
-                    icon: Icons.sports_esports_rounded,
-                    accent: gpuAccent,
-                    onTap: onGpu,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
