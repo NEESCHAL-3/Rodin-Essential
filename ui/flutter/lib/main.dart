@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:math' as math;
@@ -16,6 +17,7 @@ import 'touch_light.dart';
 import 'motion_diagnostics.dart';
 
 import 'backend/rodin_backend.dart';
+import 'backend/per_app_backend.dart';
 import 'backend/bypass_telemetry.dart';
 import 'bypass_threshold_selector.dart';
 import 'backend/system_colors_library.dart';
@@ -66,6 +68,7 @@ enum RodinScreen {
   zramSwap,
   maliGpu,
   systemColors,
+  perAppControls,
 }
 
 extension RodinScreenName on RodinScreen {
@@ -99,6 +102,8 @@ extension RodinScreenName on RodinScreen {
         return 'MediaTek Mali GPU & GED';
       case RodinScreen.systemColors:
         return 'System Colors';
+      case RodinScreen.perAppControls:
+        return 'Per-App Controls';
     }
   }
 
@@ -825,6 +830,8 @@ class _RodinShellState extends State<RodinShell>
         return MaliGpuScreen(onBack: _back);
       case RodinScreen.systemColors:
         return SystemColorsScreen(onBack: _back);
+      case RodinScreen.perAppControls:
+        return PerAppControlsScreen(onBack: _back);
       default:
         return _rootPager();
     }
@@ -4457,6 +4464,16 @@ class HubsScreen extends StatelessWidget {
                       accent: const Color(0xFFFFB84D),
                       onTap: () => onOpen(RodinScreen.advancedConfiguration),
                     ),
+                    const _HubControlDivider(),
+                    _HubControlRow(
+                      title: 'Per-App Controls',
+                      subtitle:
+                          'Set individual touch, refresh rate, CPU and GPU controls for each app.',
+                      wrapSubtitle: true,
+                      icon: Icons.apps_rounded,
+                      accent: const Color(0xFFB087FF),
+                      onTap: () => onOpen(RodinScreen.perAppControls),
+                    ),
                   ],
                 ),
               ),
@@ -4941,6 +4958,7 @@ class _HubControlRow extends StatelessWidget {
     required this.onTap,
     this.value,
     this.emphasized = false,
+    this.wrapSubtitle = false,
   });
 
   final String title;
@@ -4950,6 +4968,7 @@ class _HubControlRow extends StatelessWidget {
   final Color accent;
   final VoidCallback onTap;
   final bool emphasized;
+  final bool wrapSubtitle;
 
   @override
   Widget build(BuildContext context) {
@@ -5022,8 +5041,10 @@ class _HubControlRow extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    maxLines: wrapSubtitle ? null : 1,
+                    overflow: wrapSubtitle
+                        ? TextOverflow.visible
+                        : TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 10.4,
                       height: 1.12,
