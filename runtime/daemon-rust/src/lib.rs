@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+mod app_controls;
+mod app_runtime;
 mod bypass_policy;
 mod service_control;
 mod subsystem_clocks;
@@ -2798,7 +2800,8 @@ fn touch_profile_apply_lock() -> &'static Mutex<()> {
     TOUCH_PROFILE_APPLY_LOCK.get_or_init(|| Mutex::new(()))
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 struct PersistedState {
     charging: i32,
     bypass_charging: i32,
@@ -3273,6 +3276,10 @@ fn persisted_state() -> &'static Mutex<PersistedState> {
 }
 
 fn save_persisted_state(state: &PersistedState) -> Result<(), String> {
+    // Maintenance guards consume effective targets. Only the user's global
+    // preferences may reach state.conf while an app temporarily owns controls.
+    let global = app_runtime::global_preferences(state)?;
+    let state = &global;
     let state_dir = state_dir();
     fs::create_dir_all(state_dir).map_err(|e| format!("state mkdir: {e}"))?;
     fs::set_permissions(state_dir, fs::Permissions::from_mode(0o700))
@@ -3369,7 +3376,9 @@ where
         .map_err(|_| "persisted state lock poisoned".to_string())?;
     let mut candidate = guard.clone();
     f(&mut candidate);
-    save_persisted_state(&candidate)?;
+    if !app_runtime::transient_write() {
+        save_persisted_state(&candidate)?;
+    }
     *guard = candidate;
     Ok(())
 }
@@ -4887,6 +4896,7 @@ pub fn start_background_services() {
     }
     let _ = persisted_state();
     subsystem_clocks::start();
+    app_runtime::start();
     // The v1.18.0 1000 Hz profile waits for this worker to attach to the
     // TouchFeature event stream, so it must be ready before state restoration.
     touch_resampler::start_background();
@@ -6415,11 +6425,19 @@ fn clear_released_control_status() {
 }
 
 fn transition_service(cmd: &str) -> Result<(), String> {
+    if cmd != "SET service.enabled 1" {
+        subsystem_clocks::restore_all()?;
+        app_runtime::release()?;
+        if cmd == "ACTION service.reset" {
+            app_runtime::reset_all()?;
+        }
+    }
     if cmd == "SET service.enabled 1" {
         system_colors::restore_resume()?;
         service_control::set_release_pending(false)?;
         service_control::set_intent(true, service_control::configured())?;
         restore_persisted_state();
+        app_runtime::wake();
         return Ok(());
     }
     // Persist inactive intent first: a process crash/reboot cannot resume guards
@@ -6453,6 +6471,22 @@ pub fn handle_command(line: &str) -> String {
             Err(error) => format!("ERR {error}"),
         };
     }
+    if app_runtime::is_command(cmd) {
+        if cmd.starts_with("GET ") {
+            return match app_runtime::command(cmd) {
+                Ok(value) => format!("OK {value}"),
+                Err(error) => format!("ERR {error}"),
+            };
+        }
+        let _gate = match service_control::GATE.write() {
+            Ok(gate) => gate,
+            Err(_) => return "ERR service transition lock poisoned".into(),
+        };
+        return match app_runtime::command(cmd) {
+            Ok(value) => format!("OK {value}"),
+            Err(error) => format!("ERR {error}"),
+        };
+    }
     if cmd == "SET service.enabled 0"
         || cmd == "SET service.enabled 1"
         || cmd == "ACTION service.reset"
@@ -6472,6 +6506,9 @@ pub fn handle_command(line: &str) -> String {
         Err(_) => return "ERR service transition lock poisoned".into(),
     };
     if cmd.starts_with("SET ") || cmd.starts_with("ACTION ") {
+        if let Err(error) = app_runtime::check_global_command(cmd) {
+            return format!("ERR {error}");
+        }
         if !service_control::enabled() {
             return "ERR Rodin Essential is disabled; enable it in Settings".into();
         }
