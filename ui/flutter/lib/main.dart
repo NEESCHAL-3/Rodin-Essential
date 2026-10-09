@@ -10975,7 +10975,10 @@ class _ZramSwapScreenState extends State<ZramSwapScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: <Widget>[
-                                Row(
+                                Wrap(
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  spacing: 8,
+                                  runSpacing: 6,
                                   children: <Widget>[
                                     Text(
                                       isOff
@@ -11125,14 +11128,16 @@ class _ZramSwapScreenState extends State<ZramSwapScreen> {
                         children: <Widget>[
                           Icon(Icons.tune_rounded, size: 20, color: accent),
                           const SizedBox(width: 8),
-                          const Text(
-                            'Custom Swap Size',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w800,
+                          Expanded(
+                            child: const Text(
+                              'Custom Swap Size',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
-                          const Spacer(),
+                          const SizedBox(width: 8),
                           Text(
                             _customSliderMb == 0
                                 ? 'Disabled'
@@ -11215,11 +11220,13 @@ class _ZramSwapScreenState extends State<ZramSwapScreen> {
                             color: Color(0xFF41C98A),
                           ),
                           SizedBox(width: 8),
-                          Text(
-                            'Compression Algorithm',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w800,
+                          Expanded(
+                            child: Text(
+                              'Compression Algorithm',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
                         ],
@@ -11284,14 +11291,16 @@ class _ZramSwapScreenState extends State<ZramSwapScreen> {
                             color: Color(0xFFFFB84D),
                           ),
                           const SizedBox(width: 8),
-                          const Text(
-                            'Kernel Swappiness',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w800,
+                          const Expanded(
+                            child: Text(
+                              'Kernel Swappiness',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
-                          const Spacer(),
+                          const SizedBox(width: 8),
                           Text(
                             '$swappiness',
                             style: const TextStyle(
@@ -11713,34 +11722,33 @@ class _AlgorithmOptionCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Row(
-              children: <Widget>[
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w800,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          height: 1.3,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        badge,
+                        style: TextStyle(
+                          fontSize: 9,
+                          height: 1.3,
+                          fontWeight: FontWeight.w700,
+                          color: accent,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 5,
-                    vertical: 1.5,
-                  ),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(4),
-                    color: accent.withValues(alpha: 0.16),
-                  ),
-                  child: Text(
-                    badge,
-                    style: TextStyle(
-                      fontSize: 8.5,
-                      fontWeight: FontWeight.w900,
-                      color: accent,
-                    ),
-                  ),
-                ),
-                const Spacer(),
+                const SizedBox(width: 6),
                 if (isActive)
                   Icon(Icons.check_circle_rounded, size: 18, color: accent)
                 else
