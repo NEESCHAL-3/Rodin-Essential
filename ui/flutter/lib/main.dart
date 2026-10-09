@@ -18,6 +18,7 @@ import 'bypass_threshold_selector.dart';
 import 'backend/system_colors_library.dart';
 import 'system_colors_preview.dart';
 import 'service_confirmation.dart';
+import 'bottom_feedback.dart';
 
 part 'system_colors.dart';
 part 'per_app_controls.dart';
@@ -900,7 +901,9 @@ class _RodinShellState extends State<RodinShell>
                         ),
                       ),
                       Padding(
-                        padding: const EdgeInsets.only(top: 24),
+                        padding: const EdgeInsets.only(
+                          top: RodinBottomLayout.dockFade,
+                        ),
                         child: RodinBottomBar(
                           controller: _rootController,
                           currentRoot: navRoot,
@@ -8621,27 +8624,14 @@ class _CpuControlScreenState extends State<CpuControlScreen> {
               ],
             ),
 
-            // FLOATING GLASS TOAST OVERLAY AT BOTTOM
-            if (_toastVisible)
-              Positioned(
-                bottom: MediaQuery.paddingOf(context).bottom + 20,
-                left: 16,
-                right: 16,
-                child: TweenAnimationBuilder<double>(
-                  tween: Tween<double>(begin: 0.0, end: 1.0),
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                  builder: (BuildContext context, double value, Widget? child) {
-                    return Transform.translate(
-                      offset: Offset(0, 14 * (1.0 - value)),
-                      child: Opacity(
-                        opacity: value,
-                        child: _buildToastCard(colors: colors),
-                      ),
-                    );
-                  },
-                ),
-              ),
+            RodinFeedbackOverlay(
+              tag: _toastTag,
+              message: _toastMessage,
+              icon: _toastIcon,
+              accent: _toastAccent,
+              visible: _toastVisible,
+              duration: RodinInteractionSettings.motionDuration(260),
+            ),
           ],
         );
       },
@@ -8761,66 +8751,6 @@ class _CpuControlScreenState extends State<CpuControlScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildToastCard({required ColorScheme colors}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest.withValues(alpha: 0.95),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: _toastAccent.withValues(alpha: 0.4),
-          width: 1.2,
-        ),
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.25),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Row(
-        children: <Widget>[
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: _toastAccent.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(_toastIcon, size: 20, color: _toastAccent),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Text(
-                  _toastTag,
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.6,
-                    color: _toastAccent,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  _toastMessage,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: colors.onSurface,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -9696,34 +9626,17 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
           SnackBar(
             behavior: SnackBarBehavior.floating,
             duration: const Duration(seconds: 2),
-            backgroundColor: const Color(0xFF1E222A),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(
-                color: const Color(0xFFFFBE63).withValues(alpha: 0.35),
-              ),
-            ),
-            content: Row(
-              children: <Widget>[
-                const Icon(
-                  Icons.check_circle_rounded,
-                  color: Color(0xFFFFBE63),
-                  size: 20,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    isNative
-                        ? 'Reset to Rodin 1.5K Native Panel'
-                        : 'Applied $label ($width × $height @ ${density}DPI)',
-                    style: const TextStyle(
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ],
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            padding: EdgeInsets.zero,
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            content: RodinFeedbackCard(
+              tag: 'RESOLUTION',
+              icon: Icons.check_circle_rounded,
+              accent: const Color(0xFFFFBE63),
+              message: isNative
+                  ? 'Reset to Rodin Essential native panel'
+                  : 'Applied $label ($width × $height @ ${density}DPI)',
             ),
           ),
         );
@@ -11466,153 +11379,17 @@ class _ZramSwapScreenState extends State<ZramSwapScreen> {
             ),
 
             // FROSTED GLASS HUD TOAST
-            _ZramGlassToast(
+            RodinFeedbackOverlay(
               tag: _toastTag,
               message: _toastMessage,
               icon: _toastIcon,
               accent: _toastAccent,
               visible: _toastVisible,
+              duration: RodinInteractionSettings.motionDuration(260),
             ),
           ],
         );
       },
-    );
-  }
-}
-
-class _ZramGlassToast extends StatelessWidget {
-  const _ZramGlassToast({
-    required this.tag,
-    required this.message,
-    required this.icon,
-    required this.accent,
-    required this.visible,
-  });
-
-  final String tag;
-  final String message;
-  final IconData icon;
-  final Color accent;
-  final bool visible;
-
-  @override
-  Widget build(BuildContext context) {
-    final bool dark = Theme.of(context).brightness == Brightness.dark;
-
-    return AnimatedPositioned(
-      duration: const Duration(milliseconds: 380),
-      curve: visible ? Curves.easeOutBack : Curves.easeInCubic,
-      bottom: visible ? 84 : -110,
-      left: 16,
-      right: 16,
-      child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 260),
-        opacity: visible ? 1.0 : 0.0,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: dark
-                    ? const Color(0xDD121924)
-                    : Colors.white.withValues(alpha: 0.88),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: accent.withValues(alpha: dark ? 0.35 : 0.45),
-                  width: 1.2,
-                ),
-                boxShadow: <BoxShadow>[
-                  BoxShadow(
-                    color: accent.withValues(alpha: dark ? 0.18 : 0.12),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
-                  ),
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: dark ? 0.4 : 0.08),
-                    blurRadius: 16,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: <Widget>[
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: accent.withValues(alpha: dark ? 0.18 : 0.12),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: accent.withValues(alpha: 0.3),
-                        width: 1,
-                      ),
-                    ),
-                    child: Icon(icon, size: 18, color: accent),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        Text(
-                          tag,
-                          style: TextStyle(
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.8,
-                            color: accent,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          message,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                            color: dark ? Colors.white : Colors.black87,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: accent.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        Icon(Icons.check_rounded, size: 12, color: accent),
-                        const SizedBox(width: 3),
-                        Text(
-                          'APPLIED',
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.5,
-                            color: accent,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -12319,12 +12096,13 @@ class _MaliGpuScreenState extends State<MaliGpuScreen> {
             ),
 
             // FROSTED GLASS HUD TOAST (BOTTOM POSITIONED)
-            _MaliGlassToast(
+            RodinFeedbackOverlay(
               tag: _toastTag,
               message: _toastMessage,
               icon: _toastIcon,
               accent: _toastAccent,
               visible: _toastVisible,
+              duration: RodinInteractionSettings.motionDuration(260),
             ),
           ],
         );
@@ -13363,108 +13141,6 @@ class _MaliGpuScreenState extends State<MaliGpuScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _MaliGlassToast extends StatelessWidget {
-  const _MaliGlassToast({
-    required this.tag,
-    required this.message,
-    required this.icon,
-    required this.accent,
-    required this.visible,
-  });
-
-  final String tag;
-  final String message;
-  final IconData icon;
-  final Color accent;
-  final bool visible;
-
-  @override
-  Widget build(BuildContext context) {
-    final bool dark = Theme.of(context).brightness == Brightness.dark;
-
-    return AnimatedPositioned(
-      duration: const Duration(milliseconds: 380),
-      curve: visible ? Curves.easeOutBack : Curves.easeInCubic,
-      bottom: visible ? 84 : -110,
-      left: 16,
-      right: 16,
-      child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 260),
-        opacity: visible ? 1.0 : 0.0,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: dark
-                    ? const Color(0xDD121924)
-                    : Colors.white.withValues(alpha: 0.88),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: accent.withValues(alpha: dark ? 0.35 : 0.45),
-                  width: 1.2,
-                ),
-                boxShadow: <BoxShadow>[
-                  BoxShadow(
-                    color: accent.withValues(alpha: dark ? 0.18 : 0.12),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
-                  ),
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: dark ? 0.4 : 0.08),
-                    blurRadius: 16,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: <Widget>[
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: accent.withValues(alpha: 0.15),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(icon, size: 18, color: accent),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        Text(
-                          tag,
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.8,
-                            color: accent,
-                          ),
-                        ),
-                        Text(
-                          message,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: dark ? Colors.white : Colors.black87,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }
