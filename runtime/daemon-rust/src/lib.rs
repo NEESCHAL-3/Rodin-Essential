@@ -1026,7 +1026,21 @@ fn write_cpu_online(cpu: usize, online: bool) -> Result<(), String> {
     }
 
     let desired = if online { "1" } else { "0" };
-    let actual = write_verified(&path, desired)?;
+    // Avoid redundant hotplug transitions. Vendor CPU teardown can briefly
+    // return EBUSY while migrating work; retry only that transient, finitely.
+    if read_trimmed(&path)? == desired {
+        return Ok(());
+    }
+    for attempt in 0..3 {
+        match service_control::write(&path, format!("{desired}\n")) {
+            Ok(()) => break,
+            Err(error) if error.raw_os_error() == Some(16) && attempt < 2 => {
+                std::thread::sleep(Duration::from_millis(20 * (attempt + 1)));
+            }
+            Err(error) => return Err(format!("write {}: {error}", path.display())),
+        }
+    }
+    let actual = read_trimmed(&path)?;
 
     if actual != desired {
         return Err(format!(
