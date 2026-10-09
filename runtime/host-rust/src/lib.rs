@@ -1,3 +1,4 @@
+mod app_metadata;
 mod backend_bridge;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
