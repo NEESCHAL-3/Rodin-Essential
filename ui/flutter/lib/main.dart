@@ -10,6 +10,7 @@ import 'package:flutter/gestures.dart' show Drag;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
+import 'aurora_game_engine.dart';
 import 'release_identity.dart';
 import 'page_motion.dart';
 import 'root_pager.dart';
@@ -1819,7 +1820,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const RodinHeader(
           title: 'Settings',
           subtitle: 'Service controls, theme, and customization',
-          large: true,
+          large: false,
         ),
         const SizedBox(height: 10),
 
@@ -1833,6 +1834,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Container(
                     width: 8,
@@ -5161,9 +5163,8 @@ class SupportScreen extends StatelessWidget {
                           spacing: 5,
                           runSpacing: 4,
                           children: <Widget>[
-                            StatusPill(
-                              label: 'v1.18.4',
-                              accent: colors.primary,
+                            const RodinVersionSecret(
+                              version: 'v$rodinVersionName',
                             ),
                             const StatusPill(
                               label: 'Native Service',
@@ -5178,6 +5179,54 @@ class SupportScreen extends StatelessWidget {
                               accent: Color(0xFF41C98A),
                             ),
                           ],
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: <Widget>[
+                            Icon(
+                              Icons.auto_awesome_rounded,
+                              size: 14,
+                              color: colors.primary,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text.rich(
+                                TextSpan(
+                                  children: <InlineSpan>[
+                                    TextSpan(
+                                      text: 'Codename · ',
+                                      style: TextStyle(
+                                        color: colors.onSurfaceVariant,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    TextSpan(
+                                      text: rodinReleaseCodename,
+                                      style: TextStyle(
+                                        color: colors.primary,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Psst… try four taps on the version.',
+                          style: TextStyle(
+                            fontSize: 10,
+                            height: 1.4,
+                            color: colors.onSurfaceVariant.withValues(
+                              alpha: 0.7,
+                            ),
+                          ),
                         ),
                       ],
                     ),
