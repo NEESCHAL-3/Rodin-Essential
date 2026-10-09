@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 mod bypass_policy;
 mod service_control;
+mod subsystem_clocks;
 mod system_colors;
 mod touch_resampler;
 
@@ -4885,6 +4886,7 @@ pub fn start_background_services() {
         std::thread::spawn(loopback_ipc_loop);
     }
     let _ = persisted_state();
+    subsystem_clocks::start();
     // The v1.18.0 1000 Hz profile waits for this worker to attach to the
     // TouchFeature event stream, so it must be ready before state restoration.
     touch_resampler::start_background();
@@ -6441,6 +6443,16 @@ fn transition_service(cmd: &str) -> Result<(), String> {
 
 pub fn handle_command(line: &str) -> String {
     let cmd = line.trim();
+    if subsystem_clocks::is_command(cmd) {
+        let _gate = match service_control::GATE.write() {
+            Ok(gate) => gate,
+            Err(_) => return "ERR service transition lock poisoned".into(),
+        };
+        return match subsystem_clocks::command(cmd) {
+            Ok(value) => format!("OK {value}"),
+            Err(error) => format!("ERR {error}"),
+        };
+    }
     if cmd == "SET service.enabled 0"
         || cmd == "SET service.enabled 1"
         || cmd == "ACTION service.reset"
