@@ -93,11 +93,21 @@ if grep -Eq 'allow[[:space:]]+(appdomain|untrusted_app)[[:space:]]+rodin_daemon'
     exit 1
 fi
 
-if grep -Eq '(^|[[:space:]])permissive[[:space:]]+rodin_daemon|sysfs_batteryinfo|allow[[:space:]]+rodin_daemon[[:space:]]+sysfs:file|ctl_(start|stop)_prop' \
+if grep -Eq '(^|[[:space:]])permissive[[:space:]]+rodin_daemon|allow[[:space:]]+rodin_daemon[[:space:]]+sysfs:file|ctl_(start|stop)_prop' \
     "$RODIN_AOSP"/sepolicy/{product/private,product/public,vendor}/*; then
     echo "AOSP policy contains an unsafe or obsolete grant" >&2
     exit 1
 fi
+
+# Traversal is required on the reported vendor base; broader parent access is not.
+grep -Fxq 'allow rodin_daemon sysfs_batteryinfo:dir search;' "$RODIN_VENDOR_POLICY"
+if grep '^[[:space:]]*allow .*sysfs_batteryinfo' "$RODIN_VENDOR_POLICY" \
+    | grep -Fvx 'allow rodin_daemon sysfs_batteryinfo:dir search;'; then
+    echo "Battery parent access must remain directory-search only" >&2
+    exit 1
+fi
+grep -Fxq 'allow rodin_daemon sysfs_battery_supply:dir search;' "$RODIN_VENDOR_POLICY"
+grep -Fxq 'allow rodin_daemon sysfs_usb_supply:dir search;' "$RODIN_VENDOR_POLICY"
 
 # Installed-app discovery now needs lookup, not package mutation privileges.
 grep -Fxq 'allow rodin_daemon package_service:service_manager find;' "$RODIN_PRODUCT_PRIVATE/rodin_daemon.te"

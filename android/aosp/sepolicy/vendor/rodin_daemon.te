@@ -13,6 +13,11 @@ allow rodin_daemon sysfs_ged:dir search;
 allow rodin_daemon sysfs_ged:file rw_file_perms;
 allow rodin_daemon sysfs_mali_power_policy:file rw_file_perms;
 allow rodin_daemon sysfs_therm:file rw_file_perms;
+# Battery/USB class links resolve through battery-manager/power_supply.
+# Traverse the parent only; do not grant access to batteryinfo files.
+allow rodin_daemon sysfs_batteryinfo:dir search;
+allow rodin_daemon sysfs_battery_supply:dir search;
+allow rodin_daemon sysfs_usb_supply:dir search;
 allow rodin_daemon sysfs_usb_supply:file rw_file_perms;
 allow rodin_daemon sysfs_battery_supply:file rw_file_perms;
 allow rodin_daemon sysfs_zram:file rw_file_perms;
@@ -39,6 +44,14 @@ allow rodin_daemon sysfs_rodin_subsystem:dir r_dir_perms;
 allow rodin_daemon sysfs_rodin_subsystem:file r_file_perms;
 # Only supported devfreq floor requests are writable, not force/voltage nodes.
 allow rodin_daemon sysfs_rodin_subsystem_floor:file rw_file_perms;
+# Existing RAM devfreq metadata label must not be replaced or duplicated.
+allow rodin_daemon sysfs_dvfsrc_devfreq:dir r_dir_perms;
+allow rodin_daemon sysfs_dvfsrc_devfreq:file r_file_perms;
+# Preserve OEM PowerHAL access on the newly labeled request files/UFS subtree.
+# These grants belong to the existing controller, not to the Rodin app.
+allow mtk_hal_power sysfs_rodin_subsystem:dir r_dir_perms;
+allow mtk_hal_power sysfs_rodin_subsystem:file rw_file_perms;
+allow mtk_hal_power sysfs_rodin_subsystem_floor:file rw_file_perms;
 
 allow rodin_daemon sysfs:dir search;
 allow rodin_daemon sysfs_rodin_mali_devfreq:dir r_dir_perms;

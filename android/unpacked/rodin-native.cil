@@ -85,6 +85,9 @@
 
 ; Hardware nodes. No generic sysfs file write permission.
 (allow rodin_daemon sysfs (dir (search)))
+; Battery class links need parent traversal before leaf permissions apply.
+; No sysfs_batteryinfo file access is granted.
+(allow rodin_daemon sysfs_batteryinfo (dir (search)))
 (allow rodin_daemon sysfs_devices_system_cpu (dir (search getattr open read)))
 (allow rodin_daemon sysfs_devices_system_cpu (file (read write getattr open ioctl lock map)))
 (allow rodin_daemon sysfs_devices_block (dir (search getattr open read)))
@@ -130,7 +133,12 @@
 (allow rodin_daemon sysfs_rodin_subsystem (dir (search getattr open read)))
 (allow rodin_daemon sysfs_rodin_subsystem (file (read getattr open)))
 (allow rodin_daemon sysfs_rodin_subsystem_floor (file (read write getattr open)))
-(genfscon sysfs "/devices/platform/soc/1c00f000.dvfsrc/mtk-dvfsrc-devfreq/devfreq/mtk-dvfsrc-devfreq" (u object_r sysfs_rodin_subsystem ((s0) (s0))))
+; Preserve the target ROM's RAM parent label and existing controller access.
+(allow rodin_daemon sysfs_dvfsrc_devfreq (dir (search getattr open read)))
+(allow rodin_daemon sysfs_dvfsrc_devfreq (file (read getattr open)))
+(allow mtk_hal_power sysfs_rodin_subsystem (dir (ioctl read getattr lock open watch watch_reads search)))
+(allow mtk_hal_power sysfs_rodin_subsystem (file (ioctl read write getattr lock append map open watch watch_reads)))
+(allow mtk_hal_power sysfs_rodin_subsystem_floor (file (ioctl read write getattr lock append map open watch watch_reads)))
 (genfscon sysfs "/devices/platform/soc/1c00f000.dvfsrc/mtk-dvfsrc-devfreq/devfreq/mtk-dvfsrc-devfreq/min_freq" (u object_r sysfs_rodin_subsystem_floor ((s0) (s0))))
 (genfscon sysfs "/devices/platform/soc/1c00f000.dvfsrc/mtk-dvfsrc-devfreq/devfreq/mtk-dvfsrc-devfreq/max_freq" (u object_r sysfs_rodin_subsystem_floor ((s0) (s0))))
 (genfscon sysfs "/devices/platform/soc/112b0000.ufshci/devfreq/112b0000.ufshci" (u object_r sysfs_rodin_subsystem ((s0) (s0))))
