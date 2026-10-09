@@ -6751,14 +6751,46 @@ fn serve_authenticated_client<S: Read + Write>(mut stream: S, peer: u32, transpo
     }
     record_app_client(peer, transport);
 
-    let mut buf = [0u8; 4096];
-    let Ok(n) = stream.read(&mut buf) else {
-        return;
-    };
-    if n == 0 {
+    // New profile RPC uses a bounded length frame. JSON must never be parsed
+    // from one arbitrary Unix/TCP packet; legacy commands remain compatible.
+    let mut first = [0u8; 1];
+    if stream.read_exact(&mut first).is_err() {
         return;
     }
-    let req = String::from_utf8_lossy(&buf[..n]);
+    let bytes = if first[0] == b'@' {
+        let mut header = Vec::new();
+        loop {
+            let mut byte = [0u8; 1];
+            if header.len() > 8 || stream.read_exact(&mut byte).is_err() {
+                return;
+            }
+            if byte[0] == b'\n' {
+                break;
+            }
+            header.push(byte[0]);
+        }
+        let Some(len) = std::str::from_utf8(&header)
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|v| *v > 0 && *v <= 4096)
+        else {
+            return;
+        };
+        let mut body = vec![0u8; len];
+        if stream.read_exact(&mut body).is_err() {
+            return;
+        }
+        body
+    } else {
+        let mut buf = [0u8; 4095];
+        let Ok(n) = stream.read(&mut buf) else {
+            return;
+        };
+        let mut body = vec![first[0]];
+        body.extend_from_slice(&buf[..n]);
+        body
+    };
+    let req = String::from_utf8_lossy(&bytes);
     let response = handle_command(&req);
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.write_all(b"\n");

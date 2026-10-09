@@ -469,6 +469,83 @@ fn request(command: &str) -> Result<String, String> {
     }
 }
 
+/// Bounded framed exchange used by the async Per-App Controls UI only.
+/// Ordinary telemetry keeps its existing lightweight transport/cache.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rodin_backend_app_controls_exchange(
+    input: *const u8,
+    len: i32,
+    output: *mut u8,
+    capacity: i32,
+) -> i32 {
+    if input.is_null()
+        || output.is_null()
+        || !(1..=4096).contains(&len)
+        || !(1..=1_048_576).contains(&capacity)
+    {
+        return -1;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(input, len as usize) };
+    let Ok(command) = std::str::from_utf8(bytes) else {
+        return -1;
+    };
+    if !(command == "GET app.controls"
+        || command == "GET app.capabilities"
+        || command == "GET app.list"
+        || command.starts_with("SET app.profile ")
+        || command.starts_with("SET app.enabled ")
+        || command.starts_with("ACTION app.reset ")
+        || command == "ACTION app.reset_all"
+        || command == "GET subsystem.clocks"
+        || command == "ACTION subsystem.clocks.reset"
+        || command == "ACTION subsystem.clocks.trial memory"
+        || command == "ACTION subsystem.clocks.oem memory"
+        || command == "ACTION subsystem.clocks.oem storage"
+        || command.starts_with("ACTION subsystem.clocks.level memory ")
+        || command.starts_with("ACTION subsystem.clocks.level storage ")
+        || command.starts_with("ACTION subsystem.clocks.range memory ")
+        || command.starts_with("ACTION subsystem.clocks.range storage ")
+        || command == "ACTION subsystem.clocks.trial storage")
+    {
+        return -1;
+    }
+    let exchange = (|| -> Result<serde_json::Value, String> {
+        let mut stream = connect_daemon()?;
+        stream
+            .set_response_timeout(Duration::from_secs(20))
+            .map_err(|e| e.to_string())?;
+        stream
+            .write_all(format!("@{}\n{}", command.len(), command).as_bytes())
+            .map_err(|e| e.to_string())?;
+        stream.flush().map_err(|e| e.to_string())?;
+        let mut response = String::new();
+        stream
+            .take(786_433)
+            .read_to_string(&mut response)
+            .map_err(|e| e.to_string())?;
+        if response.len() > 786_432 {
+            return Err("profile reply too large".into());
+        }
+        let body = response
+            .trim()
+            .strip_prefix("OK ")
+            .ok_or_else(|| response.trim().to_owned())?;
+        serde_json::from_str(body).map_err(|e| e.to_string())
+    })();
+    let reply = match exchange {
+        Ok(data) => serde_json::json!({"ok":true,"data":data}),
+        Err(error) => serde_json::json!({"ok":false,"error":error}),
+    }
+    .to_string();
+    if reply.len() > capacity as usize {
+        return -2;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(reply.as_ptr(), output, reply.len());
+    }
+    reply.len() as i32
+}
+
 fn parse_i32(value: Option<&String>) -> i32 {
     value.and_then(|v| v.parse::<i32>().ok()).unwrap_or(-1)
 }
