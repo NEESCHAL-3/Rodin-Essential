@@ -9,6 +9,7 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
 import 'release_identity.dart';
 import 'page_motion.dart';
+import 'touch_light.dart';
 import 'motion_diagnostics.dart';
 
 import 'backend/rodin_backend.dart';
@@ -16092,11 +16093,12 @@ class RodinInteractionSettings {
 
   static double get pageScale => _mix(0.985, 0.992);
 
-  static SpringDescription get interactionSpring => SpringDescription(
-    mass: 1,
-    stiffness: _mix(430, 560),
-    damping: _mix(38, 42),
-  );
+  static SpringDescription get interactionSpring =>
+      SpringDescription.withDampingRatio(
+        mass: 0.8,
+        stiffness: _mix(430, 560),
+        ratio: 0.78,
+      );
 
   static Duration motionDuration(int baseMilliseconds) {
     final double speed = motionSpeed.clamp(0.75, 1.35).toDouble();
@@ -16197,12 +16199,14 @@ class PressScale extends StatefulWidget {
     required this.child,
     this.onTap,
     this.enableHaptics = true,
+    this.enableLight = true,
     super.key,
   });
 
   final Widget child;
   final VoidCallback? onTap;
   final bool enableHaptics;
+  final bool enableLight;
 
   @override
   State<PressScale> createState() => _PressScaleState();
@@ -16210,27 +16214,50 @@ class PressScale extends StatefulWidget {
 
 class _PressScaleState extends State<PressScale>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _depth = AnimationController.unbounded(
-    vsync: this,
-    value: 0,
-  );
+  Offset _pressPoint = Offset.zero;
+  final GlobalKey<RodinTouchLightState> _lightKey =
+      GlobalKey<RodinTouchLightState>();
+  late final AnimationController _depth;
+  @override
+  void initState() {
+    super.initState();
+    _depth = AnimationController.unbounded(vsync: this, value: 0);
+  }
 
-  void _press() {
-    _depth.animateTo(
-      1,
-      duration: RodinInteractionSettings.motionDuration(74),
-      curve: const Cubic(0.20, 0.00, 0.00, 1.00),
+  void _press(TapDownDetails details) {
+    if (MediaQuery.disableAnimationsOf(context)) return;
+    final size = context.size;
+    if (size != null && size.width > 0 && size.height > 0) {
+      setState(
+        () => _pressPoint = Offset(
+          (details.localPosition.dx / size.width * 2 - 1).clamp(-1.0, 1.0),
+          (details.localPosition.dy / size.height * 2 - 1).clamp(-1.0, 1.0),
+        ),
+      );
+    }
+    _depth.animateWith(
+      SpringSimulation(
+        RodinInteractionSettings.interactionSpring,
+        _depth.value,
+        1,
+        _depth.velocity.clamp(-4.0, 4.0) + 5,
+      ),
     );
   }
 
   void _release() {
+    _lightKey.currentState?.cancel();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _depth.value = 0;
+      return;
+    }
     final double start = _depth.value;
     _depth.animateWith(
       SpringSimulation(
         RodinInteractionSettings.interactionSpring,
         start,
         0,
-        -0.35,
+        _depth.velocity.clamp(-4.0, 4.0),
       ),
     );
   }
@@ -16249,7 +16276,7 @@ class _PressScaleState extends State<PressScale>
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => _press(),
+      onTapDown: _press,
       onTapCancel: _release,
       onTapUp: (_) {
         _release();
@@ -16258,9 +16285,19 @@ class _PressScaleState extends State<PressScale>
       },
       child: AnimatedBuilder(
         animation: _depth,
-        child: widget.child,
+        child: widget.enableLight
+            ? RodinTouchLight(
+                key: _lightKey,
+                enabled: widget.enableLight,
+                accent: RodinAppearanceScope.of(context).activeAccent,
+                radius: RodinAppearanceScope.of(context).cardRadius,
+                child: widget.child,
+              )
+            : widget.child,
         builder: (BuildContext context, Widget? child) {
-          final double depth = _depth.value.clamp(-0.08, 1.04).toDouble();
+          final double depth = MediaQuery.disableAnimationsOf(context)
+              ? 0
+              : _depth.value.clamp(-0.08, 1.04).toDouble();
           final double scale = ui.lerpDouble(
             1,
             RodinInteractionSettings.pressScale,
@@ -16277,7 +16314,14 @@ class _PressScaleState extends State<PressScale>
 
           return Transform.scale(
             scale: scale,
-            child: Opacity(opacity: opacity, child: child),
+            child: Transform(
+              alignment: Alignment.center,
+              transform: Matrix4.identity()
+                ..setEntry(3, 2, 0.001)
+                ..rotateX(-_pressPoint.dy * depth * 0.006)
+                ..rotateY(_pressPoint.dx * depth * 0.006),
+              child: Opacity(opacity: opacity, child: child),
+            ),
           );
         },
       ),
