@@ -5,11 +5,13 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart' show Drag;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
 import 'release_identity.dart';
 import 'page_motion.dart';
+import 'root_pager.dart';
 import 'touch_light.dart';
 import 'motion_diagnostics.dart';
 
@@ -290,6 +292,8 @@ class _RodinShellState extends State<RodinShell>
   ];
 
   final PageController _rootController = PageController(initialPage: 0);
+  final GlobalKey<RodinRootPagerState> _rootPagerKey =
+      GlobalKey<RodinRootPagerState>();
   final ValueNotifier<RodinAppearanceConfig> _appearance =
       ValueNotifier<RodinAppearanceConfig>(
         const RodinAppearanceConfig.defaults(),
@@ -301,6 +305,7 @@ class _RodinShellState extends State<RodinShell>
   bool _rootSwipeLocked = false;
   bool _rootNavAnimating = false;
   RodinScreen? _rootNavTarget;
+  int _rootNavRevision = 0;
   int _bypassFocusRevision = 0;
   late final VoidCallback _interactionRevisionListener;
   Timer? _nativeBackPoll;
@@ -530,6 +535,10 @@ class _RodinShellState extends State<RodinShell>
     }
 
     final int target = _rootIndex(screen);
+    final revision = ++_rootNavRevision;
+    _rootPagerKey.currentState?.prepareJump(target);
+    RodinMotionDiagnostics.begin(false, label: 'tab-${screen.name}');
+    RodinMotionDiagnostics.end();
 
     setState(() {
       _screen = screen;
@@ -539,16 +548,22 @@ class _RodinShellState extends State<RodinShell>
       _rootNavTarget = screen;
     });
 
-    if (_rootController.hasClients) {
+    if (_rootController.hasClients && MediaQuery.disableAnimationsOf(context)) {
+      _rootController.jumpToPage(target);
+      _rootPagerKey.currentState?.finishJump();
+      _rootNavAnimating = false;
+      _rootNavTarget = null;
+    } else if (_rootController.hasClients) {
       unawaited(
         _rootController
             .animateToPage(
               target,
-              duration: RodinInteractionSettings.motionDuration(320),
-              curve: RodinInteractionSettings.transitionCurve,
+              duration: RodinInteractionSettings.motionDuration(260),
+              curve: Curves.easeOutCubic,
             )
             .whenComplete(() {
-              if (!mounted || _rootNavTarget != screen) return;
+              if (!mounted || _rootNavRevision != revision) return;
+              _rootPagerKey.currentState?.finishJump();
               setState(() {
                 _screen = screen;
                 _rootNavAnimating = false;
@@ -561,6 +576,28 @@ class _RodinShellState extends State<RodinShell>
       _rootNavTarget = null;
     }
 
+    _syncNativeBackInterception();
+  }
+
+  void _interruptRootTap() {
+    // Dock/page dragging takes ownership; a completed old A→B→A future must
+    // never clear a newer transition merely because its target matches again.
+    ++_rootNavRevision;
+    if (!_rootNavAnimating) return;
+    final visible =
+        _rootPagerKey.currentState?.visibleIndex ??
+        _rootController.page?.round() ??
+        _rootIndex(_visualRoot());
+    _rootNavAnimating = false;
+    _rootNavTarget = null;
+    _rootPagerKey.currentState?.finishJump();
+    _rootController.jumpToPage(visible);
+    setState(() {
+      if (_screen.isRoot) {
+        _screen = _rootOrder[visible];
+        _detailBackTarget = _screen;
+      }
+    });
     _syncNativeBackInterception();
   }
 
@@ -731,14 +768,35 @@ class _RodinShellState extends State<RodinShell>
     }
   }
 
+  // Keep destination widgets stable while detail pages enter and leave.
+  // Appearance/telemetry still update through their inherited scopes/streams.
+  late final List<Widget> _rootPages = _rootOrder
+      .map(
+        (RodinScreen screen) => RepaintBoundary(
+          child: Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+              ValueListenableBuilder<RodinAppearanceConfig>(
+                valueListenable: _appearance,
+                builder: (_, config, _) =>
+                    _RodinBackgroundLayer(config: config),
+              ),
+              _rootPage(screen),
+            ],
+          ),
+        ),
+      )
+      .toList(growable: false);
+
   Widget _rootPager() {
-    return PageView(
+    return RodinRootPager(
+      key: _rootPagerKey,
       controller: _rootController,
-      physics: (_rootSwipeLocked || _rootNavAnimating)
-          ? const NeverScrollableScrollPhysics()
-          : const PageScrollPhysics(parent: BouncingScrollPhysics()),
+      physics: const PageScrollPhysics(parent: RodinScrollPhysics()),
+      swipeEnabled: !_rootSwipeLocked,
+      onDragStart: _interruptRootTap,
       onPageChanged: _onRootPageChanged,
-      children: _rootOrder.map(_rootPage).toList(growable: false),
+      children: _rootPages,
     );
   }
 
@@ -909,6 +967,7 @@ class _RodinShellState extends State<RodinShell>
                           controller: _rootController,
                           currentRoot: navRoot,
                           onSelect: _selectRoot,
+                          onDragStart: _interruptRootTap,
                         ),
                       ),
                     ],
@@ -16129,12 +16188,14 @@ class RodinBottomBar extends StatefulWidget {
     required this.controller,
     required this.currentRoot,
     required this.onSelect,
+    this.onDragStart,
     super.key,
   });
 
   final PageController controller;
   final RodinScreen currentRoot;
   final ValueChanged<RodinScreen> onSelect;
+  final VoidCallback? onDragStart;
 
   @override
   State<RodinBottomBar> createState() => _RodinBottomBarState();
@@ -16148,6 +16209,7 @@ class _RodinBottomBarState extends State<RodinBottomBar>
   );
 
   double _dragPage = 0;
+  Drag? _dockDrag;
   int? _lastDragIndex;
   bool _dragging = false;
 
@@ -16192,12 +16254,20 @@ class _RodinBottomBarState extends State<RodinBottomBar>
   }
 
   void _beginDrag(double dx, double width) {
+    widget.onDragStart?.call();
+    if (!widget.controller.hasClients) return;
     _dragging = true;
     _lastDragIndex = null;
     _elasticity
       ..stop()
       ..value = 0;
     RodinHaptics.segment();
+    // Keep one real drag activity alive until release. jumpTo() starts a
+    // ballistic page snap after EVERY update, fighting a stationary finger.
+    _dockDrag = widget.controller.position.drag(
+      DragStartDetails(localPosition: Offset(dx, 0)),
+      () => _dockDrag = null,
+    );
     _updateDrag(dx, width, 0);
   }
 
@@ -16215,11 +16285,27 @@ class _RodinBottomBarState extends State<RodinBottomBar>
 
     _dragPage = page;
     final double targetElasticity = (delta / 13).clamp(-1.0, 1.0).toDouble();
-    _elasticity.value = ui
-        .lerpDouble(_elasticity.value, targetElasticity, 0.68)!
-        .clamp(-1.0, 1.0)
-        .toDouble();
-    position.jumpTo(pixels);
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _elasticity.value = 0;
+    } else {
+      // Ease the decorative stretch, never the finger-owned page position.
+      _elasticity.animateTo(
+        targetElasticity,
+        duration: const Duration(milliseconds: 90),
+        curve: Curves.easeOutCubic,
+      );
+    }
+    final reversed =
+        position.axisDirection == AxisDirection.left ||
+        position.axisDirection == AxisDirection.up;
+    final offset = (position.pixels - pixels) * (reversed ? -1 : 1);
+    _dockDrag?.update(
+      DragUpdateDetails(
+        delta: Offset(offset, 0),
+        primaryDelta: offset,
+        globalPosition: Offset(dx, 0),
+      ),
+    );
 
     if (_lastDragIndex != index) {
       if (_lastDragIndex != null) {
@@ -16229,28 +16315,38 @@ class _RodinBottomBarState extends State<RodinBottomBar>
     }
   }
 
-  void _settleDrag() {
+  void _settleDrag([double velocity = 0, double width = 1]) {
     if (!_dragging) {
       return;
     }
 
-    final int target = _dragPage.round().clamp(0, _screens.length - 1);
+    final double projected =
+        _dragPage +
+        (velocity / (width / _screens.length) * 0.06).clamp(-0.5, 0.5);
+    final int target = projected.round().clamp(0, _screens.length - 1);
     _dragging = false;
     _lastDragIndex = null;
-    _elasticity.animateWith(
-      SpringSimulation(
-        const SpringDescription(mass: 1, stiffness: 360, damping: 26),
-        _elasticity.value,
-        0,
-        -_elasticity.value * 0.8,
-      ),
-    );
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _elasticity.value = 0;
+    } else {
+      _elasticity.animateWith(
+        SpringSimulation(
+          const SpringDescription(mass: 1, stiffness: 360, damping: 26),
+          _elasticity.value,
+          0,
+          -_elasticity.value * 0.8,
+        ),
+      );
+    }
     RodinHaptics.confirm();
+    // onSelect replaces the drag activity with exactly one target animation;
+    // cancelling it first would start a second, competing ballistic snap.
     widget.onSelect(_screens[target]);
   }
 
   @override
   void dispose() {
+    _dockDrag?.cancel();
     _elasticity.dispose();
     super.dispose();
   }
@@ -16268,12 +16364,8 @@ class _RodinBottomBarState extends State<RodinBottomBar>
         10 + MediaQuery.viewPaddingOf(context).left,
         0,
         10 + MediaQuery.viewPaddingOf(context).right,
-        // The zero-DEX native embedder currently reports no system insets.
-        // Reserve a small gesture-strip clearance in that case as well.
-        (MediaQuery.viewPaddingOf(context).bottom > 0
-                ? MediaQuery.viewPaddingOf(context).bottom
-                : 16) +
-            12,
+        RodinBottomLayout.navigationClearance(context) +
+            RodinBottomLayout.dockGap,
       ),
       child: RepaintBoundary(
         child: Container(
@@ -16298,234 +16390,252 @@ class _RodinBottomBarState extends State<RodinBottomBar>
             borderRadius: BorderRadius.circular(22),
             child: BackdropFilter(
               filter: ui.ImageFilter.blur(
-                sigmaX: 22,
-                sigmaY: 22,
+                sigmaX: 12,
+                sigmaY: 12,
                 tileMode: TileMode.clamp,
               ),
-              child: Container(
-                height: 68,
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: <Color>[
-                      Colors.white.withValues(alpha: dark ? 0.13 : 0.80),
-                      colors.surface.withValues(alpha: dark ? 0.66 : 0.64),
-                      colors.surfaceContainerHighest.withValues(
-                        alpha: dark ? 0.50 : 0.42,
-                      ),
-                    ],
-                    stops: const <double>[0, 0.50, 1],
-                  ),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(
-                    color: dark
-                        ? Colors.white.withValues(alpha: 0.19)
-                        : Colors.white.withValues(alpha: 0.88),
-                    width: 0.9,
-                  ),
-                ),
-                foregroundDecoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border(
-                    top: BorderSide(
-                      color: Colors.white.withValues(alpha: dark ? 0.12 : 0.62),
-                      width: 0.7,
+              child: RodinTouchLight(
+                accent: _sectionColors[_selectedIndex()],
+                radius: 22,
+                child: Container(
+                  height: RodinBottomLayout.dockHeight,
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: <Color>[
+                        Colors.white.withValues(alpha: dark ? 0.13 : 0.80),
+                        colors.surface.withValues(alpha: dark ? 0.66 : 0.64),
+                        colors.surfaceContainerHighest.withValues(
+                          alpha: dark ? 0.50 : 0.42,
+                        ),
+                      ],
+                      stops: const <double>[0, 0.50, 1],
+                    ),
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(
+                      color: dark
+                          ? Colors.white.withValues(alpha: 0.19)
+                          : Colors.white.withValues(alpha: 0.88),
+                      width: 0.9,
                     ),
                   ),
-                ),
-                child: AnimatedBuilder(
-                  animation: Listenable.merge(<Listenable>[
-                    widget.controller,
-                    _elasticity,
-                  ]),
-                  builder: (BuildContext context, Widget? child) {
-                    double page = _selectedIndex().toDouble();
+                  foregroundDecoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border(
+                      top: BorderSide(
+                        color: Colors.white.withValues(
+                          alpha: dark ? 0.12 : 0.62,
+                        ),
+                        width: 0.7,
+                      ),
+                    ),
+                  ),
+                  child: AnimatedBuilder(
+                    animation: Listenable.merge(<Listenable>[
+                      widget.controller,
+                      _elasticity,
+                    ]),
+                    builder: (BuildContext context, Widget? child) {
+                      double page = _selectedIndex().toDouble();
 
-                    if (widget.controller.hasClients) {
-                      try {
-                        page = widget.controller.page ?? page;
-                      } catch (_) {}
-                    }
+                      if (widget.controller.hasClients) {
+                        try {
+                          page = widget.controller.page ?? page;
+                        } catch (_) {}
+                      }
 
-                    page = page.clamp(0.0, _screens.length - 1.0).toDouble();
-                    final int lower = page.floor().clamp(
-                      0,
-                      _screens.length - 1,
-                    );
-                    final int upper = page.ceil().clamp(0, _screens.length - 1);
-                    final Color indicatorColor = Color.lerp(
-                      _sectionColors[lower],
-                      _sectionColors[upper],
-                      page - lower,
-                    )!;
+                      page = page.clamp(0.0, _screens.length - 1.0).toDouble();
+                      final int lower = page.floor().clamp(
+                        0,
+                        _screens.length - 1,
+                      );
+                      final int upper = page.ceil().clamp(
+                        0,
+                        _screens.length - 1,
+                      );
+                      final Color indicatorColor = Color.lerp(
+                        _sectionColors[lower],
+                        _sectionColors[upper],
+                        page - lower,
+                      )!;
 
-                    return LayoutBuilder(
-                      builder:
-                          (BuildContext context, BoxConstraints constraints) {
-                            final double itemWidth =
-                                constraints.maxWidth / _screens.length;
+                      return LayoutBuilder(
+                        builder:
+                            (BuildContext context, BoxConstraints constraints) {
+                              final double itemWidth =
+                                  constraints.maxWidth / _screens.length;
 
-                            Widget navItem(int index) {
-                              final double rawFocus = (1 - (page - index).abs())
-                                  .clamp(0.0, 1.0);
-                              final double focus = RodinInteractionSettings
-                                  .transitionCurve
-                                  .transform(rawFocus);
-                              final Color itemColor = _sectionColors[index];
-                              final Color foreground = Color.lerp(
-                                colors.onSurfaceVariant.withValues(alpha: 0.72),
-                                itemColor,
-                                focus,
-                              )!;
-
-                              return Expanded(
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 2,
+                              Widget navItem(int index) {
+                                final double rawFocus =
+                                    (1 - (page - index).abs()).clamp(0.0, 1.0);
+                                final double focus = RodinInteractionSettings
+                                    .transitionCurve
+                                    .transform(rawFocus);
+                                final Color itemColor = _sectionColors[index];
+                                final Color foreground = Color.lerp(
+                                  colors.onSurfaceVariant.withValues(
+                                    alpha: 0.72,
                                   ),
-                                  child: PressScale(
-                                    onTap: () =>
-                                        widget.onSelect(_screens[index]),
-                                    child: SizedBox(
-                                      height: 56,
-                                      child: Center(
-                                        child: Transform.scale(
-                                          scale: 0.96 + (0.04 * focus),
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: <Widget>[
-                                              Icon(
-                                                _icons[index],
-                                                size: 21,
-                                                color: foreground,
-                                              ),
-                                              const SizedBox(height: 2),
-                                              Text(
-                                                _labels[index],
-                                                maxLines: 1,
-                                                softWrap: false,
-                                                overflow: TextOverflow.fade,
-                                                style: TextStyle(
-                                                  fontSize: 9.5,
-                                                  height: 1,
-                                                  fontWeight: focus > 0.5
-                                                      ? FontWeight.w800
-                                                      : FontWeight.w600,
-                                                  letterSpacing: -0.08,
+                                  itemColor,
+                                  focus,
+                                )!;
+
+                                return Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 2,
+                                    ),
+                                    child: PressScale(
+                                      enableLight: false,
+                                      onTap: () =>
+                                          widget.onSelect(_screens[index]),
+                                      child: SizedBox(
+                                        height: 56,
+                                        child: Center(
+                                          child: Transform.scale(
+                                            scale: 0.96 + (0.04 * focus),
+                                            child: Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: <Widget>[
+                                                Icon(
+                                                  _icons[index],
+                                                  size: 21,
                                                   color: foreground,
                                                 ),
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  _labels[index],
+                                                  maxLines: 1,
+                                                  softWrap: false,
+                                                  overflow: TextOverflow.fade,
+                                                  style: TextStyle(
+                                                    fontSize: 9.5,
+                                                    height: 1,
+                                                    fontWeight: focus > 0.5
+                                                        ? FontWeight.w800
+                                                        : FontWeight.w600,
+                                                    letterSpacing: -0.08,
+                                                    color: foreground,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
+
+                              return GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onHorizontalDragStart:
+                                    (DragStartDetails details) {
+                                      _beginDrag(
+                                        details.localPosition.dx,
+                                        constraints.maxWidth,
+                                      );
+                                    },
+                                onHorizontalDragUpdate:
+                                    (DragUpdateDetails details) {
+                                      _updateDrag(
+                                        details.localPosition.dx,
+                                        constraints.maxWidth,
+                                        details.delta.dx,
+                                      );
+                                    },
+                                onHorizontalDragEnd: (details) => _settleDrag(
+                                  details.primaryVelocity ?? 0,
+                                  constraints.maxWidth,
+                                ),
+                                onHorizontalDragCancel: _settleDrag,
+                                child: Stack(
+                                  clipBehavior: Clip.none,
+                                  children: <Widget>[
+                                    Positioned(
+                                      left:
+                                          (itemWidth * page) +
+                                          3 -
+                                          (_elasticity.value < 0
+                                              ? _elasticity.value.abs() * 11
+                                              : 0),
+                                      top: 1,
+                                      width:
+                                          itemWidth -
+                                          6 +
+                                          (_elasticity.value.abs() * 11),
+                                      height: 54,
+                                      child: Transform.scale(
+                                        scaleY:
+                                            1 -
+                                            (_elasticity.value.abs() * 0.028),
+                                        child: DecoratedBox(
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              begin: Alignment.topLeft,
+                                              end: Alignment.bottomRight,
+                                              colors: <Color>[
+                                                Colors.white.withValues(
+                                                  alpha: dark ? 0.13 : 0.48,
+                                                ),
+                                                indicatorColor.withValues(
+                                                  alpha: dark ? 0.14 : 0.10,
+                                                ),
+                                                colors.surface.withValues(
+                                                  alpha: dark ? 0.28 : 0.34,
+                                                ),
+                                              ],
+                                              stops: const <double>[0, 0.52, 1],
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              17 -
+                                                  (_elasticity.value.abs() *
+                                                      1.0),
+                                            ),
+                                            border: Border.all(
+                                              color: Color.lerp(
+                                                Colors.white.withValues(
+                                                  alpha: dark ? 0.14 : 0.52,
+                                                ),
+                                                indicatorColor.withValues(
+                                                  alpha: dark ? 0.24 : 0.20,
+                                                ),
+                                                0.45,
+                                              )!,
+                                              width: 0.7,
+                                            ),
+                                            boxShadow: <BoxShadow>[
+                                              BoxShadow(
+                                                color: indicatorColor
+                                                    .withValues(
+                                                      alpha: dark ? 0.10 : 0.07,
+                                                    ),
+                                                blurRadius: 12,
+                                                spreadRadius: -5,
+                                                offset: const Offset(0, 4),
                                               ),
                                             ],
                                           ),
                                         ),
                                       ),
                                     ),
-                                  ),
+                                    Row(
+                                      children: List<Widget>.generate(
+                                        _screens.length,
+                                        navItem,
+                                        growable: false,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               );
-                            }
-
-                            return GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onHorizontalDragStart:
-                                  (DragStartDetails details) {
-                                    _beginDrag(
-                                      details.localPosition.dx,
-                                      constraints.maxWidth,
-                                    );
-                                  },
-                              onHorizontalDragUpdate:
-                                  (DragUpdateDetails details) {
-                                    _updateDrag(
-                                      details.localPosition.dx,
-                                      constraints.maxWidth,
-                                      details.delta.dx,
-                                    );
-                                  },
-                              onHorizontalDragEnd: (_) => _settleDrag(),
-                              onHorizontalDragCancel: _settleDrag,
-                              child: Stack(
-                                clipBehavior: Clip.none,
-                                children: <Widget>[
-                                  Positioned(
-                                    left:
-                                        (itemWidth * page) +
-                                        3 -
-                                        (_elasticity.value < 0
-                                            ? _elasticity.value.abs() * 11
-                                            : 0),
-                                    top: 1,
-                                    width:
-                                        itemWidth -
-                                        6 +
-                                        (_elasticity.value.abs() * 11),
-                                    height: 54,
-                                    child: Transform.scale(
-                                      scaleY:
-                                          1 - (_elasticity.value.abs() * 0.028),
-                                      child: DecoratedBox(
-                                        decoration: BoxDecoration(
-                                          gradient: LinearGradient(
-                                            begin: Alignment.topLeft,
-                                            end: Alignment.bottomRight,
-                                            colors: <Color>[
-                                              Colors.white.withValues(
-                                                alpha: dark ? 0.13 : 0.48,
-                                              ),
-                                              indicatorColor.withValues(
-                                                alpha: dark ? 0.14 : 0.10,
-                                              ),
-                                              colors.surface.withValues(
-                                                alpha: dark ? 0.28 : 0.34,
-                                              ),
-                                            ],
-                                            stops: const <double>[0, 0.52, 1],
-                                          ),
-                                          borderRadius: BorderRadius.circular(
-                                            17 -
-                                                (_elasticity.value.abs() * 1.0),
-                                          ),
-                                          border: Border.all(
-                                            color: Color.lerp(
-                                              Colors.white.withValues(
-                                                alpha: dark ? 0.14 : 0.52,
-                                              ),
-                                              indicatorColor.withValues(
-                                                alpha: dark ? 0.24 : 0.20,
-                                              ),
-                                              0.45,
-                                            )!,
-                                            width: 0.7,
-                                          ),
-                                          boxShadow: <BoxShadow>[
-                                            BoxShadow(
-                                              color: indicatorColor.withValues(
-                                                alpha: dark ? 0.10 : 0.07,
-                                              ),
-                                              blurRadius: 12,
-                                              spreadRadius: -5,
-                                              offset: const Offset(0, 4),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  Row(
-                                    children: List<Widget>.generate(
-                                      _screens.length,
-                                      navItem,
-                                      growable: false,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                    );
-                  },
+                            },
+                      );
+                    },
+                  ),
                 ),
               ),
             ),
