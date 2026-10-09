@@ -11,7 +11,7 @@ DAEMON_LIB="$ROOT/runtime/daemon-rust/src/lib.rs"
 
 SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
 PKG="io.github.neeschal.rodinessential"
-COMP="$PKG/android.app.NativeActivity"
+COMP="$PKG/.RodinActivity"
 
 STAMP="${RODIN_BUILD_STAMP:-$(date +%Y%m%d-%H%M%S)}"
 OUT="${RODIN_OUTPUT_DIR:-$ROOT/out/release/$STAMP}"
@@ -153,6 +153,8 @@ with ZipFile(apk, "a", compression=ZIP_STORED, allowZip64=True) as z:
         z.write(path, f"lib/arm64-v8a/{path.name}", compress_type=ZIP_STORED)
 PY
 
+ANDROID_SDK_ROOT="$SDK" bash "$ROOT/tools/compile-platform-bridge.sh" "$STAGE"
+(cd "$STAGE/platform-dex" && zip -0 "$UNALIGNED" classes.dex >/dev/null)
 "$ZIPALIGN" -P 16 -f 4 "$UNALIGNED" "$ALIGNED"
 
 KS_PASS="${RODIN_KEYSTORE_PASS:-android}"
@@ -202,14 +204,9 @@ cp -a "$ALIGNED" "$APK"
 echo "APK_SIGNATURE=PASS"
 
 echo
-echo "===== 6. VERIFY ZERO-DEX AND 16K ALIGNMENT ====="
+echo "===== 6. VERIFY PLATFORM BRIDGE AND 16K ALIGNMENT ====="
 unzip -Z1 "$APK" | sort > "$OUT/apk-files.txt"
-if grep -Eq '(^|/)classes([0-9]*)?\.dex$' "$OUT/apk-files.txt"; then
-    echo "ZERO_DEX=FAIL (DEX found)"
-    exit 1
-else
-    echo "ZERO_DEX=PASS"
-fi
+ANDROID_SDK_ROOT="$SDK" bash "$ROOT/tools/check-platform-dex.sh" "$APK"
 
 "$ZIPALIGN" -c -P 16 -v 4 "$APK" >/dev/null
 echo "16K_ZIPALIGN=PASS"

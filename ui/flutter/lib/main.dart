@@ -4984,7 +4984,7 @@ class SupportScreen extends StatelessWidget {
                               accent: Color(0xFF41C98A),
                             ),
                             StatusPill(
-                              label: 'Zero-DEX AOT',
+                              label: 'Native AOT',
                               accent: colors.secondary,
                             ),
                             const StatusPill(

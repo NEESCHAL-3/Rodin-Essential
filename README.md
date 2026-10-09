@@ -2,8 +2,11 @@
 
 Rodin Essential is a native hardware-control application for Xiaomi Rodin
 (POCO X7 Pro / Redmi Turbo 4) and its MediaTek Dimensity 8400-Ultra platform.
-It combines a zero-DEX Android `NativeActivity`, a Flutter AOT interface, a
-Rust host runtime, and a separately privileged Rust daemon.
+It combines an Android `NativeActivity`, a Flutter AOT interface, a Rust host
+runtime, and a separately privileged Rust daemon. The UI and hardware-control
+logic remain native/AOT. A small, framework-only DEX adapter provides the
+Quick Settings bypass tile and Android predictive Back callbacks; it contains
+no AndroidX, Compose or third-party managed libraries.
 
 The APK never runs as root, does not use the system UID, and does not request
 privileged Android permissions. Kernel and vendor controls are owned by the
@@ -157,7 +160,7 @@ RODIN_BUILD_ONLY=1 ./build-and-install.sh
 ```
 
 Output is written under `out/release/<timestamp>/`. The build verifies
-Flutter analysis, ARM64 AOT output, zero DEX, APK signing, 16 KB ZIP alignment,
+Flutter analysis, ARM64 AOT output, the restricted platform DEX adapter, APK signing, 16 KB ZIP alignment,
 16 KB ELF segment alignment, and a content stamp covering the packaged Flutter
 assets and ICU data. If no signing key is supplied, a stable development key is
 created once under the ignored `out/signing/` directory and reused by later
@@ -256,7 +259,8 @@ updated through its maintainer's OTA or original signing key.
 android/
   aosp/                 AOSP prebuilt, init, and SELinux integration template
   kernelsu-next/        KernelSU Next and Magisk module source
-  package/              Zero-DEX manifest and Android resources
+  package/              Manifest and Android resources
+  platform/             Minimal Android tile and Back callback adapters
 docs/                   Architecture, build, and ROM maintainer documentation
 runtime/
   daemon-rust/          Privileged hardware backend and control client

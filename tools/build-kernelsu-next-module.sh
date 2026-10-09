@@ -161,10 +161,7 @@ RODIN_EXPECTED_CERT_DIGEST="$(tr -d '[:space:]:' \
     exit 1
 }
 "$RODIN_ZIPALIGN" -c -P 16 -v 4 "$RODIN_STAGE/app/RodinEssential.apk" >/dev/null
-if unzip -Z1 "$RODIN_STAGE/app/RodinEssential.apk" | grep -Eq '(^|/)classes([0-9]*)?\.dex$'; then
-    echo "DEX is not allowed in the Rodin Essential APK" >&2
-    exit 1
-fi
+ANDROID_SDK_ROOT="$RODIN_SDK_ROOT" bash "$RODIN_PROJECT_ROOT/tools/check-platform-dex.sh" "$RODIN_STAGE/app/RodinEssential.apk"
 
 file "$RODIN_STAGE/bin/rodin_daemon" | grep -q 'ARM aarch64'
 file "$RODIN_STAGE/bin/rodin_ctl" | grep -q 'ARM aarch64'

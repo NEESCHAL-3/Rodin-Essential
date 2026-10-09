@@ -103,11 +103,7 @@ openssl x509 -in "$RODIN_DESTINATION/prebuilt/RodinEssential.x509.pem" \
     -noout -subject -issuer -dates -fingerprint -sha256 \
     >"$RODIN_DESTINATION/SIGNING-CERTIFICATE.txt"
 
-if unzip -Z1 "$RODIN_DESTINATION/prebuilt/RodinEssential.apk" \
-    | grep -Eq '(^|/)classes([0-9]*)?\.dex$'; then
-    echo "AOSP export contains DEX" >&2
-    exit 1
-fi
+ANDROID_SDK_ROOT="$RODIN_SDK_ROOT" bash "$RODIN_ROOT/tools/check-platform-dex.sh" "$RODIN_DESTINATION/prebuilt/RodinEssential.apk"
 
 file "$RODIN_DESTINATION/prebuilt/rodin_daemon" | grep -q 'ARM aarch64'
 file "$RODIN_DESTINATION/prebuilt/rodin_ctl" | grep -q 'ARM aarch64'

@@ -20,16 +20,16 @@
     <application
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:enableOnBackInvokedCallback="false"
+        android:enableOnBackInvokedCallback="true"
         android:allowBackup="false"
         android:debuggable="false"
         android:extractNativeLibs="false"
-        android:hasCode="false"
+        android:hasCode="true"
         android:label="Rodin Essential"
         android:supportsRtl="true">
 
         <activity
-            android:name="android.app.NativeActivity"
+            android:name=".RodinActivity"
             android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|uiMode|density|colorMode|assetsPaths"
             android:exported="true"
             android:launchMode="singleTask"
@@ -44,6 +44,19 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Tile long-press opens the actual bypass controls. -->
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
+        <service android:name=".BypassTileService" android:exported="true"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:label="Bypass charging" android:icon="@drawable/ic_bypass">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
+        </service>
     </application>
 </manifest>
