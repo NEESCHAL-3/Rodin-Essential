@@ -3048,18 +3048,18 @@ class HomeScreen extends StatelessWidget {
         const RodinHeader(
           title: 'Rodin Essential',
           subtitle: 'Precision you can feel.',
-          large: true,
+          large: false,
         ),
         const SizedBox(height: 10),
         _HomePulseHero(onOpen: onOpen),
         const SizedBox(height: 14),
-        const SectionLabel('Quick controls'),
-        const SizedBox(height: 8),
-        _HomeQuickActions(onOpen: onOpen),
-        const SizedBox(height: 14),
         const SectionLabel('Live hardware'),
         const SizedBox(height: 8),
         _LiveOverviewGrid(onOpen: onOpen),
+        const SizedBox(height: 14),
+        const SectionLabel('Quick controls'),
+        const SizedBox(height: 8),
+        _HomeQuickActions(onOpen: onOpen),
         const SizedBox(height: 14),
         _ControlCenterPortal(onTap: onHubs),
         const SizedBox(height: 14),
@@ -3131,10 +3131,7 @@ class _HomePulseHero extends StatelessWidget {
         final int liveGpuFreq = backend.extendedValue(46) >= 260
             ? backend.extendedValue(46)
             : 0;
-        final int maxGpuFreq = backend.extendedValue(48) >= 260
-            ? backend.extendedValue(48)
-            : 1300;
-        final String gpu = '${liveGpuFreq > 0 ? liveGpuFreq : maxGpuFreq} MHz';
+        final String gpu = liveGpuFreq > 0 ? '$liveGpuFreq MHz' : '—';
 
         final Widget hero = Stack(
           children: <Widget>[
@@ -3247,17 +3244,24 @@ class _HomePulseHero extends StatelessWidget {
                                 ),
                               ),
                               const SizedBox(width: 7),
-                              Text(
-                                'DEVICE PULSE',
-                                style: TextStyle(
-                                  fontSize: 9.4,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 1.05,
-                                  color: colors.onSurfaceVariant,
+                              Expanded(
+                                child: Text(
+                                  'DEVICE PULSE',
+                                  style: TextStyle(
+                                    fontSize: 9.4,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 1.05,
+                                    color: colors.onSurfaceVariant,
+                                  ),
                                 ),
                               ),
-                              const Spacer(),
-                              _HomeLiveBadge(snapshot: snapshot),
+                              const SizedBox(width: 8),
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 120,
+                                ),
+                                child: _HomeLiveBadge(snapshot: snapshot),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 11),
@@ -3270,8 +3274,6 @@ class _HomePulseHero extends StatelessWidget {
                                   children: <Widget>[
                                     Text(
                                       profile,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
                                         fontSize: 27,
                                         height: 1,
@@ -3282,8 +3284,6 @@ class _HomePulseHero extends StatelessWidget {
                                     const SizedBox(height: 6),
                                     Text(
                                       profileDescription,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
                                         fontSize: 11,
                                         height: 1.28,
@@ -3341,7 +3341,7 @@ class _HomePulseHero extends StatelessWidget {
                                   value: gpu,
                                   detail: liveGpuFreq > 0
                                       ? 'Live clock'
-                                      : 'Current target',
+                                      : 'Waiting for GPU',
                                   icon: Icons.sports_esports_rounded,
                                   accent: const Color(0xFFFF5252),
                                   onTap: () => onOpen(RodinScreen.maliGpu),
@@ -3390,6 +3390,87 @@ class _HomePulseHero extends StatelessWidget {
   }
 }
 
+class _HomeHeroMetric extends StatelessWidget {
+  const _HomeHeroMetric({
+    required this.label,
+    required this.value,
+    required this.detail,
+    required this.icon,
+    required this.accent,
+    required this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final String detail;
+  final IconData icon;
+  final Color accent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    return PressScale(
+      onTap: onTap,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 66),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+        decoration: BoxDecoration(
+          color: colors.surface.withValues(alpha: 0.52),
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(
+            color: colors.outline.withValues(alpha: 0.16),
+            width: 0.7,
+          ),
+        ),
+        child: Row(
+          children: <Widget>[
+            Icon(icon, size: 15, color: accent),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 8.5,
+                      height: 1.2,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.40,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    value,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      height: 1.2,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    detail,
+                    style: TextStyle(
+                      fontSize: 10,
+                      height: 1.2,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _HomeLiveBadge extends StatelessWidget {
   const _HomeLiveBadge({required this.snapshot});
 
@@ -3419,13 +3500,15 @@ class _HomeLiveBadge extends StatelessWidget {
             decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
           ),
           const SizedBox(width: 5),
-          Text(
-            snapshot.serviceStatusBadgeLabel,
-            style: TextStyle(
-              fontSize: 8.8,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.48,
-              color: accent,
+          Flexible(
+            child: Text(
+              snapshot.serviceStatusBadgeLabel,
+              style: TextStyle(
+                fontSize: 8.8,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.48,
+                color: accent,
+              ),
             ),
           ),
         ],
@@ -3533,111 +3616,48 @@ class _HomeCoreVisualizer extends StatelessWidget {
         borderRadius: BorderRadius.circular(13),
         border: Border.all(color: colors.outline.withValues(alpha: 0.17)),
       ),
-      child: Row(
-        children: <Widget>[
-          Text(
-            'CPU',
-            style: TextStyle(
-              fontSize: 8.6,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.72,
-              color: colors.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(width: 7),
-          Text(
-            snapshot.ready ? '$onlineCores / 8 online' : 'Waiting for system',
-            style: const TextStyle(fontSize: 10.3, fontWeight: FontWeight.w700),
-          ),
-          const Spacer(),
-          indicators,
-        ],
-      ),
-    );
-  }
-}
-
-class _HomeHeroMetric extends StatelessWidget {
-  const _HomeHeroMetric({
-    required this.label,
-    required this.value,
-    required this.detail,
-    required this.icon,
-    required this.accent,
-    required this.onTap,
-  });
-
-  final String label;
-  final String value;
-  final String detail;
-  final IconData icon;
-  final Color accent;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colors = Theme.of(context).colorScheme;
-
-    return PressScale(
-      onTap: onTap,
-      child: Container(
-        height: 60,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-        decoration: BoxDecoration(
-          color: colors.surface.withValues(alpha: 0.52),
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(
-            color: colors.outline.withValues(alpha: 0.16),
-            width: 0.7,
-          ),
-        ),
-        child: Row(
-          children: <Widget>[
-            Icon(icon, size: 15, color: accent),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    label,
-                    maxLines: 1,
-                    style: TextStyle(
-                      fontSize: 7.7,
-                      height: 1,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.40,
-                      color: colors.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 11.1,
-                      height: 1,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    detail,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 7.9,
-                      height: 1,
-                      color: colors.onSurfaceVariant,
-                    ),
-                  ),
-                ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final heading = Row(
+            children: <Widget>[
+              Text(
+                'CPU',
+                style: TextStyle(
+                  fontSize: 8.6,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.72,
+                  color: colors.onSurfaceVariant,
+                ),
               ),
-            ),
-          ],
-        ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  snapshot.ready
+                      ? '$onlineCores / 8 online'
+                      : 'Waiting for system',
+                  style: const TextStyle(
+                    fontSize: 10.3,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          );
+          if (constraints.maxWidth < 280 ||
+              MediaQuery.textScalerOf(context).scale(10) > 12) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [heading, const SizedBox(height: 8), indicators],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: heading),
+              indicators,
+            ],
+          );
+        },
       ),
     );
   }
@@ -3727,16 +3747,7 @@ class _HomeQuickAction extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
-            Container(
-              width: 31,
-              height: 31,
-              decoration: BoxDecoration(
-                color: accent.withValues(alpha: 0.11),
-                borderRadius: BorderRadius.circular(11),
-                border: Border.all(color: accent.withValues(alpha: 0.16)),
-              ),
-              child: Icon(icon, size: 17, color: accent),
-            ),
+            IconTile(icon: icon, accent: accent, size: 31),
             const SizedBox(width: 7),
             Flexible(
               child: Column(
@@ -3996,12 +4007,11 @@ class _LiveOverviewGrid extends StatelessWidget {
         final RodinBackend backend = RodinBackend.instance;
         final int onlineCores = _rodinOnlineCoreCount(snapshot);
 
-        final String battery = snapshot.batteryCapacity >= 0
-            ? '${snapshot.batteryCapacity}%'
-            : '—';
-        final String temperature = snapshot.batteryTempC == null
-            ? '—'
-            : '${snapshot.batteryTempC!.toStringAsFixed(1)}°C';
+        final gpuMhz = backend.extendedValue(46);
+        final gpuValue = snapshot.ready && gpuMhz >= 260 ? '$gpuMhz MHz' : '—';
+        final gpuSubtitle = snapshot.ready
+            ? 'Live graphics clock'
+            : 'Waiting for GPU';
 
         final String coreValue = snapshot.ready ? '$onlineCores / 8' : '—';
         final String coreSubtitle = backend.extendedValue(34) == 1
@@ -4012,7 +4022,7 @@ class _LiveOverviewGrid extends StatelessWidget {
           0 => 'Original PRO',
           1 => 'Vivid',
           2 => 'Saturated',
-          _ => 'OEM Control',
+          _ => 'OEM',
         };
 
         final String touch = _rodinTouchLabel(snapshot.touchState);
@@ -4046,12 +4056,12 @@ class _LiveOverviewGrid extends StatelessWidget {
                 children: <Widget>[
                   Expanded(
                     child: _OverviewCard(
-                      eyebrow: 'POWER',
-                      value: battery,
-                      subtitle: temperature,
-                      icon: Icons.bolt_rounded,
-                      accent: const Color(0xFF41C98A),
-                      onTap: () => onOpen(RodinScreen.charging),
+                      eyebrow: 'GPU',
+                      value: gpuValue,
+                      subtitle: gpuSubtitle,
+                      icon: Icons.sports_esports_rounded,
+                      accent: const Color(0xFFFF7279),
+                      onTap: () => onOpen(RodinScreen.maliGpu),
                     ),
                   ),
                   Container(
@@ -4082,8 +4092,11 @@ class _LiveOverviewGrid extends StatelessWidget {
                     child: _OverviewCard(
                       eyebrow: 'DISPLAY',
                       value: display,
-                      subtitle: touch,
-                      icon: Icons.auto_awesome_rounded,
+                      subtitle:
+                          snapshot.displayColor < 0 && snapshot.touchState < 1
+                          ? 'ROM colours'
+                          : touch,
+                      icon: Icons.display_settings_rounded,
                       accent: const Color(0xFFB087FF),
                       onTap: () => onOpen(RodinScreen.displayStudio),
                     ),
