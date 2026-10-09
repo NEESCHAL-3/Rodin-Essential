@@ -2,6 +2,46 @@
 
 All notable changes are documented here.
 
+## 1.18.5
+
+Codename: Aurora.
+
+### Added
+
+- Per-App Controls for individual touch response, refresh rate, CPU core/range/
+  governor and GPU settings. Profiles default to Follow global; the master
+  switch starts off. Saved profiles work independently of the app and restore
+  previous global/ROM controls when leaving the foreground app or disabling
+  overrides. Includes app icons, search, optional system-app visibility and
+  individual/reset-all actions.
+- Memory DVFS & UFS hub with LPDDR5X/UFS 4.0 driver readings, Dynamic Range,
+  Exact Lock, supported-frequency sliders and OEM Reset. Session controls
+  survive app closure but restore originals on daemon restart or reboot.
+- Bypass Charging Quick Settings/Control Center tile with matching icon,
+  on/off state feedback and long-press access to Charging Control.
+- Connected page transitions, predictive Back previews on supported Android,
+  touch-following lighting, spring press feedback and consistent haptics.
+- Rotating colour-accented Control Hubs headlines.
+
+### Improved
+
+- Home/Control Hubs layout, glass headers, light-mode card boundaries, dividers,
+  icons, typography and readable descriptions throughout the interface.
+- Dock dragging/tab switching, page opening/Back motion, gesture cancellation,
+  slider value indicators, feedback-card clearance and keyboard/navigation insets.
+- Per-app foreground ownership and global/ROM restoration, transient CPU core
+  write handling, bounded asynchronous control requests and Android rendering
+  surface lifecycle handling.
+- AOSP and unpacked-ROM integration with scoped charging-parent traversal,
+  Per-App Controls and subsystem policy, current framework-adapter validation
+  and updated porter instructions.
+
+### Removed
+
+- Double Tap to Wake controls and daemon handling. ROM ownership is unchanged.
+
+Full user-facing release notes: [v1.18.5 — Aurora](docs/releases/v1.18.5.md).
+
 ## 1.18.4
 
 Released on 4 October 2026.

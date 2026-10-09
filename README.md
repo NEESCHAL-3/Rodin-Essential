@@ -51,6 +51,14 @@ installer and are not supported by the included AOSP policy.
 - Daemon-owned persistence and background reassertion after boot, screen wake,
   vendor resets, app force-close, or removal from recents.
 - Configurable in-app motion timing with native 120 Hz frame pacing.
+- [Per-App Controls](docs/PER_APP_CONTROLS_IMPLEMENTATION.md): foreground touch,
+  refresh-rate, CPU and GPU overrides, with saved profiles and global/ROM
+  restoration. Starts disabled; system apps are hidden by default.
+- [Memory DVFS & UFS](docs/MEMORY_STORAGE_TRIALS.md): supported dynamic ranges,
+  exact driver-policy requests and OEM Reset. These are session controls,
+  recovered to originals after daemon restart or reboot.
+- Bypass Charging Quick Settings/Control Center tile with direct access to
+  Charging Control on long-press.
 
 ## Screenshots
 

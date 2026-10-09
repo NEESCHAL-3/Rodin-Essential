@@ -6,7 +6,7 @@ policy additions**. No complete platform or vendor policy is supplied. Use your
 own ROM's policy, whether HyperOS, AOSP or an OEM port. Vendor labels and hardware
 interfaces must match that target.
 
-Application/module: 1.18.4 / 11804. IPC protocol: 13.6. The app and native binaries
+Application/module: 1.18.5 / 11805. IPC protocol: 13.6. The app and native binaries
 are identical to the matching module. Android init starts the baked service;
 users need no root grant, Magisk, KernelSU or `/data/adb` scripts.
 
@@ -170,12 +170,49 @@ requires a compatible kernel. Compilation does not replace boot/feature tests.
 
 ## Updates
 
+### v1.18.5 integration changes
+
+Use the matching v1.18.5 APK and both binaries, not an APK-only replacement.
+Keep the complete APK: its small Android framework adapter supplies the bypass
+tile and predictive Back. No platform signing or privileged app placement is
+required for these components.
+
+The new policy includes foreground-app event access for Per-App Controls and
+exact Memory DVFS/UFS devfreq labels. Metadata is read-only; frequency request
+writes are restricted to the supported `min_freq`/`max_freq` files.
+The existing RAM devfreq parent label is preserved, and the policy retains
+MediaTek PowerHAL access on new request/UFS labels. If an exact path is already
+labeled differently on your target, reconcile it before compiling; do not
+replace a whole vendor policy to resolve a duplicate label.
+
+Charging also needs directory traversal through the vendor's battery-manager
+parents. This version includes `sysfs_batteryinfo:dir search`, along with supply
+directory and file permissions. Missing parent traversal was the cause of the
+reported blank battery section and unsupported bypass on an integrated ROM.
+If your vendor labels differ, provide the reviewed `--labels` mapping described
+above; do not grant generic sysfs write access or disable SELinux.
+
+After rebuilding, check battery percentage, temperature and current as well as
+bypass capability, then test Per-App Controls and Memory DVFS/UFS readback.
+Check the tile in Quick Settings; long-press must open Charging Control.
+
+### Replacing an existing bake
+
 Keep APK, daemon and policies synchronized. Replace the old managed Rodin
 policy/context/seapp/certificate entries once; do not append them twice. The
 merger rejects existing entries for review. Use one installation path and a
 consistent signing key. Differently signed ROM-native APKs require a ROM update,
 not a forced module overwrite. App/service files survive data formatting;
 saved selections in `/data` do not.
+
+For a ROM integrated with the previous version of this merger, work on a backup
+of the extracted tree. Replace only the block between `BEGIN RODIN ESSENTIAL
+POLICY` and `END RODIN ESSENTIAL POLICY`, the Rodin daemon/state file-context
+entries, this package's seapp entry and this package's MAC-permissions entry.
+Keep other packages under the same signer. Then rerun the new merger and follow
+steps 3–6. Do not remove the surrounding ROM policy or unrelated contexts.
+Older manually integrated policies without these markers require a reviewed
+removal of their Rodin additions; the tool deliberately refuses a blind merge.
 
 ## Loader reference
 

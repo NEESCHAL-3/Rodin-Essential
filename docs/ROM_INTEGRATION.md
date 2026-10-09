@@ -53,7 +53,10 @@ RODIN_KEY_PASS='key-password' \
 
 All four signing variables are forwarded to the normal verified release build.
 The export stops if the key is missing, the APK is not signed, a binary is not
-ARM64, or the APK contains DEX.
+ARM64, or the APK contains managed classes outside the approved framework
+adapters. In v1.18.5, `RodinActivity` and `BypassTileService` provide predictive
+Back and the Quick Settings tile. UI and hardware logic remain Flutter AOT/Rust;
+do not remove `classes.dex` or either manifest component from the release APK.
 
 The generated directory has this layout:
 
@@ -220,7 +223,13 @@ proc_tp_file
 The charging controller writes
 `/sys/class/power_supply/battery/constant_charge_current` (with a `bms`
 fallback) and `/sys/class/power_supply/usb/sic_mode`. The daemon therefore
-needs write access to both `sysfs_battery_supply` and `sysfs_usb_supply`. Its
+needs write access to both `sysfs_battery_supply` and `sysfs_usb_supply`, plus
+directory traversal of those supply types and `sysfs_batteryinfo` parents.
+The parent grant is `search` only; it does not permit batteryinfo file access.
+Missing parent traversal can leave battery readings blank and bypass showing
+unsupported despite present kernel nodes. Check resolved paths with `ls -lZ`
+and daemon AVCs; adapt only the corresponding types on vendor bases that rename
+them. Its
 private policy also permits read-only consumption of kernel power-supply
 uevents so a fixed profile can be restored after cable reconnect without a
 polling loop.
@@ -327,6 +336,23 @@ a mismatched prebuilt.
 
 ## 7. State and process lifetime
 
+### v1.18.5 device-tree update
+
+Update the APK and native binaries together with the current policy template.
+Per-App Controls adds package-service lookup and a passive foreground event
+stream through `read_logd(rodin_daemon)`. Memory DVFS/UFS uses the exact devfreq
+labels in `sepolicy/vendor/genfs_contexts`: metadata is read-only, and only
+supported `min_freq`/`max_freq` requests are writable. Reconcile labels with
+your device tree rather than adding duplicate `genfscon` entries.
+Keep the existing `sysfs_dvfsrc_devfreq` RAM parent label. The included vendor
+rules preserve MediaTek PowerHAL access to the newly labeled request nodes and
+UFS metadata, so labeling Rodin controls does not block the ROM's controller.
+
+Keep the charging parent traversal rules described above. A working IPC link
+does not imply that the daemon can traverse the battery node's real sysfs path.
+No new privileged-app permission allowlist or platform APK signing is needed
+for the tile; retain the signed APK's manifest and framework adapter.
+
 At `post-fs-data`, init creates and labels:
 
 ```text
@@ -391,12 +417,12 @@ Expected results:
 - Ping returns `OK PONG 13.6`.
 - State directory type is `rodin_daemon_data_file`.
 
-Verify the installed APK remains zero-DEX:
+Verify the installed APK's framework-only adapter allowlist from this checkout:
 
 ```bash
 adb pull /product/app/RodinEssential/RodinEssential.apk /tmp/RodinEssential.apk
-unzip -Z1 /tmp/RodinEssential.apk \
-  | grep -E '(^|/)classes([0-9]*)?\.dex$' && exit 1 || true
+ANDROID_SDK_ROOT=/absolute/path/to/android-sdk \
+  bash tools/check-platform-dex.sh /tmp/RodinEssential.apk
 ```
 
 Perform a full persistence pass:
