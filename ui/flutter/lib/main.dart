@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
 import 'release_identity.dart';
@@ -14187,15 +14188,48 @@ class RodinScrollPage extends StatefulWidget {
 class _RodinScrollPageState extends State<RodinScrollPage> {
   final ScrollController _scrollController = ScrollController();
   final ValueNotifier<double> _scrollPixels = ValueNotifier<double>(0);
+  final ValueNotifier<double> _scrollVelocity = ValueNotifier<double>(0);
+  final Stopwatch _scrollClock = Stopwatch()..start();
+  int _lastScrollMicros = 0;
+  double _lastScrollOffset = 0;
+  bool _edgeLatched = false;
 
   static const double _rodinPhysicalWidth = 1220;
   static const double _rodinPhysicalHeight = 2712;
   static const double _rodinPhysicalCutoutTop = 130;
 
   @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_updateScrollPixels);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // PageStorage can restore an offset without issuing a scroll event.
+      if (mounted && _scrollController.hasClients) {
+        _scrollController.position.isScrollingNotifier.addListener(
+          _scrollingChanged,
+        );
+        _updateScrollPixels();
+      }
+    });
+  }
+
+  void _scrollingChanged() {
+    if (_scrollController.hasClients &&
+        !_scrollController.position.isScrollingNotifier.value) {
+      _scrollVelocity.value = 0;
+    }
+  }
+
+  @override
   void dispose() {
+    if (_scrollController.hasClients)
+      _scrollController.position.isScrollingNotifier.removeListener(
+        _scrollingChanged,
+      );
     _scrollController.dispose();
     _scrollPixels.dispose();
+    _scrollVelocity.dispose();
+    _scrollClock.stop();
     super.dispose();
   }
 
@@ -14315,18 +14349,30 @@ class _RodinScrollPageState extends State<RodinScrollPage> {
     return const SizedBox.shrink();
   }
 
-  bool _onScroll(ScrollNotification notification) {
-    if (notification.metrics.axis != Axis.vertical) {
-      return false;
+  void _updateScrollPixels() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    final now = _scrollClock.elapsedMicroseconds;
+    final dt = now - _lastScrollMicros;
+    if (_lastScrollMicros > 0 && dt > 0) {
+      _scrollVelocity.value =
+          ((position.pixels - _lastScrollOffset) * 1000000 / dt).clamp(
+            -6500.0,
+            6500.0,
+          );
     }
-
-    final double next = notification.metrics.pixels.clamp(0.0, 96.0).toDouble();
+    _lastScrollMicros = now;
+    _lastScrollOffset = position.pixels;
+    final outside =
+        position.pixels < position.minScrollExtent - 14 ||
+        position.pixels > position.maxScrollExtent + 14;
+    if (outside && !_edgeLatched) RodinHaptics.frequentSegment();
+    _edgeLatched = outside;
+    final double next = _scrollController.offset.clamp(0.0, 96.0).toDouble();
 
     if ((_scrollPixels.value - next).abs() > 0.10) {
       _scrollPixels.value = next;
     }
-
-    return false;
   }
 
   @override
@@ -14339,7 +14385,10 @@ class _RodinScrollPageState extends State<RodinScrollPage> {
       scrollChild = CustomScrollView(
         controller: _scrollController,
         primary: false,
-        physics: const BouncingScrollPhysics(
+        scrollCacheExtent: ScrollCacheExtent.pixels(
+          RodinMotionViewportScope.scrollCacheExtentOf(context),
+        ),
+        physics: const RodinScrollPhysics(
           parent: AlwaysScrollableScrollPhysics(),
         ),
         slivers: <Widget>[
@@ -14357,7 +14406,11 @@ class _RodinScrollPageState extends State<RodinScrollPage> {
             ),
           ),
           ...widget.slivers!,
-          const SliverPadding(padding: EdgeInsets.only(bottom: 102)),
+          SliverPadding(
+            padding: EdgeInsets.only(
+              bottom: RodinBottomLayout.contentClearance(context),
+            ),
+          ),
         ],
       );
     } else {
@@ -14368,21 +14421,50 @@ class _RodinScrollPageState extends State<RodinScrollPage> {
       scrollChild = ListView(
         controller: _scrollController,
         primary: false,
-        physics: const BouncingScrollPhysics(
+        scrollCacheExtent: ScrollCacheExtent.pixels(
+          RodinMotionViewportScope.scrollCacheExtentOf(context),
+        ),
+        physics: const RodinScrollPhysics(
           parent: AlwaysScrollableScrollPhysics(),
         ),
-        padding: EdgeInsets.fromLTRB(16, safeTop + widget.topPadding, 16, 102),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          safeTop + widget.topPadding,
+          16,
+          RodinBottomLayout.contentClearance(context),
+        ),
+        // One page transition is enough. Replaying a spring on every card adds
+        // independent opacity layers and makes Back look unsettled.
         children: effectiveChildren,
       );
     }
 
+    final Widget motionChild = RodinScrollMotionScope(
+      velocity: _scrollVelocity,
+      child: scrollChild,
+    );
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        NotificationListener<ScrollNotification>(
-          onNotification: _onScroll,
-          child: scrollChild,
-        ),
+        header == null
+            ? motionChild
+            : ValueListenableBuilder<double>(
+                valueListenable: _scrollPixels,
+                child: motionChild,
+                builder: (BuildContext context, double pixels, Widget? child) {
+                  final double morph = Curves.easeInOutCubic.transform(
+                    (pixels / 58).clamp(0.0, 1.0).toDouble(),
+                  );
+                  return RodinHeaderHitRegion(
+                    key: const ValueKey<String>('rodin-header-content-clip'),
+                    top:
+                        safeTop +
+                        (ui.lerpDouble(widget.topPadding + 44, 42, morph) ??
+                            42),
+                    child: child,
+                  );
+                },
+              ),
         if (header != null)
           Positioned(
             left: 0,
@@ -14407,6 +14489,45 @@ class _RodinScrollPageState extends State<RodinScrollPage> {
       ],
     );
   }
+}
+
+// Let the header sample scrolling pixels for its glass, while keeping covered
+// controls out of touch and accessibility navigation.
+class RodinHeaderHitRegion extends SingleChildRenderObjectWidget {
+  const RodinHeaderHitRegion({
+    required this.top,
+    required super.child,
+    super.key,
+  });
+  final double top;
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RodinHeaderHitBox(top);
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    covariant RenderObject renderObject,
+  ) => (renderObject as _RodinHeaderHitBox).top = top;
+}
+
+/// Paint underneath the frosted header, but never let a hidden control receive
+/// the header's taps. Clipping the paint here would remove the blur's backdrop.
+class _RodinHeaderHitBox extends RenderProxyBox {
+  _RodinHeaderHitBox(this._top);
+  double _top;
+  double get top => _top;
+  set top(double value) {
+    if (_top == value) return;
+    _top = value;
+    markNeedsSemanticsUpdate();
+  }
+
+  @override
+  Rect? describeSemanticsClip(RenderObject? child) =>
+      Rect.fromLTRB(0, top.clamp(0.0, size.height), size.width, size.height);
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) =>
+      position.dy >= top && super.hitTest(result, position: position);
 }
 
 class _RodinChromaticGlassMorph extends StatelessWidget {
@@ -14453,7 +14574,8 @@ class _RodinChromaticGlassMorph extends StatelessWidget {
 
     final double titleWidthRight = onBack == null ? 14 : 12;
 
-    final double blurSigma = 7.75 * glass;
+    // Preserve frost without the old high-radius sampling cost on each frame.
+    const double blurSigma = 14;
 
     return Stack(
       fit: StackFit.expand,
@@ -14478,15 +14600,12 @@ class _RodinChromaticGlassMorph extends StatelessWidget {
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: <Color>[
-                          colors.surface.withValues(
-                            alpha: (dark ? 0.17 : 0.10) * glass,
+                          (dark ? const Color(0xFF1D2735) : Colors.white)
+                              .withValues(alpha: 0.48 * glass),
+                          colors.surfaceContainer.withValues(
+                            alpha: 0.40 * glass,
                           ),
-                          colors.surface.withValues(
-                            alpha: (dark ? 0.12 : 0.065) * glass,
-                          ),
-                          colors.surface.withValues(
-                            alpha: (dark ? 0.07 : 0.035) * glass,
-                          ),
+                          colors.surface.withValues(alpha: 0.28 * glass),
                         ],
                         stops: const <double>[0, 0.58, 1],
                       ),
