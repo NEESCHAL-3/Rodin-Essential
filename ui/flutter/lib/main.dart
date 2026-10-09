@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'release_identity.dart';
 
 import 'backend/rodin_backend.dart';
 import 'backend/bypass_telemetry.dart';
