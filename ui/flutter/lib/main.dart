@@ -5094,8 +5094,12 @@ class SupportScreen extends StatelessWidget {
           child: Column(
             children: <Widget>[
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  _RodinAppEmblem(size: 60, color: colors.primary),
+                  Align(
+                    alignment: Alignment.topCenter,
+                    child: _RodinAppEmblem(size: 60, color: colors.primary),
+                  ),
                   const SizedBox(width: 14),
                   Expanded(
                     child: Column(
@@ -5223,8 +5227,8 @@ class SupportScreen extends StatelessWidget {
         Center(
           child: Column(
             children: <Widget>[
-              Row(
-                mainAxisSize: MainAxisSize.min,
+              Wrap(
+                alignment: WrapAlignment.center,
                 children: <Widget>[
                   Text(
                     'Crafted for the community by ',
@@ -5247,6 +5251,7 @@ class SupportScreen extends StatelessWidget {
               const SizedBox(height: 2),
               Text(
                 'Built-in System Component for Rodin ROMs • Zero Telemetry',
+                textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w500,
@@ -5361,7 +5366,7 @@ class _CommunityCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 3),
-                  Row(
+                  Wrap(
                     children: <Widget>[
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -5384,19 +5389,17 @@ class _CommunityCard extends StatelessWidget {
                           ),
                         ),
                       ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: colors.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
                     ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    subtitle,
+                    softWrap: true,
+                    style: TextStyle(
+                      fontSize: 11,
+                      height: 1.4,
+                      color: colors.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
