@@ -811,6 +811,7 @@ class _PerAppEditorState extends State<_PerAppEditor> {
               data: SliderTheme.of(context).copyWith(
                 activeTrackColor: accent,
                 thumbColor: accent,
+                valueIndicatorColor: accent,
                 inactiveTrackColor: accent.withValues(alpha: 0.12),
                 trackHeight: 5,
                 overlayColor: accent.withValues(alpha: 0.08),

@@ -26,6 +26,7 @@ import 'backend/system_colors_library.dart';
 import 'system_colors_preview.dart';
 import 'service_confirmation.dart';
 import 'bottom_feedback.dart';
+import 'slider_style.dart';
 
 part 'system_colors.dart';
 part 'per_app_controls.dart';
@@ -275,12 +276,7 @@ class RodinEssentialApp extends StatelessWidget {
         outline: outline,
       ),
       textTheme: textTheme.apply(bodyColor: onSurface, displayColor: onSurface),
-      sliderTheme: SliderThemeData(
-        activeTrackColor: primary,
-        thumbColor: primary,
-        inactiveTrackColor: outline.withValues(alpha: 0.50),
-        overlayColor: primary.withValues(alpha: 0.10),
-      ),
+      sliderTheme: rodinSliderTheme(accent: primary, outline: outline),
     );
   }
 }
