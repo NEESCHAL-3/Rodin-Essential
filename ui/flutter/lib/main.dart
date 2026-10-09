@@ -9980,7 +9980,9 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
             const SizedBox(height: 14),
 
             // Section Header
-            Row(
+            Wrap(
+              spacing: 12,
+              runSpacing: 6,
               children: <Widget>[
                 const Text(
                   'RODIN PRESET MAPPINGS',
@@ -9990,7 +9992,6 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
                     letterSpacing: 1.1,
                   ),
                 ),
-                const Spacer(),
                 Text(
                   '1220×2712 Physical Panel',
                   style: TextStyle(
@@ -10095,8 +10096,10 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
                   const Divider(height: 18),
 
                   // Width Slider
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    spacing: 12,
+                    runSpacing: 4,
                     children: <Widget>[
                       const Text(
                         'Horizontal Width',
@@ -10137,8 +10140,10 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
                   ),
 
                   // Height Slider
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    spacing: 12,
+                    runSpacing: 4,
                     children: <Widget>[
                       const Text(
                         'Vertical Height',
@@ -10178,8 +10183,10 @@ class _ResolutionScreenState extends State<ResolutionScreen> {
                   ),
 
                   // Density Slider
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    spacing: 12,
+                    runSpacing: 4,
                     children: <Widget>[
                       const Text(
                         'Pixel Density (DPI)',
