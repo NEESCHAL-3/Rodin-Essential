@@ -8161,6 +8161,27 @@ class _CpuControlScreenState extends State<CpuControlScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'CPU TOPOLOGY',
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  letterSpacing: 1,
+                                  fontWeight: FontWeight.w700,
+                                  color: colors.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 120),
+                              child: _HomeLiveBadge(snapshot: s),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
                           children: <Widget>[
                             Container(
                               padding: const EdgeInsets.all(8),
@@ -8195,56 +8216,11 @@ class _CpuControlScreenState extends State<CpuControlScreen> {
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    '$totalOnline / 8 Cores Online · ${s.serviceStatusLabel}',
+                                    '$totalOnline / 8 cores online',
                                     style: TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.w500,
                                       color: colors.onSurfaceVariant,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color:
-                                    (s.controlsAvailable
-                                            ? const Color(0xFF00E676)
-                                            : colors.onSurfaceVariant)
-                                        .withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color:
-                                      (s.controlsAvailable
-                                              ? const Color(0xFF00E676)
-                                              : colors.onSurfaceVariant)
-                                          .withValues(alpha: 0.3),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: <Widget>[
-                                  Icon(
-                                    Icons.circle,
-                                    color: s.controlsAvailable
-                                        ? const Color(0xFF00E676)
-                                        : colors.onSurfaceVariant,
-                                    size: 7,
-                                  ),
-                                  SizedBox(width: 4),
-                                  Text(
-                                    s.serviceStatusBadgeLabel,
-                                    style: TextStyle(
-                                      fontSize: 9.5,
-                                      fontWeight: FontWeight.w800,
-                                      color: s.controlsAvailable
-                                          ? const Color(0xFF00E676)
-                                          : colors.onSurfaceVariant,
-                                      letterSpacing: 0.5,
                                     ),
                                   ),
                                 ],
@@ -9292,7 +9268,7 @@ class _CpuFrequencyCardState extends State<_CpuFrequencyCard> {
                   ),
           ),
           Row(
-            children: <Widget>[
+            children: [
               Icon(
                 widget.drift == 1 ? Icons.sync_rounded : Icons.verified_rounded,
                 size: 14,
@@ -9300,41 +9276,51 @@ class _CpuFrequencyCardState extends State<_CpuFrequencyCard> {
                     ? colors.onSurfaceVariant
                     : widget.accent,
               ),
-              const SizedBox(width: 5),
+              const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   verification,
                   style: TextStyle(
                     fontSize: 10.5,
+                    height: 1.4,
                     fontWeight: FontWeight.w600,
                     color: colors.onSurfaceVariant,
                   ),
                 ),
               ),
-              TextButton.icon(
-                onPressed: widget.enabled ? _reset : null,
-                icon: const Icon(Icons.restart_alt_rounded, size: 17),
-                label: const Text('OEM Reset'),
-              ),
-              const SizedBox(width: 3),
-              FilledButton.tonalIcon(
-                onPressed: widget.enabled && tableReady && _dirty
-                    ? _apply
-                    : null,
-                icon: Icon(
-                  _exactLock ? Icons.lock_rounded : Icons.check_rounded,
-                  size: 17,
+            ],
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                TextButton.icon(
+                  onPressed: widget.enabled ? _reset : null,
+                  icon: const Icon(Icons.restart_alt_rounded, size: 17),
+                  label: const Text('OEM Reset'),
                 ),
-                label: const Text('Apply'),
-                style: FilledButton.styleFrom(
-                  foregroundColor: widget.accent,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 9,
+                FilledButton.tonalIcon(
+                  onPressed: widget.enabled && tableReady && _dirty
+                      ? _apply
+                      : null,
+                  icon: Icon(
+                    _exactLock ? Icons.lock_rounded : Icons.check_rounded,
+                    size: 17,
+                  ),
+                  label: const Text('Apply'),
+                  style: FilledButton.styleFrom(
+                    foregroundColor: widget.accent,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 9,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -9433,7 +9419,7 @@ class _CpuModeButton extends StatelessWidget {
               Flexible(
                 child: Text(
                   label,
-                  overflow: TextOverflow.ellipsis,
+                  softWrap: true,
                   style: TextStyle(
                     fontSize: 11.5,
                     fontWeight: FontWeight.w700,
@@ -9494,9 +9480,9 @@ class _CpuRangeLabels extends StatelessWidget {
 
     return Row(
       children: <Widget>[
-        item(leftLabel, leftValue, CrossAxisAlignment.start),
-        const Spacer(),
-        item(rightLabel, rightValue, CrossAxisAlignment.end),
+        Expanded(child: item(leftLabel, leftValue, CrossAxisAlignment.start)),
+        const SizedBox(width: 12),
+        Expanded(child: item(rightLabel, rightValue, CrossAxisAlignment.end)),
       ],
     );
   }
