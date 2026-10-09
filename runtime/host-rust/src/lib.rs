@@ -1,5 +1,7 @@
 mod app_metadata;
 mod backend_bridge;
+mod platform_bridge;
+mod bypass_tile;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 use std::ffi::{CStr, CString};
@@ -639,7 +641,8 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 pub extern "C" fn rodin_host_set_back_intercept(enabled: i32) -> i32 {
     let value = enabled != 0;
-    RODIN_BACK_INTERCEPT.store(value, std::sync::atomic::Ordering::Release);
+    let previous = RODIN_BACK_INTERCEPT.swap(value, std::sync::atomic::Ordering::AcqRel);
+    if previous != value { platform_bridge::refresh_back(); }
 
     if !value {
         RODIN_BACK_PENDING.store(false, std::sync::atomic::Ordering::Release);
@@ -3016,6 +3019,7 @@ unsafe extern "C" fn on_low_memory(activity: *mut ANativeActivity) {
 
 unsafe extern "C" fn on_destroy(activity: *mut ANativeActivity) {
     log_str("onDestroy");
+    platform_bridge::clear();
 
     if activity.is_null() {
         return;
@@ -3108,6 +3112,7 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
     // Connect in parallel with EGL and Flutter initialization. The daemon is
     // independent of this Activity; reopening only reconnects its client.
     backend_bridge::rodin_backend_start();
+    platform_bridge::init(activity);
     rodin_prepare_launch_window(activity);
     rodin_photo_init(activity);
     rodin_haptic_init(activity);

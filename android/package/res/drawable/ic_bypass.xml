@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="32" android:viewportHeight="32">
+    <!-- Exact geometry of _BypassPowerPathPainter; SystemUI owns tint. -->
+    <group android:name="power" android:pivotX="16" android:pivotY="16">
+        <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M4,7V10M8,7V10M4,10H8Q10,10 10,12V15Q10,17 8,17H4Q2,17 2,15V12Q2,10 4,10ZM6,17V20Q6,22 8,22H14Q16,22 16,20V13H21M23,8H28Q30,8 30,10V16Q30,18 28,18H23Q21,18 21,16V10Q21,8 23,8ZM24,5.5V8M27,5.5V8M24,18V20.5M27,18V20.5" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M24,11H27V15H24Z" />
+        <path android:name="battery" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF"
+            android:strokeAlpha="0.55" android:strokeWidth="1.4" android:strokeLineCap="round"
+            android:pathData="M21,25H29Q30,25 30,26V29Q30,30 29,30H21Q20,30 20,29V26Q20,25 21,25ZM18.5,26.5V28.5M17,23.5H20" />
+        <group android:name="flowMotion">
+            <path android:name="flow" android:fillColor="#FFFFFFFF" android:fillAlpha="0"
+                android:pathData="M21,13A2,2 0,1 1,17 13A2,2 0,1 1,21 13Z" />
+        </group>
+    </group>
+</vector>
