@@ -69,6 +69,7 @@ enum RodinScreen {
   maliGpu,
   systemColors,
   perAppControls,
+  subsystemClocks,
 }
 
 extension RodinScreenName on RodinScreen {
@@ -104,6 +105,8 @@ extension RodinScreenName on RodinScreen {
         return 'System Colors';
       case RodinScreen.perAppControls:
         return 'Per-App Controls';
+      case RodinScreen.subsystemClocks:
+        return 'Memory DVFS & UFS';
     }
   }
 
@@ -832,6 +835,8 @@ class _RodinShellState extends State<RodinShell>
         return SystemColorsScreen(onBack: _back);
       case RodinScreen.perAppControls:
         return PerAppControlsScreen(onBack: _back);
+      case RodinScreen.subsystemClocks:
+        return SubsystemClocksScreen(onBack: _back);
       default:
         return _rootPager();
     }
@@ -4463,6 +4468,14 @@ class HubsScreen extends StatelessWidget {
                       icon: Icons.tune_rounded,
                       accent: const Color(0xFFFFB84D),
                       onTap: () => onOpen(RodinScreen.advancedConfiguration),
+                    ),
+                    const _HubControlDivider(),
+                    _HubControlRow(
+                      title: 'Memory DVFS & UFS',
+                      subtitle: 'DRAM & storage ranges and exact locks',
+                      icon: Icons.storage_rounded,
+                      accent: const Color(0xFFB087FF),
+                      onTap: () => onOpen(RodinScreen.subsystemClocks),
                     ),
                     const _HubControlDivider(),
                     _HubControlRow(
@@ -15333,6 +15346,7 @@ class HeroCard extends StatelessWidget {
     required this.accent,
     required this.title,
     required this.subtitle,
+    this.leading,
     super.key,
   });
 
@@ -15340,6 +15354,7 @@ class HeroCard extends StatelessWidget {
   final Color accent;
   final String title;
   final String subtitle;
+  final Widget? leading;
 
   @override
   Widget build(BuildContext context) {
@@ -15379,7 +15394,7 @@ class HeroCard extends StatelessWidget {
       ),
       child: Row(
         children: <Widget>[
-          IconTile(icon: icon, accent: accent, size: 54),
+          leading ?? IconTile(icon: icon, accent: accent, size: 54),
           const SizedBox(width: 13),
           Expanded(
             child: Column(
