@@ -531,6 +531,8 @@ pub fn rodin_host_open_url_jni(code: i32) -> bool {
     let url = match code {
         0 => "https://github.com/NEESCHAL-3",
         1 => "https://t.me/PocoX7ProNepalChat",
+        2 => "https://github.com/EricDark231",
+        3 => "https://t.me/EricDark231",
         _ => return false,
     };
 
