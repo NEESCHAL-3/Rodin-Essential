@@ -1257,15 +1257,72 @@ fn list_contains(path: &str, target: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn available_sysfs_options(raw: &str) -> std::collections::BTreeSet<String> {
+    raw.split_whitespace()
+        .map(|option| option.trim_matches(&['[', ']'][..]))
+        .filter(|option| valid_sysfs_option(option))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn common_ufs_schedulers(paths: &[PathBuf]) -> std::collections::BTreeSet<String> {
+    let mut common: Option<std::collections::BTreeSet<String>> = None;
+
+    for path in paths {
+        let options = read_trimmed(path)
+            .map(|raw| available_sysfs_options(&raw))
+            .unwrap_or_default();
+
+        common = Some(match common {
+            Some(previous) => previous.intersection(&options).cloned().collect(),
+            None => options,
+        });
+    }
+
+    common.unwrap_or_default()
+}
+
+fn tuning_capabilities_json() -> serde_json::Value {
+    use serde_json::json;
+
+    let mut cpu = serde_json::Map::new();
+    let mut active_cpu = serde_json::Map::new();
+
+    for policy in [0, 4, 7] {
+        let path =
+            format!("/sys/devices/system/cpu/cpufreq/policy{policy}/scaling_available_governors");
+
+        let governors = read_trimmed(&path)
+            .map(|raw| available_sysfs_options(&raw))
+            .unwrap_or_default();
+
+        cpu.insert(policy.to_string(), json!(governors));
+        active_cpu.insert(policy.to_string(), json!(policy_governor(policy)));
+    }
+
+    let paths = ufs_scheduler_paths();
+    let schedulers = common_ufs_schedulers(&paths);
+
+    json!({
+        "cpu": cpu,
+        "io": schedulers,
+        "active": {
+            "cpu": active_cpu,
+            "io": io_scheduler()
+        }
+    })
+}
+
+fn valid_sysfs_option(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+}
+
 fn set_cpu_governor(policy: i32, governor: &str) -> Result<(), String> {
-    const SAFE: &[&str] = &[
-        "sugov_ext",
-        "conservative",
-        "powersave",
-        "performance",
-        "schedutil",
-    ];
-    if !matches!(policy, 0 | 4 | 7) || !SAFE.contains(&governor) {
+    if !matches!(policy, 0 | 4 | 7) || !valid_sysfs_option(governor) {
         return Err("invalid cpu governor request".into());
     }
     let base = format!("/sys/devices/system/cpu/cpufreq/policy{policy}");
@@ -1823,8 +1880,7 @@ fn set_gpu_governor(governor: &str) -> Result<(), String> {
 }
 
 fn set_io_scheduler(scheduler: &str) -> Result<(), String> {
-    const SAFE: &[&str] = &["none", "mq-deadline", "kyber", "bfq"];
-    if !SAFE.contains(&scheduler) {
+    if !valid_sysfs_option(scheduler) {
         return Err("invalid io scheduler request".into());
     }
 
@@ -4418,7 +4474,12 @@ fn reassert_persisted_governors() {
         let actual = policy_governor(policy);
 
         if actual != desired {
-            let _ = set_cpu_governor(policy, desired);
+            let available = format!(
+                "/sys/devices/system/cpu/cpufreq/policy{policy}/scaling_available_governors"
+            );
+            if valid_sysfs_option(desired) && list_contains(&available, desired) {
+                let _ = set_cpu_governor(policy, desired);
+            }
         }
     }
 
@@ -4475,7 +4536,13 @@ fn reassert_persisted_governors() {
     );
 
     if !state.io.is_empty() && io_scheduler() != state.io {
-        let _ = set_io_scheduler(&state.io);
+        let paths = ufs_scheduler_paths();
+        if !paths.is_empty()
+            && valid_sysfs_option(&state.io)
+            && common_ufs_schedulers(&paths).contains(&state.io)
+        {
+            let _ = set_io_scheduler(&state.io);
+        }
     }
 
     let desired_zram_alg = if !state.zram_algorithm.is_empty() {
@@ -6463,6 +6530,10 @@ fn handle_enabled_command(line: &str) -> String {
     if cmd == "PING" {
         return format!("OK PONG {PROTOCOL_VERSION}");
     }
+    if cmd == "GET tuning.capabilities" {
+        return format!("OK {}", tuning_capabilities_json());
+    }
+
     if cmd == "GET snapshot" {
         return format!("OK {}", snapshot());
     }
@@ -6814,6 +6885,96 @@ pub fn serve_client(stream: UnixStream) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dynamic_tuning_capabilities_parse_and_intersect_options() {
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let parsed = super::available_sysfs_options(
+            "none mq-deadline [adios] adios invalid/name"
+        );
+
+        assert!(parsed.contains("none"));
+        assert!(parsed.contains("mq-deadline"));
+        assert!(parsed.contains("adios"));
+        assert!(!parsed.contains("invalid/name"));
+        assert_eq!(parsed.len(), 3);
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+
+        let dir = std::env::temp_dir().join(format!(
+            "rodin-tuning-test-{}-{unique}",
+            std::process::id()
+        ));
+
+        fs::create_dir(&dir).unwrap();
+
+        let first = dir.join("scheduler0");
+        let second = dir.join("scheduler1");
+
+        let result = (|| {
+            fs::write(&first, "none mq-deadline [adios]")?;
+            fs::write(&second, "none [adios] bfq")?;
+
+            let common = super::common_ufs_schedulers(
+                &[first.clone(), second.clone()]
+            );
+
+            assert_eq!(
+                common,
+                ["adios".to_string(), "none".to_string()]
+                    .into_iter()
+                    .collect()
+            );
+
+            fs::remove_file(&second)?;
+
+            let unavailable = super::common_ufs_schedulers(
+                &[first.clone(), second.clone()]
+            );
+
+            assert!(unavailable.is_empty());
+
+            Ok::<(), std::io::Error>(())
+        })();
+
+        let _ = fs::remove_dir_all(&dir);
+        result.unwrap();
+    }
+
+    #[test]
+    fn dynamic_sysfs_options_accept_kernel_names_and_reject_invalid_input() {
+        for name in [
+            "adios",
+            "none",
+            "mq-deadline",
+            "bfq",
+            "schedutil",
+            "sugov_ext",
+            "performance",
+            "conservative",
+        ] {
+            assert!(super::valid_sysfs_option(name), "rejected: {name}");
+        }
+
+        for name in [
+            "",
+            " ",
+            "adios\nperformance",
+            "../scheduler",
+            "adios;reboot",
+            "invalid option",
+            "[adios]",
+        ] {
+            assert!(!super::valid_sysfs_option(name), "accepted: {name}");
+        }
+
+        assert!(!super::valid_sysfs_option(&"a".repeat(65)));
+    }
+
     #[test]
     fn fresh_and_partial_settings_leave_touch_and_display_to_rom() {
         for raw in ["", "charging=0\n", "touch=0\ndisplay_temp=0\ndolby=7\n"] {

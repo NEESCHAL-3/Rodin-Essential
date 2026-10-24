@@ -471,6 +471,32 @@ fn request(command: &str) -> Result<String, String> {
 
 /// Bounded framed exchange used by the async Per-App Controls UI only.
 /// Ordinary telemetry keeps its existing lightweight transport/cache.
+fn valid_dynamic_tuning_command(command: &str) -> bool {
+    fn valid_name(name: &str) -> bool {
+        !name.is_empty()
+            && name.len() <= 64
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+    }
+
+    if let Some(rest) = command.strip_prefix("SET cpu.gov ") {
+        let mut parts = rest.split_whitespace();
+        let policy = parts.next();
+        let governor = parts.next();
+
+        return matches!(policy, Some("0" | "4" | "7"))
+            && governor.is_some_and(valid_name)
+            && parts.next().is_none();
+    }
+
+    if let Some(rest) = command.strip_prefix("SET io.scheduler ") {
+        return valid_name(rest);
+    }
+
+    false
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rodin_backend_app_controls_exchange(
     input: *const u8,
@@ -489,7 +515,9 @@ pub unsafe extern "C" fn rodin_backend_app_controls_exchange(
     let Ok(command) = std::str::from_utf8(bytes) else {
         return -1;
     };
-    if !(command == "GET app.controls"
+    if !(command == "GET tuning.capabilities"
+        || valid_dynamic_tuning_command(command)
+        || command == "GET app.controls"
         || command == "GET app.capabilities"
         || command == "GET app.list"
         || command.starts_with("SET app.profile ")
@@ -530,6 +558,10 @@ pub unsafe extern "C" fn rodin_backend_app_controls_exchange(
             .trim()
             .strip_prefix("OK ")
             .ok_or_else(|| response.trim().to_owned())?;
+        if valid_dynamic_tuning_command(command) {
+            return Ok(serde_json::json!({"applied": true}));
+        }
+
         serde_json::from_str(body).map_err(|e| e.to_string())
     })();
     let reply = match exchange {
@@ -1886,6 +1918,54 @@ pub extern "C" fn rodin_backend_extended_set(op: i32, a: i32, b: i32) -> i32 {
 #[cfg(test)]
 mod palette_tests {
     use super::*;
+
+    #[test]
+    fn accepts_valid_dynamic_cpu_and_io_commands() {
+        for command in [
+            "SET cpu.gov 0 schedutil",
+            "SET cpu.gov 4 sugov_ext",
+            "SET cpu.gov 7 performance",
+            "SET io.scheduler adios",
+            "SET io.scheduler mq-deadline",
+            "SET io.scheduler none",
+        ] {
+            assert!(
+                valid_dynamic_tuning_command(command),
+                "Expected valid command: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_dynamic_cpu_and_io_commands() {
+        let oversized = "a".repeat(65);
+
+        let invalid = [
+            "SET cpu.gov 1 schedutil".to_owned(),
+            "SET cpu.gov 8 performance".to_owned(),
+            "SET cpu.gov 0".to_owned(),
+            "SET cpu.gov 0 ".to_owned(),
+            "SET cpu.gov 0 schedutil extra".to_owned(),
+            "SET cpu.gov 0 ../schedutil".to_owned(),
+            "SET cpu.gov 0 schedutil\\nSET io.scheduler adios".to_owned(),
+            "SET cpu.gov 0 schedutil;reboot".to_owned(),
+            format!("SET cpu.gov 0 {oversized}"),
+            "SET io.scheduler".to_owned(),
+            "SET io.scheduler ".to_owned(),
+            "SET io.scheduler ../adios".to_owned(),
+            "SET io.scheduler adios extra".to_owned(),
+            "SET io.scheduler adios\\nSET cpu.gov 0 performance".to_owned(),
+            "SET io.scheduler adios;reboot".to_owned(),
+            format!("SET io.scheduler {oversized}"),
+        ];
+
+        for command in invalid {
+            assert!(
+                !valid_dynamic_tuning_command(&command),
+                "Expected rejected command: {command:?}"
+            );
+        }
+    }
 
     #[test]
     fn connection_status_does_not_report_offline_before_the_first_attempt() {
