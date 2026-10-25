@@ -14,7 +14,7 @@ if [ ! -x "$DEXDUMP" ]; then
     DEXDUMP="$(find "$SDK/build-tools" -type f -name dexdump | sort -V | tail -1)"
 fi
 "$DEXDUMP" "$OUT/platform-dex/classes.dex" | awk -F "'" '/Class descriptor/ {print $2}' > "$OUT/platform-dex/classes.txt"
-if grep -Ev '^Lio/github/neeschal/rodinessential/(RodinActivity|BypassTileService)(;|\$)' "$OUT/platform-dex/classes.txt"; then
+if grep -Ev '^Lio/github/neeschal/rodinessential/(RodinActivity|BypassTileService|AudioCompanionService|AudioPresenceObserver|AudioProfileStore|AudioRestoreController)(;|\$)' "$OUT/platform-dex/classes.txt"; then
     echo 'Unexpected managed class in platform bridge' >&2; exit 1
 fi
-test "$(wc -c < "$OUT/platform-dex/classes.dex")" -le 32768
+test "$(wc -c < "$OUT/platform-dex/classes.dex")" -le 98304
