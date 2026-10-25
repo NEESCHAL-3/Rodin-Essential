@@ -9501,29 +9501,191 @@ class AdvancedConfigurationScreen extends StatefulWidget {
 
 class _AdvancedConfigurationScreenState
     extends State<AdvancedConfigurationScreen> {
+  Map<String, dynamic>? _tuningCapabilities;
+  String? _tuningError;
+  bool _tuningLoading = false;
+  bool _tuningApplying = false;
+
   @override
   void initState() {
     super.initState();
     RodinBackend.instance.refresh();
+    _loadTuningCapabilities();
+  }
+
+  Future<void> _loadTuningCapabilities() async {
+    if (_tuningLoading) return;
+
+    setState(() {
+      _tuningLoading = true;
+      _tuningError = null;
+    });
+
+    try {
+      final dynamic response = await PerAppBackend.instance.command(
+        'GET tuning.capabilities',
+      );
+
+      if (response is! Map) {
+        throw const FormatException('Invalid tuning capabilities response');
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _tuningCapabilities = Map<String, dynamic>.from(response);
+        _tuningError = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _tuningCapabilities = null;
+        _tuningError = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _tuningLoading = false;
+        });
+      }
+    }
+  }
+
+  List<String> _availableGovernors(int policy) {
+    final dynamic cpu = _tuningCapabilities?['cpu'];
+    if (cpu is! Map) return <String>[];
+
+    final dynamic values = cpu['$policy'];
+    if (values is! List) return <String>[];
+
+    return values.whereType<String>().toList(growable: false);
+  }
+
+  List<String> _availableSchedulers() {
+    final dynamic values = _tuningCapabilities?['io'];
+    if (values is! List) return <String>[];
+
+    return values.whereType<String>().toList(growable: false);
+  }
+
+  String _activeGovernor(int policy) {
+    final dynamic active = _tuningCapabilities?['active'];
+    if (active is! Map) return '';
+
+    final dynamic cpu = active['cpu'];
+    if (cpu is! Map) return '';
+
+    final dynamic value = cpu['$policy'];
+    return value is String ? value : '';
+  }
+
+  String _activeScheduler() {
+    final dynamic active = _tuningCapabilities?['active'];
+    if (active is! Map) return '';
+
+    final dynamic value = active['io'];
+    return value is String ? value : '';
+  }
+
+  Future<void> _applyTuningOption({
+    int? policy,
+    required String name,
+  }) async {
+    if (_tuningApplying || _tuningLoading || _tuningCapabilities == null) {
+      return;
+    }
+
+    final bool isCpu = policy != null;
+    final List<String> available = isCpu
+        ? _availableGovernors(policy)
+        : _availableSchedulers();
+
+    if (!available.contains(name)) {
+      RodinHaptics.reject();
+      return;
+    }
+
+    final String command = isCpu
+        ? 'SET cpu.gov $policy $name'
+        : 'SET io.scheduler $name';
+
+    setState(() {
+      _tuningApplying = true;
+      _tuningError = null;
+    });
+
+    try {
+      final dynamic response = await PerAppBackend.instance.command(command);
+
+      if (response is! Map || response['applied'] != true) {
+        throw const FormatException('Tuning operation was not confirmed');
+      }
+
+      final dynamic refreshed = await PerAppBackend.instance.command(
+        'GET tuning.capabilities',
+      );
+
+      if (refreshed is! Map) {
+        throw const FormatException('Invalid tuning verification response');
+      }
+
+      final Map<String, dynamic> capabilities =
+          Map<String, dynamic>.from(refreshed);
+
+      final dynamic active = capabilities['active'];
+      if (active is! Map) {
+        throw const FormatException('Missing active tuning state');
+      }
+
+      String actual = '';
+
+      if (isCpu) {
+        final dynamic cpu = active['cpu'];
+        if (cpu is Map) {
+          final dynamic value = cpu['$policy'];
+          if (value is String) actual = value;
+        }
+      } else {
+        final dynamic value = active['io'];
+        if (value is String) actual = value;
+      }
+
+      if (actual != name) {
+        throw StateError(
+          'Kernel reported "$actual" instead of "$name"',
+        );
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _tuningCapabilities = capabilities;
+        _tuningError = null;
+      });
+
+      RodinBackend.instance.refresh();
+      RodinHaptics.confirm();
+    } catch (error) {
+      RodinHaptics.reject();
+
+      if (!mounted) return;
+
+      setState(() {
+        _tuningCapabilities = null;
+        _tuningError = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _tuningApplying = false;
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    const List<_ChoiceOption> cpuGovernors = <_ChoiceOption>[
-      _ChoiceOption(0, 'sugov_ext'),
-      _ChoiceOption(1, 'conservative'),
-      _ChoiceOption(2, 'powersave'),
-      _ChoiceOption(3, 'performance'),
-      _ChoiceOption(4, 'schedutil'),
-    ];
-
-    const List<_ChoiceOption> schedulers = <_ChoiceOption>[
-      _ChoiceOption(0, 'none'),
-      _ChoiceOption(1, 'mq-deadline'),
-      _ChoiceOption(2, 'kyber'),
-      _ChoiceOption(3, 'bfq'),
-    ];
-
     return _BackendSnapshotBuilder(
       builder: (RodinBackendSnapshot snapshot) {
         final RodinBackend backend = RodinBackend.instance;
@@ -9555,39 +9717,93 @@ class _AdvancedConfigurationScreenState
                   'Settings are saved securely and automatically maintained in the background',
             ),
             const SizedBox(height: 12),
+            if (_tuningLoading || _tuningApplying)
+              const LinearProgressIndicator(),
+            if (_tuningError != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: SurfaceCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        'Unable to read or apply kernel tuning',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(_tuningError!),
+                      const SizedBox(height: 8),
+                      TextButton.icon(
+                        onPressed: _tuningLoading || _tuningApplying
+                            ? null
+                            : _loadTuningCapabilities,
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             const SectionLabel('CPU governors'),
             const SizedBox(height: 8),
-            _ChoiceCard(
+            _NamedChoiceCard(
               title: 'Efficiency cluster',
               subtitle: 'Efficiency cores (Cores 0–3)',
               icon: Icons.memory_rounded,
               accent: const Color(0xFF46CFA1),
-              selectedCode: snapshot.cpuGovernor0,
-              options: cpuGovernors,
-              enabled: snapshot.controlsAvailable && !snapshot.busy,
-              onSelected: (int code) => backend.setCpuGovernor(0, code),
+              loading: _tuningLoading,
+              unavailable: _tuningCapabilities == null && !_tuningLoading,
+              selectedName: _activeGovernor(0),
+              options: _availableGovernors(0),
+              enabled: snapshot.controlsAvailable &&
+                  !snapshot.busy &&
+                  !_tuningLoading &&
+                  !_tuningApplying &&
+                  _tuningCapabilities != null,
+              onSelected: (String name) {
+                _applyTuningOption(policy: 0, name: name);
+              },
             ),
             const SizedBox(height: 9),
-            _ChoiceCard(
+            _NamedChoiceCard(
               title: 'Performance cluster',
               subtitle: 'Performance cores (Cores 4–6)',
               icon: Icons.memory_rounded,
               accent: const Color(0xFFB087FF),
-              selectedCode: snapshot.cpuGovernor4,
-              options: cpuGovernors,
-              enabled: snapshot.controlsAvailable && !snapshot.busy,
-              onSelected: (int code) => backend.setCpuGovernor(4, code),
+              loading: _tuningLoading,
+              unavailable: _tuningCapabilities == null && !_tuningLoading,
+              selectedName: _activeGovernor(4),
+              options: _availableGovernors(4),
+              enabled: snapshot.controlsAvailable &&
+                  !snapshot.busy &&
+                  !_tuningLoading &&
+                  !_tuningApplying &&
+                  _tuningCapabilities != null,
+              onSelected: (String name) {
+                _applyTuningOption(policy: 4, name: name);
+              },
             ),
             const SizedBox(height: 9),
-            _ChoiceCard(
+            _NamedChoiceCard(
               title: 'Prime cluster',
               subtitle: 'Prime core (Core 7)',
               icon: Icons.memory_rounded,
               accent: const Color(0xFFFF9F68),
-              selectedCode: snapshot.cpuGovernor7,
-              options: cpuGovernors,
-              enabled: snapshot.controlsAvailable && !snapshot.busy,
-              onSelected: (int code) => backend.setCpuGovernor(7, code),
+              loading: _tuningLoading,
+              unavailable: _tuningCapabilities == null && !_tuningLoading,
+              selectedName: _activeGovernor(7),
+              options: _availableGovernors(7),
+              enabled: snapshot.controlsAvailable &&
+                  !snapshot.busy &&
+                  !_tuningLoading &&
+                  !_tuningApplying &&
+                  _tuningCapabilities != null,
+              onSelected: (String name) {
+                _applyTuningOption(policy: 7, name: name);
+              },
             ),
             const SizedBox(height: 9),
             SurfaceCard(
@@ -9613,15 +9829,23 @@ class _AdvancedConfigurationScreenState
             const SizedBox(height: 12),
             const SectionLabel('Storage scheduler'),
             const SizedBox(height: 8),
-            _ChoiceCard(
+            _NamedChoiceCard(
               title: 'UFS storage scheduler',
               subtitle: 'Queue policy across every detected UFS LUN',
               icon: Icons.storage_rounded,
               accent: Theme.of(context).colorScheme.primary,
-              selectedCode: snapshot.ufsScheduler,
-              options: schedulers,
-              enabled: snapshot.controlsAvailable && !snapshot.busy,
-              onSelected: backend.setUfsScheduler,
+              loading: _tuningLoading,
+              unavailable: _tuningCapabilities == null && !_tuningLoading,
+              selectedName: _activeScheduler(),
+              options: _availableSchedulers(),
+              enabled: snapshot.controlsAvailable &&
+                  !snapshot.busy &&
+                  !_tuningLoading &&
+                  !_tuningApplying &&
+                  _tuningCapabilities != null,
+              onSelected: (String name) {
+                _applyTuningOption(name: name);
+              },
             ),
             const SizedBox(height: 9),
             SurfaceCard(
@@ -14029,6 +14253,134 @@ class _ChoiceCard extends StatelessWidget {
                 ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NamedChoiceCard extends StatelessWidget {
+  const _NamedChoiceCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.accent,
+    required this.selectedName,
+    required this.options,
+    required this.enabled,
+    required this.onSelected,
+    this.loading = false,
+    this.unavailable = false,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color accent;
+  final String selectedName;
+  final List<String> options;
+  final bool enabled;
+  final ValueChanged<String> onSelected;
+  final bool loading;
+  final bool unavailable;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final bool known = options.contains(selectedName);
+    final String status = loading
+        ? 'LOADING'
+        : unavailable
+            ? 'UNAVAILABLE'
+            : options.isEmpty
+                ? 'NO OPTIONS'
+                : selectedName.isEmpty
+                    ? 'UNSET'
+                    : selectedName;
+
+    return SurfaceCard(
+      padding: const EdgeInsets.fromLTRB(13, 12, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              IconTile(icon: icon, accent: accent, size: 42),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 11.2,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              StatusPill(
+                label: status,
+                accent: known ? accent : colors.onSurfaceVariant,
+              ),
+            ],
+          ),
+          const SizedBox(height: 11),
+          if (loading || unavailable || options.isEmpty)
+            Text(
+              loading
+                  ? 'Reading kernel capabilities...'
+                  : unavailable
+                      ? 'Kernel capabilities unavailable'
+                      : 'No compatible options detected',
+              style: TextStyle(
+                fontSize: 12,
+                color: colors.onSurfaceVariant,
+              ),
+            )
+          else
+            Wrap(
+              spacing: 7,
+              runSpacing: 7,
+              children: <Widget>[
+                for (final String option in options)
+                  ChoiceChip(
+                    label: Text(option),
+                    selected: option == selectedName,
+                    onSelected: enabled
+                        ? (bool selected) {
+                            if (selected) {
+                              onSelected(option);
+                            }
+                          }
+                        : null,
+                    showCheckmark: false,
+                    visualDensity: VisualDensity.compact,
+                    selectedColor: accent.withValues(alpha: 0.15),
+                    backgroundColor: colors.surfaceContainer.withValues(
+                      alpha: 0.46,
+                    ),
+                    side: BorderSide(
+                      color: option == selectedName
+                          ? accent.withValues(alpha: 0.38)
+                          : colors.outline.withValues(alpha: 0.56),
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+              ],
+            ),
         ],
       ),
     );
