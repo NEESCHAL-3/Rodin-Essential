@@ -652,7 +652,7 @@ fn capabilities_json() -> Result<Value, String> {
         json!({"touch":caps.touch,"gpu":caps.gpu,"refresh":caps.refresh,"cpu":cpu,"cores":caps.manual_cores}),
     )
 }
-fn foreground() -> Result<Option<App>, String> {
+pub(super) fn foreground() -> Result<Option<App>, String> {
     let raw = cli("/system/bin/dumpsys", &["activity", "activities"])?;
     parse_foreground(&raw)
 }
@@ -814,7 +814,7 @@ pub(super) fn command(cmd: &str) -> Result<Value, String> {
         return Ok(status(&r));
     }
     if !RECOVERY_READY.load(Ordering::Acquire) {
-        return Err("Per-App Controls is waiting for recovery; no new override was applied".into());
+        return Err(r.error.clone().unwrap_or_else(|| "Per-App Controls is restoring the previous settings".into()));
     }
     let mut config = r.config.clone();
     if let Some(raw) = cmd.strip_prefix("SET app.profile ") {
@@ -947,17 +947,27 @@ pub(super) fn start() {
     let _ = WAKE.set(sender);
     std::thread::spawn(move || {
         // Recover prior temporary overrides before allowing foreground writes.
-        let recovered = {
-            let _gate = service_control::GATE.write().expect("service gate");
-            recover()
-        };
-        if let Err(error) = recovered {
-            if let Ok(mut r) = runtime().lock() {
-                r.error = Some(error);
+        let mut delay = Duration::from_secs(1);
+        loop {
+            let gate = service_control::GATE.write().expect("service gate");
+            if RECOVERY_READY.load(Ordering::Acquire) {
+                break;
             }
-            return;
+            let result = recover();
+            let mut state = runtime().lock().expect("per-app runtime");
+            match result {
+                Ok(()) => {
+                    state.error = None;
+                    RECOVERY_READY.store(true, Ordering::Release);
+                    break;
+                }
+                Err(error) => state.error = Some(error),
+            }
+            drop(state);
+            drop(gate);
+            std::thread::sleep(delay);
+            delay = (delay * 2).min(Duration::from_secs(60));
         }
-        RECOVERY_READY.store(true, Ordering::Release);
         #[cfg(target_os = "android")]
         std::thread::spawn(event_reader);
         wake();

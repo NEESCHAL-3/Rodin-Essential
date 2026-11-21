@@ -25,6 +25,12 @@ import android.window.OnBackInvokedDispatcher;
 /** NEESCHAL: a platform adapter, not a second UI toolkit. */
 public final class RodinActivity extends NativeActivity {
     static { System.loadLibrary("rodin_essential_host"); }
+    public static int openGameMonitorAccess() {
+        RodinActivity activity = current;
+        if (activity == null) return 0;
+        activity.runOnUiThread(() -> activity.startActivity(new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        return 1;
+    }
     private static RodinActivity current;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable refresh = this::refreshBack;

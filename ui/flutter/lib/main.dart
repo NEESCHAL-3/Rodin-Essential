@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ffi' as ffi;
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -6,7 +7,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart' show Drag;
+import 'package:flutter/gestures.dart' show Drag, EagerGestureRecognizer;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
@@ -32,6 +33,7 @@ import 'audio_hub.dart';
 
 part 'system_colors.dart';
 part 'per_app_controls.dart';
+part 'game_monitor.dart';
 part 'easter_eggs.dart';
 part 'aurora_drift.dart';
 part 'subsystem_clocks.dart';
@@ -76,6 +78,7 @@ enum RodinScreen {
   perAppControls,
   subsystemClocks,
   audioHub,
+  gameMonitor,
 }
 
 extension RodinScreenName on RodinScreen {
@@ -113,6 +116,8 @@ extension RodinScreenName on RodinScreen {
         return 'Per-App Controls';
       case RodinScreen.subsystemClocks:
         return 'Memory DVFS & UFS';
+      case RodinScreen.gameMonitor:
+        return 'Game Monitor';
       case RodinScreen.audioHub:
         return 'Audio Hub';
     }
@@ -844,6 +849,8 @@ class _RodinShellState extends State<RodinShell>
         return PerAppControlsScreen(onBack: _back);
       case RodinScreen.subsystemClocks:
         return SubsystemClocksScreen(onBack: _back);
+      case RodinScreen.gameMonitor:
+        return GameMonitorScreen(onBack: _back);
       case RodinScreen.audioHub:
         return AudioHubScreen(onBack: _back);
       default:
@@ -4577,16 +4584,29 @@ class HubsScreen extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             _HubReveal(
+              duration: 610,
+              child: SurfaceCard(
+                padding: const EdgeInsets.all(11),
+                child: _HubControlRow(
+                  title: 'Game Monitor',
+                  subtitle: 'In-game FPS and device load',
+                  icon: Icons.sports_esports_rounded,
+                  accent: const Color(0xFF74E6C6),
+                  onTap: () => onOpen(RodinScreen.gameMonitor),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            _HubReveal(
               duration: 640,
               child: SurfaceCard(
                 padding: const EdgeInsets.all(11),
                 child: _HubControlRow(
-                  title: 'Diagnostics',
-                  subtitle: 'Sensors and hardware health',
-                  value: snapshot.serviceStatusLabel,
-                  icon: Icons.monitor_heart_rounded,
-                  accent: const Color(0xFF74E6C6),
-                  onTap: () => onOpen(RodinScreen.diagnostics),
+                  title: 'Audio Hub',
+                  subtitle: 'Bluetooth codecs and audio preferences',
+                  icon: Icons.headphones_rounded,
+                  accent: const Color(0xFF67C2FF),
+                  onTap: () => onOpen(RodinScreen.audioHub),
                 ),
               ),
             ),
@@ -4596,11 +4616,12 @@ class HubsScreen extends StatelessWidget {
               child: SurfaceCard(
                 padding: const EdgeInsets.all(11),
                 child: _HubControlRow(
-                  title: 'Audio Hub',
-                  subtitle: 'Bluetooth codecs and audio preferences',
-                  icon: Icons.headphones_rounded,
-                  accent: const Color(0xFF67C2FF),
-                  onTap: () => onOpen(RodinScreen.audioHub),
+                  title: 'Diagnostics',
+                  subtitle: 'Sensors and hardware health',
+                  value: snapshot.serviceStatusLabel,
+                  icon: Icons.monitor_heart_rounded,
+                  accent: const Color(0xFF74E6C6),
+                  onTap: () => onOpen(RodinScreen.diagnostics),
                 ),
               ),
             ),

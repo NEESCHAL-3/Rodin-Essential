@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 mod app_controls;
 mod app_runtime;
+mod game_monitor;
 mod bypass_policy;
 mod service_control;
 mod subsystem_clocks;
@@ -2585,8 +2586,8 @@ fn apply_touch_driver_fallback(profile: i32, panel: i32) -> Result<(), String> {
     .map_err(|e| format!("Goodix report-rate fallback: {e}"))?;
 
     let expected = if profile == 1 { 240 } else { 480 };
-    for _ in 0..4 {
-        std::thread::sleep(Duration::from_millis(20));
+    for attempt in 0..=4 {
+        if attempt > 0 { std::thread::sleep(Duration::from_millis(20)); }
         if goodix_report_rate_hz() == Some(expected) {
             return Ok(());
         }
@@ -2631,13 +2632,13 @@ fn apply_touch_profile_locked(profile: i32) -> Result<(), String> {
 
         if let Some((layout, expected_rate)) = layout_and_expected_rate {
             let mut actual = 0u16;
-            for attempt in 0..3 {
-                std::thread::sleep(Duration::from_millis(25));
+            for attempt in 0..=3 {
+                if attempt > 0 { std::thread::sleep(Duration::from_millis(25)); }
                 actual = read_touch_thp_rate(layout, layout.current_rate_addr)?;
                 if actual == expected_rate {
                     break;
                 }
-                if attempt < 2 {
+                if (1..3).contains(&attempt) {
                     apply_touch_hal_profile(vendor_profile)?;
                 }
             }
@@ -6462,6 +6463,15 @@ fn transition_service(cmd: &str) -> Result<(), String> {
 
 pub fn handle_command(line: &str) -> String {
     let cmd = line.trim();
+    if cmd == "GET game.focus" {
+        return match app_runtime::foreground() {
+            Ok(app) => format!("OK {}", app.map_or_else(|| "-".into(), |a| a.package)),
+            Err(e) => format!("ERR {e}"),
+        };
+    }
+    if let Some(package) = cmd.strip_prefix("GET game.monitor ") {
+        return game_monitor::sample(package);
+    }
     if subsystem_clocks::is_command(cmd) {
         let _gate = match service_control::GATE.write() {
             Ok(gate) => gate,

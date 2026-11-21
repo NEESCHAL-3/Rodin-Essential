@@ -1261,3 +1261,51 @@ pub extern "C" fn rodin_host_audio_device_name(buffer: *mut u8, capacity: usize)
 
     bytes.len() as i32
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rodin_host_open_game_monitor_access() -> i32 {
+    let Some(activity) = ACTIVITY.get() else {
+        return 0;
+    };
+    let guard = activity.lock().unwrap();
+    let Some((vm, reference)) = guard.as_ref() else {
+        return 0;
+    };
+    let Ok(mut env) = vm.attach_current_thread() else {
+        return 0;
+    };
+
+    let result = env.with_local_frame(8, |env| -> jni::errors::Result<i32> {
+        let class = env.get_object_class(reference.as_obj())?;
+        env.call_static_method(class, "openGameMonitorAccess", "()I", &[])?
+            .i()
+    });
+
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_clear();
+        return 0;
+    }
+
+    result.unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_neeschal_rodinessential_GameMonitorService_sample(
+    mut env: JNIEnv, _: JClass, package: jni::objects::JString,
+) -> jni::sys::jstring {
+    let Ok(name) = env.get_string(&package) else { return std::ptr::null_mut() };
+    let name: String = name.into();
+    if name.is_empty() || name.len() > 255 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b"._".contains(&b)) {
+        return std::ptr::null_mut();
+    }
+    super::backend_bridge::request(&format!("GET game.monitor {name}")).ok()
+        .and_then(|s| env.new_string(s).ok()).map_or(std::ptr::null_mut(), |s| s.into_raw())
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_neeschal_rodinessential_GameMonitorService_focused(
+    env: JNIEnv, _: JClass,
+) -> jni::sys::jstring {
+    super::backend_bridge::request("GET game.focus").ok()
+        .and_then(|s| env.new_string(s).ok()).map_or(std::ptr::null_mut(), |s| s.into_raw())
+}

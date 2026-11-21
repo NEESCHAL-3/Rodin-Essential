@@ -439,7 +439,7 @@ fn connect_daemon() -> Result<Box<dyn DaemonStream>, String> {
     Ok(configure_unix_stream(stream))
 }
 
-fn request(command: &str) -> Result<String, String> {
+pub(super) fn request(command: &str) -> Result<String, String> {
     let mut stream = connect_daemon()?;
     if command == "GET system.colors"
         || command.starts_with("SET system.colors")
